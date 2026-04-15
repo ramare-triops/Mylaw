@@ -42,9 +42,9 @@ interface DocumentEditorWrapperProps {
 
 // ── Marges page A4 selon le réglage ──────────────────────────────────────────
 const MARGIN_MAP: Record<string, string> = {
-  narrow:     '15mm 15mm 15mm 15mm',
-  normal:     '25mm 20mm 20mm 25mm',
-  wide:       '30mm 25mm 25mm 30mm',
+  narrow:       '15mm 15mm 15mm 15mm',
+  normal:       '25mm 20mm 20mm 25mm',
+  wide:         '30mm 25mm 25mm 30mm',
   'extra-wide': '35mm 30mm 30mm 35mm',
 }
 
@@ -77,65 +77,33 @@ function CloseDialog({
   if (!open) return null
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Overlay */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onCancel} />
-      {/* Modal */}
       <div className="relative z-10 w-full max-w-sm mx-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-6 flex flex-col gap-5">
-        {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-[var(--text-base)] font-semibold text-[var(--color-text)] leading-tight">
-              Fermer le document
-            </h2>
+            <h2 className="text-[var(--text-base)] font-semibold text-[var(--color-text)] leading-tight">Fermer le document</h2>
             <p className="text-[var(--text-xs)] text-[var(--color-text-muted)] mt-1">
               &laquo;&nbsp;{documentTitle}&nbsp;&raquo; contient des modifications non enregistrées.
             </p>
           </div>
-          <button
-            onClick={onCancel}
-            className="flex-shrink-0 p-1 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
-            aria-label="Annuler"
-          >
+          <button onClick={onCancel} className="flex-shrink-0 p-1 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors" aria-label="Annuler">
             <X className="w-4 h-4" />
           </button>
         </div>
-
-        {/* Actions */}
         <div className="flex flex-col gap-2">
-          {/* Enregistrer sans fermer */}
-          <button
-            onClick={onSaveOnly}
-            disabled={isSaving}
-            className="w-full h-9 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium border border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
+          <button onClick={onSaveOnly} disabled={isSaving} className="w-full h-9 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium border border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             Enregistrer sans fermer
           </button>
-
-          {/* Enregistrer et fermer */}
-          <button
-            onClick={onSaveAndClose}
-            disabled={isSaving}
-            className="w-full h-9 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-text-inverse)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
+          <button onClick={onSaveAndClose} disabled={isSaving} className="w-full h-9 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-text-inverse)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             Enregistrer et fermer
           </button>
-
-          {/* Fermer sans enregistrer */}
-          <button
-            onClick={onClose}
-            className="w-full h-9 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium border border-[var(--color-error)]/40 text-[var(--color-error)] hover:bg-[var(--color-error)]/8 transition-colors flex items-center justify-center gap-2"
-          >
+          <button onClick={onClose} className="w-full h-9 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium border border-[var(--color-error)]/40 text-[var(--color-error)] hover:bg-[var(--color-error)]/8 transition-colors flex items-center justify-center gap-2">
             <X className="w-3.5 h-3.5" />
             Fermer sans enregistrer
           </button>
-
-          {/* Annuler */}
-          <button
-            onClick={onCancel}
-            className="w-full h-8 rounded-[var(--radius-md)] text-[var(--text-xs)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-          >
+          <button onClick={onCancel} className="w-full h-8 rounded-[var(--radius-md)] text-[var(--text-xs)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
             Annuler
           </button>
         </div>
@@ -247,13 +215,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     onUpdate: ({ editor }) => markAsChanged(JSON.stringify(editor.getJSON())),
   })
 
-  // ── Applique la police + alignement dès que les préférences sont chargées
-  // et que l'éditeur est prêt (uniquement si document vierge) ─────────────
+  // ── Applique la police + alignement dès que les préférences sont chargées ──
   useEffect(() => {
     if (!editor || !prefsLoaded.current) return
-    // Applique la police via TipTap FontFamily
     editor.chain().focus().setFontFamily(prefs.fontFamily).run()
-    // Applique l'alignement par défaut
     if (prefs.defaultTextAlign !== 'left') {
       editor.chain().setTextAlign(prefs.defaultTextAlign).run()
     }
@@ -276,9 +241,9 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     if (url) editor.chain().focus().setImage({ src: url }).run()
   }, [editor])
 
-  const wordCount = editor?.storage.characterCount.words()      ?? 0
-  const charCount = editor?.storage.characterCount.characters() ?? 0
-  const pagePadding = MARGIN_MAP[prefs.pageMargin] ?? MARGIN_MAP.normal
+  const wordCount    = editor?.storage.characterCount.words()      ?? 0
+  const charCount    = editor?.storage.characterCount.characters() ?? 0
+  const pagePadding  = MARGIN_MAP[prefs.pageMargin] ?? MARGIN_MAP.normal
 
   // ── Indicateur de sauvegarde ─────────────────────────────────────────────
   const SaveIndicator = () => {
@@ -307,7 +272,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
 
         {/* En-tête */}
         <div className="flex items-center justify-between gap-3 px-4 py-2 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex-shrink-0">
-          {/* Titre éditable */}
           <input
             type="text"
             defaultValue={document.title || 'Sans titre'}
@@ -316,11 +280,8 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
             placeholder="Sans titre"
             aria-label="Titre du document"
           />
-
           <div className="flex items-center gap-3 flex-shrink-0">
             <SaveIndicator />
-
-            {/* Indicateur réseau */}
             <span
               className={`flex items-center gap-1 text-[var(--text-xs)] ${
                 isOnline ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'
@@ -329,8 +290,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
             >
               {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
             </span>
-
-            {/* Bouton Enregistrer */}
             <button
               type="button"
               onClick={() => editor && saveNow(JSON.stringify(editor.getJSON()))}
@@ -341,8 +300,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
               {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               <span>Enregistrer</span>
             </button>
-
-            {/* Bouton Fermer */}
             <button
               type="button"
               onClick={handleCloseRequest}
@@ -355,8 +312,14 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           </div>
         </div>
 
-        {/* Barre d'outils Word */}
-        <WordToolbar editor={editor} onInsertLink={handleInsertLink} onInsertImage={handleInsertImage} />
+        {/* Barre d'outils Word — reçoit les valeurs par défaut issues des préférences */}
+        <WordToolbar
+          editor={editor}
+          onInsertLink={handleInsertLink}
+          onInsertImage={handleInsertImage}
+          defaultFontFamily={prefs.fontFamily}
+          defaultFontSize={String(prefs.fontSize)}
+        />
 
         {/* Page A4 */}
         <div className="flex-1 overflow-y-auto bg-[#e8e8e8] dark:bg-[#2a2a2a] px-8 py-8">
@@ -403,7 +366,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         onCancel={() => setShowCloseDialog(false)}
       />
 
-      {/* Styles TipTap — police et interligne injectés depuis les préférences */}
+      {/* Styles TipTap injectés depuis les préférences */}
       <style jsx global>{`
         .mylex-editor-content {
           font-family: ${prefs.fontFamily};
@@ -428,7 +391,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         .mylex-editor-content ol { list-style-type: decimal; }
         .mylex-editor-content ul[data-type="taskList"] { list-style: none; padding-left: 0.5em; }
         .mylex-editor-content ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.5em; }
-        .mylex-editor-content ul[data-type="taskList"] li > label { flex-shrink: 0; margin-top: 0.2em; }
+        .mylex-editor-content ul[data-type="taskList"] li > label { flex-shrink-0; margin-top: 0.2em; }
         .mylex-editor-content blockquote { border-left: 3px solid #01696f; padding: 0.5em 0 0.5em 1.25em; margin: 1em 0; color: #6b7280; font-style: italic; }
         .mylex-editor-content code { font-family: 'JetBrains Mono', 'Courier New', monospace; font-size: 0.875em; background: #f3f4f6; border-radius: 3px; padding: 0.15em 0.4em; color: #c7254e; }
         [data-theme="dark"] .mylex-editor-content code { background: #2d2d2d; color: #e06c75; }
