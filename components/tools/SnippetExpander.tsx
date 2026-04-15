@@ -22,15 +22,15 @@ const DEFAULT_CATEGORIES = [
 
 const DEFAULT_SNIPPETS: Omit<Snippet, 'id' | 'createdAt'>[] = [
   { trigger: 'tgi', expansion: 'Tribunal judiciaire', category: 'Juridictions' },
-  { trigger: 'ca', expansion: 'Cour d'appel', category: 'Juridictions' },
+  { trigger: 'ca', expansion: "Cour d'appel", category: 'Juridictions' },
   { trigger: 'cass', expansion: 'Cour de cassation', category: 'Juridictions' },
-  { trigger: 'ce', expansion: 'Conseil d'État', category: 'Juridictions' },
-  { trigger: 'cpce', expansion: 'Code des procédures civiles d'exécution', category: 'Articles de loi' },
-  { trigger: 'cpc', expansion: 'Code de procédure civile', category: 'Articles de loi' },
+  { trigger: 'ce', expansion: "Conseil d'\u00C9tat", category: 'Juridictions' },
+  { trigger: 'cpce', expansion: "Code des proc\u00E9dures civiles d'ex\u00E9cution", category: 'Articles de loi' },
+  { trigger: 'cpc', expansion: 'Code de proc\u00E9dure civile', category: 'Articles de loi' },
   { trigger: 'cc', expansion: 'Code civil', category: 'Articles de loi' },
-  { trigger: 'cp', expansion: 'Code pénal', category: 'Articles de loi' },
-  { trigger: 'veuillez', expansion: 'Veuillez agréer, Maître, l'expression de mes salutations distinguées.', category: 'Formules de politesse' },
-  { trigger: 'cordialement', expansion: 'Je vous prie d'agréer, Maître, l'expression de mes sentiments les meilleurs.', category: 'Formules de politesse' },
+  { trigger: 'cp', expansion: 'Code p\u00E9nal', category: 'Articles de loi' },
+  { trigger: 'veuillez', expansion: "Veuillez agr\u00E9er, Ma\u00EEtre, l'expression de mes salutations distingu\u00E9es.", category: 'Formules de politesse' },
+  { trigger: 'cordialement', expansion: "Je vous prie d'agr\u00E9er, Ma\u00EEtre, l'expression de mes sentiments les meilleurs.", category: 'Formules de politesse' },
 ];
 
 export function SnippetExpander() {
@@ -209,7 +209,7 @@ export function SnippetExpander() {
           />
           <input
             type="text"
-            placeholder="Rechercher un déclencheur ou une expansion..."
+            placeholder="Rechercher un d\u00E9clencheur ou une expansion..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{
@@ -256,7 +256,7 @@ export function SnippetExpander() {
         >
           <div className="flex flex-wrap gap-3 items-end">
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>Déclencheur</label>
+              <label style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>D\u00E9clencheur</label>
               <input
                 type="text"
                 placeholder="ex: tgi"
@@ -269,14 +269,14 @@ export function SnippetExpander() {
               <label style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>Expansion</label>
               <input
                 type="text"
-                placeholder="Texte complet développé"
+                placeholder="Texte complet d\u00E9velopp\u00E9"
                 value={form.expansion}
                 onChange={(e) => setForm((f) => ({ ...f, expansion: e.target.value }))}
                 style={inpStyle}
               />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>Catégorie</label>
+              <label style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>Cat\u00E9gorie</label>
               <select
                 value={form.category}
                 onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
@@ -308,7 +308,7 @@ export function SnippetExpander() {
         {filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center py-20" style={{ color: 'var(--color-text-muted)' }}>
             <Zap size={48} style={{ opacity: 0.2, marginBottom: '16px' }} />
-            <p style={{ fontSize: 'var(--text-base)' }}>Aucun snippet trouvé</p>
+            <p style={{ fontSize: 'var(--text-base)' }}>Aucun snippet trouv\u00E9</p>
           </div>
         )}
         {selectedCategory === 'Tous'
@@ -373,7 +373,7 @@ function SnippetGroup({
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)' }}>
-              <th style={thStyle}>Déclencheur</th>
+              <th style={thStyle}>D\u00E9clencheur</th>
               <th style={thStyle}>Expansion</th>
               <th style={{ ...thStyle, width: '100px' }}>Actions</th>
             </tr>
@@ -411,7 +411,7 @@ function SnippetGroup({
                         title="Cliquer pour copier"
                       >
                         {copyFeedback === s.id ? (
-                          <span style={{ color: 'var(--color-success)', fontWeight: 500 }}>✓ Copié !</span>
+                          <span style={{ color: 'var(--color-success)', fontWeight: 500 }}>\u2713 Copi\u00E9\u00A0!</span>
                         ) : (
                           s.expansion
                         )}
