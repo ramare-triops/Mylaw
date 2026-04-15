@@ -27,14 +27,14 @@ const DEFAULT_CHECKLISTS: Omit<Checklist, 'id' | 'createdAt' | 'updatedAt'>[] = 
     items: [
       { id: '1', text: 'Identité du client (CNI/Kbis)', done: false, required: true },
       { id: '2', text: 'Justificatif de domicile', done: false, required: true },
-      { id: '3', text: 'Conventions d'honoraires signée', done: false, required: true },
+      { id: '3', text: "Conventions d'honoraires signée", done: false, required: true },
       { id: '4', text: 'Pièces adverses réceptionnées', done: false, required: false },
       { id: '5', text: 'Timeline des faits établie', done: false, required: false },
       { id: '6', text: 'Analyse préliminaire rédigée', done: false, required: false },
     ],
   },
   {
-    name: 'Préparation d'audience',
+    name: "Préparation d'audience",
     category: 'Audience',
     items: [
       { id: '1', text: 'Conclusions récapitulatives finalisées', done: false, required: true },
