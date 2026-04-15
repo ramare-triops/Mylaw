@@ -23,7 +23,6 @@ const DEFAULT_PROFILE:    Profile    = { firstName: '', lastName: '', email: '',
 const DEFAULT_NOTIFS:     Notifs     = { emailAlerts: true, deadlineReminders: true, newDocuments: false, weeklyDigest: true };
 const DEFAULT_APPEARANCE: Appearance = { theme: 'system', fontSize: 'medium', compactMode: false };
 
-// États possibles du bouton Enregistrer
 type SaveState = 'idle' | 'saving' | 'syncing' | 'done' | 'error';
 
 export function Settings() {
@@ -31,6 +30,8 @@ export function Settings() {
   const [loading, setLoading]             = useState(true);
   const [saveState, setSaveState]         = useState<SaveState>('idle');
   const doneTimer                         = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Pour détecter la transition vers 'connected' sans boucler
+  const prevDriveStatus                   = useRef<string>('');
 
   const { status: driveStatus } = useDrive();
 
@@ -38,27 +39,40 @@ export function Settings() {
   const [notifs,     setNotifs]     = useState<Notifs>(DEFAULT_NOTIFS);
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
 
+  // Chargement initial depuis Dexie (données locales, peut être vide)
   useEffect(() => {
-    async function load() {
-      const [p, n, a] = await Promise.all([
-        getSetting<Profile>('profile', DEFAULT_PROFILE),
-        getSetting<Notifs>('notifications', DEFAULT_NOTIFS),
-        getSetting<Appearance>('appearance', DEFAULT_APPEARANCE),
-      ]);
-      setProfile(p); setNotifs(n); setAppearance(a);
-      setLoading(false);
-    }
-    load();
+    loadFromDexie();
   }, []);
+
+  // Recharge depuis Dexie quand le pull Drive vient de se terminer
+  // (transition vers 'connected' depuis 'loading' ou 'syncing')
+  useEffect(() => {
+    const prev = prevDriveStatus.current;
+    prevDriveStatus.current = driveStatus;
+
+    if (driveStatus === 'connected' && (prev === 'loading' || prev === 'syncing')) {
+      // Le pull Drive vient de se terminer — on relit Dexie avec les données fraîches
+      loadFromDexie();
+    }
+  }, [driveStatus]);
+
+  async function loadFromDexie() {
+    setLoading(true);
+    const [p, n, a] = await Promise.all([
+      getSetting<Profile>('profile', DEFAULT_PROFILE),
+      getSetting<Notifs>('notifications', DEFAULT_NOTIFS),
+      getSetting<Appearance>('appearance', DEFAULT_APPEARANCE),
+    ]);
+    setProfile(p); setNotifs(n); setAppearance(a);
+    setLoading(false);
+  }
 
   // Suit le statut Drive pour mettre à jour le bouton après le clic Enregistrer
   useEffect(() => {
     if (saveState === 'idle' || saveState === 'done' || saveState === 'error') return;
-
     if (driveStatus === 'syncing') {
       setSaveState('syncing');
     } else if (driveStatus === 'connected' && saveState === 'syncing') {
-      // Le sync vient de se terminer avec succès
       setSaveState('done');
       if (doneTimer.current) clearTimeout(doneTimer.current);
       doneTimer.current = setTimeout(() => setSaveState('idle'), 2500);
@@ -78,24 +92,33 @@ export function Settings() {
         setSetting('notifications', notifs),
         setSetting('appearance', appearance),
       ]);
-      // Le middleware Dexie déclenche scheduleSync automatiquement.
-      // Si Drive n'est pas connecté, on passe directement en "done" local.
       if (driveStatus === 'idle' || driveStatus === 'disconnected') {
         setSaveState('done');
         if (doneTimer.current) clearTimeout(doneTimer.current);
         doneTimer.current = setTimeout(() => setSaveState('idle'), 2500);
       }
-      // Sinon on attend l'effet qui surveille driveStatus → 'syncing' → 'connected'
     } catch {
       setSaveState('error');
       doneTimer.current = setTimeout(() => setSaveState('idle'), 3000);
     }
   }
 
+  // Pendant le pull Drive initial, afficher un état de chargement sobre
+  const isDriveLoading = driveStatus === 'loading' || driveStatus === 'syncing';
+
+  if (loading && isDriveLoading) {
+    return (
+      <div className="flex h-full items-center justify-center" style={{ gap: '10px', color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)' }}>
+        <Loader2 size={16} style={{ animation: 'spin 0.8s linear infinite' }} />
+        Synchronisation en cours…
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center"
-        style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)' }}>
+      <div className="flex h-full items-center justify-center" style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)' }}>
         Chargement…
       </div>
     );
@@ -218,7 +241,7 @@ export function Settings() {
   );
 }
 
-// ─── Bouton Enregistrer avec états visuels ────────────────────────────────────
+// ─── Bouton Enregistrer ───────────────────────────────────────────────────────
 
 function SaveButton({ state, onClick }: { state: SaveState; onClick: () => void }) {
   const isLoading = state === 'saving' || state === 'syncing';
@@ -235,33 +258,17 @@ function SaveButton({ state, onClick }: { state: SaveState; onClick: () => void 
               : 'Enregistrer';
 
   return (
-    <button
-      onClick={onClick}
-      disabled={isLoading}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '7px',
-        padding: '8px 24px',
-        borderRadius: 'var(--radius-sm)',
-        background: bg,
-        color: '#fff',
-        fontSize: 'var(--text-sm)',
-        fontWeight: 500,
-        opacity: isLoading ? 0.85 : 1,
-        cursor: isLoading ? 'not-allowed' : 'pointer',
-        transition: 'background var(--transition-interactive), opacity var(--transition-interactive)',
-        border: 'none',
-        minWidth: '160px',
-        justifyContent: 'center',
-      }}
-    >
-      {isLoading && (
-        <Loader2
-          size={14}
-          style={{ animation: 'spin 0.8s linear infinite' }}
-        />
-      )}
+    <button onClick={onClick} disabled={isLoading} style={{
+      display: 'inline-flex', alignItems: 'center', gap: '7px',
+      padding: '8px 24px', borderRadius: 'var(--radius-sm)',
+      background: bg, color: '#fff',
+      fontSize: 'var(--text-sm)', fontWeight: 500,
+      opacity: isLoading ? 0.85 : 1,
+      cursor: isLoading ? 'not-allowed' : 'pointer',
+      transition: 'background var(--transition-interactive), opacity var(--transition-interactive)',
+      border: 'none', minWidth: '160px', justifyContent: 'center',
+    }}>
+      {isLoading && <Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} />}
       {isDone && <Check size={14} />}
       {label}
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
