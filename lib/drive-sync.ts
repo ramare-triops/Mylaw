@@ -1,25 +1,19 @@
 /**
  * Google Drive Sync — lib/drive-sync.ts
  *
- * Stocke toutes les données Mylaw dans un fichier JSON unique
- * dans l'espace AppData privé de Google Drive (invisible pour l'utilisateur
- * dans "Mon Drive", accessible uniquement par cette app).
+ * Architecture OAuth PKCE + refresh token HttpOnly cookie.
  *
- * Nécessite : NEXT_PUBLIC_GOOGLE_CLIENT_ID dans .env.local
+ * FLUX DE CONNEXION :
+ * 1. L'utilisateur clique "Connecter Drive"
+ * 2. On génère un code_verifier PKCE + on redirige vers Google OAuth
+ * 3. Google rappelle l'app avec un ?code=...
+ * 4. On envoie le code à /api/drive/auth qui l'échange contre access+refresh tokens
+ * 5. Le refresh token est stocké dans un cookie HttpOnly (sécurisé, invisible au JS)
+ * 6. Les prochains démarrages : /api/drive/token rafraîchit l'access token automatiquement
+ * 7. Tous les appels Drive passent par /api/drive/sync (proxy sécurisé)
+ *
+ * Nécessite : NEXT_PUBLIC_GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET dans .env.local
  */
-
-const DRIVE_FILE_NAME = 'mylaw-backup.json';
-const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
-const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
-
-declare global {
-  interface Window {
-    gapi: any;
-    google: any;
-  }
-}
-
-// ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface MylawBackup {
   version: number;
@@ -39,170 +33,146 @@ export type DriveStatus =
   | 'loading'
   | 'connected'
   | 'syncing'
-  | 'synced'
   | 'error'
   | 'disconnected';
 
-// ─── Load Google API scripts ──────────────────────────────────────────────────
+// ─── Helpers PKCE ───────────────────────────────────────────────────────────────────
 
-let gapiLoaded = false;
-let gisLoaded = false;
-
-export function loadGapiScript(): Promise<void> {
-  return new Promise((resolve) => {
-    if (gapiLoaded || typeof window === 'undefined') { resolve(); return; }
-    const script = document.createElement('script');
-    script.src = 'https://apis.google.com/js/api.js';
-    script.onload = () => { gapiLoaded = true; resolve(); };
-    document.head.appendChild(script);
-  });
+function generateRandomString(length: number): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
+  return Array.from(array).map(b => chars[b % chars.length]).join('');
 }
 
-export function loadGisScript(): Promise<void> {
-  return new Promise((resolve) => {
-    if (gisLoaded || typeof window === 'undefined') { resolve(); return; }
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.onload = () => { gisLoaded = true; resolve(); };
-    document.head.appendChild(script);
-  });
+async function generateCodeChallenge(verifier: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-// ─── DriveClient ──────────────────────────────────────────────────────────────
+// ─── DriveClient ─────────────────────────────────────────────────────────────────
+
+const SCOPES = [
+  'https://www.googleapis.com/auth/drive.appdata',
+  'openid',
+  'email',
+].join(' ');
 
 export class DriveClient {
   private clientId: string;
-  private tokenClient: any = null;
-  private accessToken: string | null = null;
-  private fileId: string | null = null;
+  private codeVerifier: string | null = null;
+  private _isConnected = false;
 
   constructor(clientId: string) {
     this.clientId = clientId;
   }
 
-  async init(): Promise<void> {
-    await Promise.all([loadGapiScript(), loadGisScript()]);
-    await new Promise<void>((resolve) =>
-      window.gapi.load('client', resolve)
-    );
-    await window.gapi.client.init({
-      discoveryDocs: [DISCOVERY_DOC],
-    });
-    this.tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: this.clientId,
-      scope: SCOPES,
-      callback: () => {},
-    });
-  }
-
-  async signIn(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.tokenClient.callback = (resp: any) => {
-        if (resp.error) { reject(new Error(resp.error)); return; }
-        this.accessToken = resp.access_token;
-        window.gapi.client.setToken({ access_token: resp.access_token });
-        resolve();
-      };
-      this.tokenClient.requestAccessToken({ prompt: 'consent' });
-    });
+  /**
+   * Tente un rafraîchissement silencieux du token via le cookie.
+   * Retourne true si l'utilisateur est déjà connecté, false sinon.
+   */
+  async trySilentRefresh(): Promise<boolean> {
+    try {
+      const res = await fetch('/api/drive/token');
+      if (!res.ok) return false;
+      const data = await res.json();
+      this._isConnected = !!data.access_token;
+      return this._isConnected;
+    } catch {
+      return false;
+    }
   }
 
   /**
-   * Tentative de reconnexion silencieuse (sans popup).
-   * Retourne true si un token a été obtenu, false sinon.
+   * Lance le flow OAuth PKCE.
+   * Ouvre la popup Google et retourne une Promise qui se résout
+   * quand l'utilisateur a autorisé l'app (via handleOAuthCallback).
    */
-  async signInSilent(): Promise<boolean> {
-    return new Promise((resolve) => {
-      this.tokenClient.callback = (resp: any) => {
-        if (resp.error || !resp.access_token) { resolve(false); return; }
-        this.accessToken = resp.access_token;
-        window.gapi.client.setToken({ access_token: resp.access_token });
-        resolve(true);
-      };
-      // prompt: '' = pas de popup si un token existe déjà en session
-      this.tokenClient.requestAccessToken({ prompt: '' });
+  async startOAuthFlow(): Promise<void> {
+    if (typeof window === 'undefined') return;
+
+    this.codeVerifier = generateRandomString(64);
+    const codeChallenge = await generateCodeChallenge(this.codeVerifier);
+    const redirectUri = `${window.location.origin}/api/drive/callback`;
+    const state = generateRandomString(16);
+
+    // Stocker le verifier et state en mémoire de session (sessionStorage)
+    sessionStorage.setItem('pkce_verifier', this.codeVerifier);
+    sessionStorage.setItem('pkce_state', state);
+    sessionStorage.setItem('pkce_redirect', redirectUri);
+
+    const params = new URLSearchParams({
+      client_id: this.clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: SCOPES,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      access_type: 'offline',
+      prompt: 'consent',
+      state,
     });
+
+    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   }
 
-  signOut(): void {
-    if (this.accessToken) {
-      window.google.accounts.oauth2.revoke(this.accessToken);
+  /**
+   * Échange le code OAuth reçu dans l'URL contre les tokens.
+   * Appeler depuis la page de callback (/api/drive/callback).
+   */
+  async handleOAuthCode(code: string): Promise<void> {
+    const codeVerifier = sessionStorage.getItem('pkce_verifier');
+    const redirectUri = sessionStorage.getItem('pkce_redirect');
+    if (!codeVerifier || !redirectUri) throw new Error('PKCE state manquant');
+
+    const res = await fetch('/api/drive/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, codeVerifier, redirectUri }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error ?? 'Erreur authentification');
     }
-    this.accessToken = null;
-    this.fileId = null;
-    window.gapi.client.setToken(null);
+
+    sessionStorage.removeItem('pkce_verifier');
+    sessionStorage.removeItem('pkce_state');
+    sessionStorage.removeItem('pkce_redirect');
+    this._isConnected = true;
+  }
+
+  async signOut(): Promise<void> {
+    await fetch('/api/drive/logout', { method: 'POST' });
+    this._isConnected = false;
   }
 
   isConnected(): boolean {
-    return !!this.accessToken;
+    return this._isConnected;
   }
 
-  private async resolveFileId(): Promise<string> {
-    if (this.fileId) return this.fileId;
-
-    const res = await window.gapi.client.drive.files.list({
-      spaces: 'appDataFolder',
-      fields: 'files(id, name)',
-      q: `name = '${DRIVE_FILE_NAME}'`,
-    });
-    const files = res.result.files || [];
-    if (files.length > 0) {
-      this.fileId = files[0].id;
-      return this.fileId!;
-    }
-
-    const boundary = '-------314159265358979323846';
-    const delimiter = `\r\n--${boundary}\r\n`;
-    const closeDelimiter = `\r\n--${boundary}--`;
-    const metadata = JSON.stringify({ name: DRIVE_FILE_NAME, parents: ['appDataFolder'] });
-    const emptyBackup: MylawBackup = {
-      version: 2,
-      exportedAt: new Date().toISOString(),
-      documents: [],
-      folders: [],
-      snippets: [],
-      deadlines: [],
-      settings: {},
-      templates: [],
-      tools: [],
-      aiChats: [],
-    };
-    const body =
-      delimiter + 'Content-Type: application/json\r\n\r\n' + metadata +
-      delimiter + 'Content-Type: application/json\r\n\r\n' + JSON.stringify(emptyBackup) +
-      closeDelimiter;
-
-    const createRes = await window.gapi.client.request({
-      path: '/upload/drive/v3/files',
-      method: 'POST',
-      params: { uploadType: 'multipart', fields: 'id' },
-      headers: { 'Content-Type': `multipart/related; boundary="${boundary}"` },
-      body,
-    });
-    this.fileId = createRes.result.id;
-    return this.fileId!;
-  }
-
+  /**
+   * Télécharge le backup depuis Drive via le proxy sécurisé.
+   */
   async download(): Promise<MylawBackup | null> {
     try {
-      const fileId = await this.resolveFileId();
-      const res = await window.gapi.client.drive.files.get({
-        fileId,
-        alt: 'media',
-      });
-      return res.result as MylawBackup;
+      const res = await fetch('/api/drive/sync');
+      if (!res.ok) return null;
+      return await res.json();
     } catch {
       return null;
     }
   }
 
+  /**
+   * Uploade le backup vers Drive via le proxy sécurisé.
+   */
   async upload(backup: MylawBackup): Promise<void> {
-    const fileId = await this.resolveFileId();
-    backup.exportedAt = new Date().toISOString();
-    await window.gapi.client.request({
-      path: `/upload/drive/v3/files/${fileId}`,
-      method: 'PATCH',
-      params: { uploadType: 'media' },
+    await fetch('/api/drive/sync', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(backup),
     });
