@@ -20,9 +20,9 @@ const NAV_ITEMS = [
   { href: '/', label: 'Tableau de bord', icon: LayoutDashboard },
   { href: '/documents', label: 'Documents', icon: FileText },
   { href: '/tools', label: 'Outils', icon: Wrench },
-  { href: '/templates', label: 'Modèles', icon: FileCode },
+  { href: '/templates', label: 'Mod\u00e8les', icon: FileCode },
   { href: '/ai', label: 'Intelligence IA', icon: Sparkles },
-  { href: '/settings', label: 'Paramètres', icon: Settings },
+  { href: '/settings', label: 'Param\u00e8tres', icon: Settings },
 ];
 
 export function Sidebar() {
@@ -47,7 +47,7 @@ export function Sidebar() {
         <Scale className="w-5 h-5 text-[var(--color-primary)] flex-shrink-0" />
         {!sidebarCollapsed && (
           <span className="font-bold text-[var(--color-primary)] tracking-tight text-base">
-            Mylex
+            Mylaw
           </span>
         )}
       </div>
@@ -83,7 +83,7 @@ export function Sidebar() {
           'flex items-center justify-center h-10 border-t border-[var(--color-border)]',
           'text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors'
         )}
-        aria-label={sidebarCollapsed ? 'Déplier la sidebar' : 'Réduire la sidebar'}
+        aria-label={sidebarCollapsed ? 'D\u00e9plier la sidebar' : 'R\u00e9duire la sidebar'}
       >
         {sidebarCollapsed ? (
           <ChevronRight className="w-4 h-4" />
