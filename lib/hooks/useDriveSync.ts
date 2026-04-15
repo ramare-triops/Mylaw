@@ -5,7 +5,7 @@ import { DriveClient, DriveStatus, MylawBackup } from '@/lib/drive-sync';
 import { db, getSetting, setSetting } from '@/lib/db';
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '';
-const UPLOAD_DEBOUNCE_MS = 3000;
+const UPLOAD_DEBOUNCE_MS = 2000;
 
 let clientInstance: DriveClient | null = null;
 function getClient(): DriveClient {
@@ -17,35 +17,21 @@ export function useDriveSync() {
   const [status, setStatus] = useState<DriveStatus>('idle');
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [needsReconnect, setNeedsReconnect] = useState(false);
   const uploadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const client = getClient();
 
-  // Initialisation + tentative de reconnexion silencieuse au démarrage
   useEffect(() => {
     if (!CLIENT_ID || typeof window === 'undefined') return;
     setStatus('loading');
     client.init()
       .then(async () => {
         const wasConnected = await getSetting<boolean>('drive_connected', false);
-        if (!wasConnected) {
-          setStatus('idle');
-          return;
-        }
-        // Reconnexion silencieuse (sans popup) si l'utilisateur était connecté
-        const ok = await client.signInSilent();
-        if (ok) {
-          setStatus('syncing');
-          try {
-            const remote = await client.download();
-            if (remote) await restoreFromBackup(remote);
-            setLastSynced(new Date());
-            setStatus('connected');
-          } catch {
-            setStatus('connected'); // connecté mais sans restauration
-          }
-        } else {
-          // Token expiré ou pas de session — nécessite reconnexion manuelle
+        if (wasConnected) {
+          setNeedsReconnect(true);
           setStatus('disconnected');
+        } else {
+          setStatus('idle');
         }
       })
       .catch(() => setStatus('idle'));
@@ -62,10 +48,31 @@ export function useDriveSync() {
       if (remote) await restoreFromBackup(remote);
       await setSetting('drive_connected', true);
       setLastSynced(new Date());
+      setNeedsReconnect(false);
       setStatus('connected');
     } catch (e: any) {
-      setError(e?.message ?? 'Erreur de connexion');
+      setError(e?.message ?? 'Erreur de connexion Drive');
       setStatus('error');
+    }
+  }, []);
+
+  const reconnect = useCallback(async () => {
+    setStatus('loading');
+    setError(null);
+    setNeedsReconnect(false);
+    try {
+      await client.init();
+      await client.signIn();
+      setStatus('syncing');
+      const remote = await client.download();
+      if (remote) await restoreFromBackup(remote);
+      await setSetting('drive_connected', true);
+      setLastSynced(new Date());
+      setStatus('connected');
+    } catch (e: any) {
+      setError(e?.message ?? 'Erreur de reconnexion Drive');
+      setNeedsReconnect(true);
+      setStatus('disconnected');
     }
   }, []);
 
@@ -73,6 +80,7 @@ export function useDriveSync() {
     client.signOut();
     await setSetting('drive_connected', false);
     setStatus('disconnected');
+    setNeedsReconnect(false);
     setLastSynced(null);
   }, []);
 
@@ -106,11 +114,10 @@ export function useDriveSync() {
     }, UPLOAD_DEBOUNCE_MS);
   }, []);
 
-  return { status, lastSynced, error, connect, disconnect, syncNow, scheduleSync };
+  return { status, lastSynced, error, needsReconnect, connect, reconnect, disconnect, syncNow, scheduleSync };
 }
 
-// ─── Collecte TOUTES les tables Dexie ─────────────────────────────────────────
-async function buildBackup(): Promise<MylawBackup> {
+export async function buildBackup(): Promise<MylawBackup> {
   const [documents, folders, snippets, deadlines, templates, tools, aiChats] = await Promise.all([
     db.documents.toArray(),
     db.folders.toArray(),
@@ -126,40 +133,26 @@ async function buildBackup(): Promise<MylawBackup> {
   return {
     version: 2,
     exportedAt: new Date().toISOString(),
-    documents,
-    folders,
-    snippets,
-    deadlines,
-    templates,
-    tools,
-    aiChats,
-    settings,
+    documents, folders, snippets, deadlines, templates, tools, aiChats, settings,
   };
 }
 
-// ─── Restaure TOUTES les tables depuis le backup Drive ─────────────────────────
-async function restoreFromBackup(backup: MylawBackup): Promise<void> {
+export async function restoreFromBackup(backup: MylawBackup): Promise<void> {
   await Promise.all([
-    db.documents.clear(),
-    db.folders.clear(),
-    db.table('snippets').clear(),
-    db.table('deadlines').clear(),
-    db.table('templates').clear(),
-    db.table('tools').clear(),
-    db.table('aiChats').clear(),
-    db.settings.clear(),
+    db.documents.clear(), db.folders.clear(),
+    db.table('snippets').clear(), db.table('deadlines').clear(),
+    db.table('templates').clear(), db.table('tools').clear(),
+    db.table('aiChats').clear(), db.settings.clear(),
   ]);
-
   await Promise.all([
-    backup.documents?.length   ? db.documents.bulkAdd(backup.documents)               : Promise.resolve(),
-    backup.folders?.length     ? db.folders.bulkAdd(backup.folders)                   : Promise.resolve(),
-    backup.snippets?.length    ? db.table('snippets').bulkAdd(backup.snippets)        : Promise.resolve(),
-    backup.deadlines?.length   ? db.table('deadlines').bulkAdd(backup.deadlines)      : Promise.resolve(),
-    backup.templates?.length   ? db.table('templates').bulkAdd(backup.templates)      : Promise.resolve(),
-    backup.tools?.length       ? db.table('tools').bulkAdd(backup.tools)              : Promise.resolve(),
-    backup.aiChats?.length     ? db.table('aiChats').bulkAdd(backup.aiChats)          : Promise.resolve(),
+    backup.documents?.length  ? db.documents.bulkAdd(backup.documents)           : Promise.resolve(),
+    backup.folders?.length    ? db.folders.bulkAdd(backup.folders)               : Promise.resolve(),
+    backup.snippets?.length   ? db.table('snippets').bulkAdd(backup.snippets)    : Promise.resolve(),
+    backup.deadlines?.length  ? db.table('deadlines').bulkAdd(backup.deadlines)  : Promise.resolve(),
+    backup.templates?.length  ? db.table('templates').bulkAdd(backup.templates)  : Promise.resolve(),
+    backup.tools?.length      ? db.table('tools').bulkAdd(backup.tools)          : Promise.resolve(),
+    backup.aiChats?.length    ? db.table('aiChats').bulkAdd(backup.aiChats)      : Promise.resolve(),
   ]);
-
   for (const [key, value] of Object.entries(backup.settings ?? {})) {
     await db.settings.put({ key, value });
   }

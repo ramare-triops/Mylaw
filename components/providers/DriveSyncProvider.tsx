@@ -8,7 +8,9 @@ interface DriveSyncContextType {
   status: DriveStatus;
   lastSynced: Date | null;
   error: string | null;
+  needsReconnect: boolean;
   connect: () => Promise<void>;
+  reconnect: () => Promise<void>;
   disconnect: () => Promise<void>;
   syncNow: () => Promise<void>;
   scheduleSync: () => void;

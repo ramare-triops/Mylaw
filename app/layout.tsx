@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { AppProviders } from '@/components/providers/AppProviders';
 import { DriveSyncProvider } from '@/components/providers/DriveSyncProvider';
+import { ReconnectBanner } from '@/components/layout/ReconnectBanner';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -23,6 +24,7 @@ export default function RootLayout({
       <body className={`${inter.variable} font-sans antialiased`}>
         <AppProviders>
           <DriveSyncProvider>
+            <ReconnectBanner />
             {children}
           </DriveSyncProvider>
         </AppProviders>
