@@ -20,13 +20,33 @@ export function useDriveSync() {
   const uploadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const client = getClient();
 
+  // Initialisation + tentative de reconnexion silencieuse au démarrage
   useEffect(() => {
     if (!CLIENT_ID || typeof window === 'undefined') return;
     setStatus('loading');
     client.init()
       .then(async () => {
         const wasConnected = await getSetting<boolean>('drive_connected', false);
-        setStatus(wasConnected ? 'disconnected' : 'idle');
+        if (!wasConnected) {
+          setStatus('idle');
+          return;
+        }
+        // Reconnexion silencieuse (sans popup) si l'utilisateur était connecté
+        const ok = await client.signInSilent();
+        if (ok) {
+          setStatus('syncing');
+          try {
+            const remote = await client.download();
+            if (remote) await restoreFromBackup(remote);
+            setLastSynced(new Date());
+            setStatus('connected');
+          } catch {
+            setStatus('connected'); // connecté mais sans restauration
+          }
+        } else {
+          // Token expiré ou pas de session — nécessite reconnexion manuelle
+          setStatus('disconnected');
+        }
       })
       .catch(() => setStatus('idle'));
   }, []);
@@ -89,35 +109,57 @@ export function useDriveSync() {
   return { status, lastSynced, error, connect, disconnect, syncNow, scheduleSync };
 }
 
+// ─── Collecte TOUTES les tables Dexie ─────────────────────────────────────────
 async function buildBackup(): Promise<MylawBackup> {
-  const [documents, snippets, deadlines, templates] = await Promise.all([
+  const [documents, folders, snippets, deadlines, templates, tools, aiChats] = await Promise.all([
     db.documents.toArray(),
+    db.folders.toArray(),
     db.table('snippets').toArray(),
     db.table('deadlines').toArray(),
     db.table('templates').toArray(),
+    db.table('tools').toArray(),
+    db.table('aiChats').toArray(),
   ]);
   const settingsRows = await db.settings.toArray();
   const settings: Record<string, any> = {};
   for (const row of settingsRows) settings[row.key] = row.value;
   return {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
-    documents, snippets, deadlines, templates, settings,
+    documents,
+    folders,
+    snippets,
+    deadlines,
+    templates,
+    tools,
+    aiChats,
+    settings,
   };
 }
 
+// ─── Restaure TOUTES les tables depuis le backup Drive ─────────────────────────
 async function restoreFromBackup(backup: MylawBackup): Promise<void> {
   await Promise.all([
     db.documents.clear(),
+    db.folders.clear(),
     db.table('snippets').clear(),
     db.table('deadlines').clear(),
     db.table('templates').clear(),
+    db.table('tools').clear(),
+    db.table('aiChats').clear(),
     db.settings.clear(),
   ]);
-  if (backup.documents?.length) await db.documents.bulkAdd(backup.documents);
-  if (backup.snippets?.length) await db.table('snippets').bulkAdd(backup.snippets);
-  if (backup.deadlines?.length) await db.table('deadlines').bulkAdd(backup.deadlines);
-  if (backup.templates?.length) await db.table('templates').bulkAdd(backup.templates);
+
+  await Promise.all([
+    backup.documents?.length   ? db.documents.bulkAdd(backup.documents)               : Promise.resolve(),
+    backup.folders?.length     ? db.folders.bulkAdd(backup.folders)                   : Promise.resolve(),
+    backup.snippets?.length    ? db.table('snippets').bulkAdd(backup.snippets)        : Promise.resolve(),
+    backup.deadlines?.length   ? db.table('deadlines').bulkAdd(backup.deadlines)      : Promise.resolve(),
+    backup.templates?.length   ? db.table('templates').bulkAdd(backup.templates)      : Promise.resolve(),
+    backup.tools?.length       ? db.table('tools').bulkAdd(backup.tools)              : Promise.resolve(),
+    backup.aiChats?.length     ? db.table('aiChats').bulkAdd(backup.aiChats)          : Promise.resolve(),
+  ]);
+
   for (const [key, value] of Object.entries(backup.settings ?? {})) {
     await db.settings.put({ key, value });
   }

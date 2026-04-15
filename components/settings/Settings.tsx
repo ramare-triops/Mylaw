@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { User, Bell, Palette, Shield, Database, RefreshCw } from 'lucide-react';
 import { getSetting, setSetting } from '@/lib/db';
 import { DriveSyncSection } from './DriveSyncSection';
+import { useDrive } from '@/components/providers/DriveSyncProvider';
 
 const SECTIONS = [
   { id: 'profile',  label: 'Profil',          icon: User },
@@ -26,6 +27,7 @@ export function Settings() {
   const [activeSection, setActiveSection] = useState('profile');
   const [saved, setSaved]     = useState(false);
   const [loading, setLoading] = useState(true);
+  const { scheduleSync } = useDrive();
 
   const [profile,    setProfile]    = useState<Profile>(DEFAULT_PROFILE);
   const [notifs,     setNotifs]     = useState<Notifs>(DEFAULT_NOTIFS);
@@ -50,6 +52,8 @@ export function Settings() {
       setSetting('notifications', notifs),
       setSetting('appearance', appearance),
     ]);
+    // Déclenche une sync Drive après enregistrement des paramètres
+    scheduleSync();
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }

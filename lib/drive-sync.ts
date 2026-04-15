@@ -25,10 +25,13 @@ export interface MylawBackup {
   version: number;
   exportedAt: string;
   documents: any[];
+  folders: any[];
   snippets: any[];
   deadlines: any[];
   settings: Record<string, any>;
   templates: any[];
+  tools: any[];
+  aiChats: any[];
 }
 
 export type DriveStatus =
@@ -104,6 +107,23 @@ export class DriveClient {
     });
   }
 
+  /**
+   * Tentative de reconnexion silencieuse (sans popup).
+   * Retourne true si un token a été obtenu, false sinon.
+   */
+  async signInSilent(): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.tokenClient.callback = (resp: any) => {
+        if (resp.error || !resp.access_token) { resolve(false); return; }
+        this.accessToken = resp.access_token;
+        window.gapi.client.setToken({ access_token: resp.access_token });
+        resolve(true);
+      };
+      // prompt: '' = pas de popup si un token existe déjà en session
+      this.tokenClient.requestAccessToken({ prompt: '' });
+    });
+  }
+
   signOut(): void {
     if (this.accessToken) {
       window.google.accounts.oauth2.revoke(this.accessToken);
@@ -136,8 +156,16 @@ export class DriveClient {
     const closeDelimiter = `\r\n--${boundary}--`;
     const metadata = JSON.stringify({ name: DRIVE_FILE_NAME, parents: ['appDataFolder'] });
     const emptyBackup: MylawBackup = {
-      version: 1, exportedAt: new Date().toISOString(),
-      documents: [], snippets: [], deadlines: [], settings: {}, templates: [],
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      documents: [],
+      folders: [],
+      snippets: [],
+      deadlines: [],
+      settings: {},
+      templates: [],
+      tools: [],
+      aiChats: [],
     };
     const body =
       delimiter + 'Content-Type: application/json\r\n\r\n' + metadata +
