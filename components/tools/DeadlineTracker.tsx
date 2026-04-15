@@ -385,7 +385,7 @@ export function DeadlineTracker() {
                       : days < 0
                       ? `J+${Math.abs(days)}`
                       : days === 0
-                      ? 'Aujourd'hui'
+                      ? "Aujourd'hui"
                       : `J-${days}`}
                   </span>
                   {typeInfo && (
