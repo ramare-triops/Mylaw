@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { User, Bell, Palette, Shield, Database, RefreshCw, Loader2, Check } from 'lucide-react';
+import { User, Bell, Palette, Shield, Database, RefreshCw, Loader2, Check, FileText } from 'lucide-react';
 import { getSetting, setSetting } from '@/lib/db';
 import { DriveSyncSection } from './DriveSyncSection';
 import { useDrive } from '@/components/providers/DriveSyncProvider';
@@ -10,6 +10,7 @@ const SECTIONS = [
   { id: 'profile',       label: 'Profil',           icon: User },
   { id: 'notifications', label: 'Notifications',    icon: Bell },
   { id: 'appearance',    label: 'Apparence',         icon: Palette },
+  { id: 'editor',        label: 'Éditeur',           icon: FileText },
   { id: 'sync',          label: 'Synchronisation',  icon: RefreshCw },
   { id: 'security',      label: 'Sécurité',          icon: Shield },
   { id: 'data',          label: 'Données',            icon: Database },
@@ -18,10 +19,73 @@ const SECTIONS = [
 type Profile    = { firstName: string; lastName: string; email: string; barreau: string; cabinet: string; phone: string };
 type Notifs     = { emailAlerts: boolean; deadlineReminders: boolean; newDocuments: boolean; weeklyDigest: boolean };
 type Appearance = { theme: string; fontSize: string; compactMode: boolean };
+export type EditorPrefs = {
+  fontFamily:       string;
+  fontSize:         string;
+  lineHeight:       string;
+  pageMargin:       string;
+  spellcheck:       boolean;
+  autoSave:         boolean;
+  autoSaveDelay:    string;
+  showWordCount:    boolean;
+  showStatusBar:    boolean;
+  defaultTextAlign: string;
+};
 
 const DEFAULT_PROFILE:    Profile    = { firstName: '', lastName: '', email: '', barreau: '', cabinet: '', phone: '' };
 const DEFAULT_NOTIFS:     Notifs     = { emailAlerts: true, deadlineReminders: true, newDocuments: false, weeklyDigest: true };
 const DEFAULT_APPEARANCE: Appearance = { theme: 'system', fontSize: 'medium', compactMode: false };
+export const DEFAULT_EDITOR_PREFS: EditorPrefs = {
+  fontFamily:       "Georgia, serif",
+  fontSize:         "12",
+  lineHeight:       "1.8",
+  pageMargin:       "normal",
+  spellcheck:       true,
+  autoSave:         true,
+  autoSaveDelay:    "2",
+  showWordCount:    true,
+  showStatusBar:    true,
+  defaultTextAlign: "left",
+};
+
+const FONT_FAMILIES = [
+  { label: 'Georgia (défaut)',      value: 'Georgia, serif' },
+  { label: 'Source Serif 4',        value: "'Source Serif 4', Georgia, serif" },
+  { label: 'Times New Roman',       value: "'Times New Roman', Times, serif" },
+  { label: 'Geist',                 value: "'Geist', 'Inter', sans-serif" },
+  { label: 'Inter',                 value: "'Inter', sans-serif" },
+  { label: 'Arial',                 value: 'Arial, Helvetica, sans-serif' },
+  { label: 'Courier New',           value: "'Courier New', Courier, monospace" },
+  { label: 'JetBrains Mono',        value: "'JetBrains Mono', 'Courier New', monospace" },
+];
+const FONT_SIZES   = ['8','9','10','11','12','14','16','18','20','24'];
+const LINE_HEIGHTS = [
+  { label: 'Simple (1.0)',      value: '1.0' },
+  { label: 'Condensé (1.4)',    value: '1.4' },
+  { label: 'Normal (1.6)',      value: '1.6' },
+  { label: 'Aéré (1.8)',        value: '1.8' },
+  { label: 'Double (2.0)',      value: '2.0' },
+  { label: 'Très aéré (2.4)',   value: '2.4' },
+];
+const PAGE_MARGINS = [
+  { label: 'Étroites  (15 mm)', value: 'narrow' },
+  { label: 'Normales  (20 mm)', value: 'normal' },
+  { label: 'Larges    (25 mm)', value: 'wide' },
+  { label: 'Très larges (30 mm)', value: 'extra-wide' },
+];
+const TEXT_ALIGNS = [
+  { label: 'Gauche',   value: 'left' },
+  { label: 'Centre',   value: 'center' },
+  { label: 'Droite',   value: 'right' },
+  { label: 'Justifié', value: 'justify' },
+];
+const AUTO_SAVE_DELAYS = [
+  { label: '1 seconde',   value: '1' },
+  { label: '2 secondes',  value: '2' },
+  { label: '5 secondes',  value: '5' },
+  { label: '10 secondes', value: '10' },
+  { label: '30 secondes', value: '30' },
+];
 
 type SaveState = 'idle' | 'saving' | 'syncing' | 'done' | 'error';
 
@@ -30,44 +94,37 @@ export function Settings() {
   const [loading, setLoading]             = useState(true);
   const [saveState, setSaveState]         = useState<SaveState>('idle');
   const doneTimer                         = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Pour détecter la transition vers 'connected' sans boucler
   const prevDriveStatus                   = useRef<string>('');
 
   const { status: driveStatus } = useDrive();
 
-  const [profile,    setProfile]    = useState<Profile>(DEFAULT_PROFILE);
-  const [notifs,     setNotifs]     = useState<Notifs>(DEFAULT_NOTIFS);
-  const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
+  const [profile,      setProfile]      = useState<Profile>(DEFAULT_PROFILE);
+  const [notifs,       setNotifs]       = useState<Notifs>(DEFAULT_NOTIFS);
+  const [appearance,   setAppearance]   = useState<Appearance>(DEFAULT_APPEARANCE);
+  const [editorPrefs,  setEditorPrefs]  = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS);
 
-  // Chargement initial depuis Dexie (données locales, peut être vide)
-  useEffect(() => {
-    loadFromDexie();
-  }, []);
+  useEffect(() => { loadFromDexie(); }, []);
 
-  // Recharge depuis Dexie quand le pull Drive vient de se terminer
-  // (transition vers 'connected' depuis 'loading' ou 'syncing')
   useEffect(() => {
     const prev = prevDriveStatus.current;
     prevDriveStatus.current = driveStatus;
-
     if (driveStatus === 'connected' && (prev === 'loading' || prev === 'syncing')) {
-      // Le pull Drive vient de se terminer — on relit Dexie avec les données fraîches
       loadFromDexie();
     }
   }, [driveStatus]);
 
   async function loadFromDexie() {
     setLoading(true);
-    const [p, n, a] = await Promise.all([
+    const [p, n, a, e] = await Promise.all([
       getSetting<Profile>('profile', DEFAULT_PROFILE),
       getSetting<Notifs>('notifications', DEFAULT_NOTIFS),
       getSetting<Appearance>('appearance', DEFAULT_APPEARANCE),
+      getSetting<EditorPrefs>('editorPrefs', DEFAULT_EDITOR_PREFS),
     ]);
-    setProfile(p); setNotifs(n); setAppearance(a);
+    setProfile(p); setNotifs(n); setAppearance(a); setEditorPrefs(e);
     setLoading(false);
   }
 
-  // Suit le statut Drive pour mettre à jour le bouton après le clic Enregistrer
   useEffect(() => {
     if (saveState === 'idle' || saveState === 'done' || saveState === 'error') return;
     if (driveStatus === 'syncing') {
@@ -91,6 +148,7 @@ export function Settings() {
         setSetting('profile', profile),
         setSetting('notifications', notifs),
         setSetting('appearance', appearance),
+        setSetting('editorPrefs', editorPrefs),
       ]);
       if (driveStatus === 'idle' || driveStatus === 'disconnected') {
         setSaveState('done');
@@ -103,7 +161,6 @@ export function Settings() {
     }
   }
 
-  // Pendant le pull Drive initial, afficher un état de chargement sobre
   const isDriveLoading = driveStatus === 'loading' || driveStatus === 'syncing';
 
   if (loading && isDriveLoading) {
@@ -124,11 +181,13 @@ export function Settings() {
     );
   }
 
+  const setEp = (patch: Partial<EditorPrefs>) => setEditorPrefs(p => ({ ...p, ...patch }));
+
   return (
     <div className="flex h-full"
       style={{ background: 'var(--color-bg)', fontFamily: 'var(--font-body, Inter, sans-serif)' }}>
 
-      {/* Sidebar */}
+      {/* Sidebar navigation */}
       <div className="flex flex-col border-r py-4"
         style={{ width: '220px', flexShrink: 0, borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
         <h1 style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--color-text)', padding: '0 16px 16px' }}>
@@ -153,7 +212,7 @@ export function Settings() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-8" style={{ maxWidth: '640px' }}>
+      <div className="flex-1 overflow-y-auto p-8" style={{ maxWidth: '680px' }}>
 
         {activeSection === 'profile' && (
           <Section title="Profil" description="Vos informations professionnelles">
@@ -195,6 +254,112 @@ export function Settings() {
           </Section>
         )}
 
+        {/* ─── ONGLET ÉDITEUR ─────────────────────────────────────────────── */}
+        {activeSection === 'editor' && (
+          <>
+            {/* Typographie */}
+            <Section title="Typographie" description="Police et mise en forme par défaut de vos nouveaux documents">
+              <Field label="Police par défaut">
+                <select style={inputStyle} value={editorPrefs.fontFamily} onChange={e => setEp({ fontFamily: e.target.value })}>
+                  {FONT_FAMILIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Taille de police par défaut (pt)">
+                <select style={inputStyle} value={editorPrefs.fontSize} onChange={e => setEp({ fontSize: e.target.value })}>
+                  {FONT_SIZES.map(s => <option key={s} value={s}>{s} pt</option>)}
+                </select>
+              </Field>
+              <Field label="Interligne par défaut">
+                <select style={inputStyle} value={editorPrefs.lineHeight} onChange={e => setEp({ lineHeight: e.target.value })}>
+                  {LINE_HEIGHTS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Alignement par défaut">
+                <select style={inputStyle} value={editorPrefs.defaultTextAlign} onChange={e => setEp({ defaultTextAlign: e.target.value })}>
+                  {TEXT_ALIGNS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+                </select>
+              </Field>
+            </Section>
+
+            <div style={{ height: '24px' }} />
+
+            {/* Mise en page */}
+            <Section title="Mise en page" description="Dimensions et marges de la page A4">
+              <Field label="Marges de page">
+                <select style={inputStyle} value={editorPrefs.pageMargin} onChange={e => setEp({ pageMargin: e.target.value })}>
+                  {PAGE_MARGINS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </Field>
+            </Section>
+
+            <div style={{ height: '24px' }} />
+
+            {/* Comportement */}
+            <Section title="Comportement" description="Options d'édition et de sauvegarde automatique">
+              <Toggle
+                label="Sauvegarde automatique"
+                description="Enregistre le document automatiquement pendant la saisie"
+                checked={editorPrefs.autoSave}
+                onChange={v => setEp({ autoSave: v })}
+              />
+              {editorPrefs.autoSave && (
+                <Field label="Délai avant sauvegarde automatique">
+                  <select style={inputStyle} value={editorPrefs.autoSaveDelay} onChange={e => setEp({ autoSaveDelay: e.target.value })}>
+                    {AUTO_SAVE_DELAYS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                  </select>
+                </Field>
+              )}
+              <Toggle
+                label="Correcteur orthographique"
+                description="Active le correcteur du navigateur dans l'éditeur"
+                checked={editorPrefs.spellcheck}
+                onChange={v => setEp({ spellcheck: v })}
+              />
+              <Toggle
+                label="Afficher le compteur de mots"
+                description="Nombre de mots et caractères dans la barre de statut"
+                checked={editorPrefs.showWordCount}
+                onChange={v => setEp({ showWordCount: v })}
+              />
+              <Toggle
+                label="Afficher la barre de statut"
+                description="Barre d'informations en bas de l'éditeur"
+                checked={editorPrefs.showStatusBar}
+                onChange={v => setEp({ showStatusBar: v })}
+              />
+            </Section>
+
+            <div style={{ height: '24px' }} />
+
+            {/* Prévisualisation */}
+            <Section title="Aperçu" description="Rendu approximatif de vos réglages">
+              <div style={{
+                padding: '24px 28px',
+                background: 'white',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+                minHeight: '120px',
+              }}>
+                <p style={{
+                  fontFamily: editorPrefs.fontFamily,
+                  fontSize: `${editorPrefs.fontSize}pt`,
+                  lineHeight: editorPrefs.lineHeight,
+                  textAlign: editorPrefs.defaultTextAlign as React.CSSProperties['textAlign'],
+                  color: '#28251d',
+                  margin: 0,
+                }}>
+                  Ceci est un aperçu de votre document avec les paramètres actuels.
+                  La police <strong>{FONT_FAMILIES.find(f => f.value === editorPrefs.fontFamily)?.label ?? editorPrefs.fontFamily}</strong>,
+                  en taille <strong>{editorPrefs.fontSize} pt</strong>,
+                  avec un interligne de <strong>{editorPrefs.lineHeight}</strong>.
+                </p>
+              </div>
+            </Section>
+          </>
+        )}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+
         {activeSection === 'sync' && (
           <Section title="Synchronisation" description="Sauvegardez vos données sur tous vos appareils">
             <DriveSyncSection />
@@ -231,7 +396,7 @@ export function Settings() {
           </Section>
         )}
 
-        {['profile', 'notifications', 'appearance'].includes(activeSection) && (
+        {['profile', 'notifications', 'appearance', 'editor'].includes(activeSection) && (
           <div style={{ marginTop: '24px' }}>
             <SaveButton state={saveState} onClick={handleSave} />
           </div>
