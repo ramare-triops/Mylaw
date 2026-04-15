@@ -1,18 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { User, Bell, Palette, Shield, Database, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { User, Bell, Palette, Shield, Database, RefreshCw, Loader2, Check } from 'lucide-react';
 import { getSetting, setSetting } from '@/lib/db';
 import { DriveSyncSection } from './DriveSyncSection';
 import { useDrive } from '@/components/providers/DriveSyncProvider';
 
 const SECTIONS = [
-  { id: 'profile',  label: 'Profil',          icon: User },
-  { id: 'notifications', label: 'Notifications', icon: Bell },
-  { id: 'appearance', label: 'Apparence',      icon: Palette },
-  { id: 'sync',     label: 'Synchronisation', icon: RefreshCw },
-  { id: 'security', label: 'Sécurité',         icon: Shield },
-  { id: 'data',     label: 'Données',           icon: Database },
+  { id: 'profile',       label: 'Profil',           icon: User },
+  { id: 'notifications', label: 'Notifications',    icon: Bell },
+  { id: 'appearance',    label: 'Apparence',         icon: Palette },
+  { id: 'sync',          label: 'Synchronisation',  icon: RefreshCw },
+  { id: 'security',      label: 'Sécurité',          icon: Shield },
+  { id: 'data',          label: 'Données',            icon: Database },
 ];
 
 type Profile    = { firstName: string; lastName: string; email: string; barreau: string; cabinet: string; phone: string };
@@ -23,11 +23,16 @@ const DEFAULT_PROFILE:    Profile    = { firstName: '', lastName: '', email: '',
 const DEFAULT_NOTIFS:     Notifs     = { emailAlerts: true, deadlineReminders: true, newDocuments: false, weeklyDigest: true };
 const DEFAULT_APPEARANCE: Appearance = { theme: 'system', fontSize: 'medium', compactMode: false };
 
+// États possibles du bouton Enregistrer
+type SaveState = 'idle' | 'saving' | 'syncing' | 'done' | 'error';
+
 export function Settings() {
   const [activeSection, setActiveSection] = useState('profile');
-  const [saved, setSaved]     = useState(false);
-  const [loading, setLoading] = useState(true);
-  const { scheduleSync } = useDrive();
+  const [loading, setLoading]             = useState(true);
+  const [saveState, setSaveState]         = useState<SaveState>('idle');
+  const doneTimer                         = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { status: driveStatus } = useDrive();
 
   const [profile,    setProfile]    = useState<Profile>(DEFAULT_PROFILE);
   const [notifs,     setNotifs]     = useState<Notifs>(DEFAULT_NOTIFS);
@@ -46,16 +51,45 @@ export function Settings() {
     load();
   }, []);
 
+  // Suit le statut Drive pour mettre à jour le bouton après le clic Enregistrer
+  useEffect(() => {
+    if (saveState === 'idle' || saveState === 'done' || saveState === 'error') return;
+
+    if (driveStatus === 'syncing') {
+      setSaveState('syncing');
+    } else if (driveStatus === 'connected' && saveState === 'syncing') {
+      // Le sync vient de se terminer avec succès
+      setSaveState('done');
+      if (doneTimer.current) clearTimeout(doneTimer.current);
+      doneTimer.current = setTimeout(() => setSaveState('idle'), 2500);
+    } else if (driveStatus === 'error' && saveState === 'syncing') {
+      setSaveState('error');
+      if (doneTimer.current) clearTimeout(doneTimer.current);
+      doneTimer.current = setTimeout(() => setSaveState('idle'), 3000);
+    }
+  }, [driveStatus, saveState]);
+
   async function handleSave() {
-    await Promise.all([
-      setSetting('profile', profile),
-      setSetting('notifications', notifs),
-      setSetting('appearance', appearance),
-    ]);
-    // Déclenche une sync Drive après enregistrement des paramètres
-    scheduleSync();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    if (saveState === 'saving' || saveState === 'syncing') return;
+    setSaveState('saving');
+    try {
+      await Promise.all([
+        setSetting('profile', profile),
+        setSetting('notifications', notifs),
+        setSetting('appearance', appearance),
+      ]);
+      // Le middleware Dexie déclenche scheduleSync automatiquement.
+      // Si Drive n'est pas connecté, on passe directement en "done" local.
+      if (driveStatus === 'idle' || driveStatus === 'disconnected') {
+        setSaveState('done');
+        if (doneTimer.current) clearTimeout(doneTimer.current);
+        doneTimer.current = setTimeout(() => setSaveState('idle'), 2500);
+      }
+      // Sinon on attend l'effet qui surveille driveStatus → 'syncing' → 'connected'
+    } catch {
+      setSaveState('error');
+      doneTimer.current = setTimeout(() => setSaveState('idle'), 3000);
+    }
   }
 
   if (loading) {
@@ -176,21 +210,66 @@ export function Settings() {
 
         {['profile', 'notifications', 'appearance'].includes(activeSection) && (
           <div style={{ marginTop: '24px' }}>
-            <button onClick={handleSave} style={{
-              padding: '8px 24px',
-              borderRadius: 'var(--radius-sm)',
-              background: saved ? 'var(--color-success)' : 'var(--color-primary)',
-              color: '#fff', fontSize: 'var(--text-sm)', fontWeight: 500,
-              transition: 'background var(--transition-interactive)',
-            }}>
-              {saved ? '\u2713 Enregistré' : 'Enregistrer'}
-            </button>
+            <SaveButton state={saveState} onClick={handleSave} />
           </div>
         )}
       </div>
     </div>
   );
 }
+
+// ─── Bouton Enregistrer avec états visuels ────────────────────────────────────
+
+function SaveButton({ state, onClick }: { state: SaveState; onClick: () => void }) {
+  const isLoading = state === 'saving' || state === 'syncing';
+  const isDone    = state === 'done';
+  const isError   = state === 'error';
+
+  const bg = isDone  ? 'var(--color-success)'
+           : isError ? 'var(--color-error)'
+           : 'var(--color-primary)';
+
+  const label = isDone    ? 'Synchronisé ✓'
+              : isError   ? 'Erreur — réessayer'
+              : isLoading ? (state === 'saving' ? 'Enregistrement…' : 'Synchronisation…')
+              : 'Enregistrer';
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={isLoading}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '7px',
+        padding: '8px 24px',
+        borderRadius: 'var(--radius-sm)',
+        background: bg,
+        color: '#fff',
+        fontSize: 'var(--text-sm)',
+        fontWeight: 500,
+        opacity: isLoading ? 0.85 : 1,
+        cursor: isLoading ? 'not-allowed' : 'pointer',
+        transition: 'background var(--transition-interactive), opacity var(--transition-interactive)',
+        border: 'none',
+        minWidth: '160px',
+        justifyContent: 'center',
+      }}
+    >
+      {isLoading && (
+        <Loader2
+          size={14}
+          style={{ animation: 'spin 0.8s linear infinite' }}
+        />
+      )}
+      {isDone && <Check size={14} />}
+      {label}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </button>
+  );
+}
+
+// ─── Composants utilitaires ───────────────────────────────────────────────────
 
 function Section({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
