@@ -13,7 +13,7 @@ import {
   Indent, Outdent,
   Link2, Image, Table, Minus, Quote,
   Highlighter, RemoveFormatting, Code, Pilcrow,
-  ChevronDown, Type,
+  ChevronDown, Type, PencilLine,
 } from 'lucide-react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
@@ -22,6 +22,8 @@ interface WordToolbarProps {
   editor: Editor | null
   onInsertLink: () => void
   onInsertImage: () => void
+  onFillVariables?: () => void
+  hasVariables?: boolean
   defaultFontFamily?: string
   defaultFontSize?: string
 }
@@ -127,6 +129,8 @@ export function WordToolbar({
   editor,
   onInsertLink,
   onInsertImage,
+  onFillVariables,
+  hasVariables = false,
   defaultFontFamily = 'Georgia, serif',
   defaultFontSize   = '12',
 }: WordToolbarProps) {
@@ -367,6 +371,24 @@ export function WordToolbar({
           <ToolbarButton label="Supprimer la colonne" onClick={() => editor.chain().focus().deleteColumn().run()}><span className="text-[10px] font-mono text-[var(--color-error)]">–C</span></ToolbarButton>
           <ToolbarButton label="Supprimer la ligne"   onClick={() => editor.chain().focus().deleteRow().run()}><span className="text-[10px] font-mono text-[var(--color-error)]">–L</span></ToolbarButton>
           <ToolbarButton label="Supprimer le tableau" onClick={() => editor.chain().focus().deleteTable().run()}><span className="text-[10px] font-mono text-[var(--color-error)]">⌕T</span></ToolbarButton>
+        </>
+      )}
+
+      {/* Bouton Renseigner les informations — visible uniquement si des champs variables existent */}
+      {hasVariables && onFillVariables && (
+        <>
+          <ToolbarDivider />
+          <ToolbarTooltip label="Renseigner les informations du document">
+            <button
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); onFillVariables() }}
+              className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-[var(--radius-sm)] text-[var(--text-xs)] font-medium text-[var(--color-primary)] bg-[var(--color-primary)]/8 hover:bg-[var(--color-primary)]/16 border border-[var(--color-primary)]/30 hover:border-[var(--color-primary)]/60 transition-all flex-shrink-0"
+              aria-label="Renseigner les informations"
+            >
+              <PencilLine className="w-3.5 h-3.5" />
+              <span>Renseigner les informations</span>
+            </button>
+          </ToolbarTooltip>
         </>
       )}
     </div>

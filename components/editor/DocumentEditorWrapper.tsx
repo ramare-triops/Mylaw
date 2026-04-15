@@ -2,6 +2,7 @@
 // Wrapper éditeur : applique les préférences utilisateur (police, taille, interligne, marges, spellcheck…)
 // Bouton Fermer avec popup 3 actions : Enregistrer sans fermer / Enregistrer et fermer / Annuler
 // Champs variables [Nom] [Ville] etc. cliquables avec pop-up de saisie
+// Bouton "Renseigner les informations" avec dialog guidé pas à pas
 
 'use client'
 
@@ -34,6 +35,7 @@ import { WordToolbar } from './WordToolbar'
 import { FontSize } from './extensions/FontSize'
 import { VariableField } from './extensions/VariableField'
 import { VariablePopup } from './VariablePopup'
+import { FillAllVariablesDialog } from './FillAllVariablesDialog'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
 import { getSetting } from '@/lib/db'
 import type { Document } from '@/lib/db'
@@ -69,6 +71,15 @@ function injectVariableSpans(html: string): string {
     const escaped = name.replace(/"/g, '&quot;')
     return `<span data-variable-field="" data-variable-name="${escaped}">[${escaped}]</span>`
   })
+}
+
+/** Compte le nombre de nœuds variableField dans le doc */
+function countVariables(editor: Editor): number {
+  let count = 0
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === 'variableField') count++
+  })
+  return count
 }
 
 function CloseDialog({
@@ -123,18 +134,20 @@ function CloseDialog({
 
 export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapperProps) {
   const router = useRouter()
-  const [showCloseDialog, setShowCloseDialog] = useState(false)
-  const [isOnline, setIsOnline]               = useState(true)
-  const [prefs, setPrefs]                     = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS)
-  const prefsLoaded                           = useRef(false)
+  const [showCloseDialog, setShowCloseDialog]         = useState(false)
+  const [showFillDialog, setShowFillDialog]           = useState(false)
+  const [isOnline, setIsOnline]                       = useState(true)
+  const [prefs, setPrefs]                             = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS)
+  const [variableCount, setVariableCount]             = useState(0)
+  const prefsLoaded                                   = useRef(false)
 
-  // ── Ref stable vers l'instance editor (jamais de dépendance cyclique) ────
+  // Ref stable vers l'instance editor
   const editorRef = useRef<Editor | null>(null)
 
-  // ── Variable popup state ─────────────────────────────────────────────────
+  // Variable popup (clic individuel)
   const [activeVariable, setActiveVariable] = useState<{ name: string; pos: number } | null>(null)
   const [popupAnchor, setPopupAnchor]       = useState<HTMLElement | null>(null)
-  const activeVariableRef = useRef(activeVariable)
+  const activeVariableRef                   = useRef(activeVariable)
   useEffect(() => { activeVariableRef.current = activeVariable }, [activeVariable])
 
   const { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged } =
@@ -166,7 +179,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     else performClose()
   }, [hasUnsavedChanges, performClose])
 
-  // Utilise editorRef.current pour éviter toute référence à editor avant sa déclaration
   const handleSaveOnly = useCallback(async () => {
     const ed = editorRef.current
     if (ed) await saveNow(JSON.stringify(ed.getJSON()))
@@ -205,7 +217,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     return () => window.removeEventListener('beforeunload', onBefore)
   }, [hasUnsavedChanges])
 
-  // ── Variable handlers — utilisent editorRef pour éviter la référence anticipée
+  // Variable click handler (clic sur un seul champ)
   const handleVariableClick = useCallback((name: string, pos: number) => {
     const editorDom = window.document.querySelector('.mylex-editor-content')
     const span = editorDom?.querySelector(
@@ -216,20 +228,35 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   }, [])
 
   const handleVariableConfirm = useCallback((value: string) => {
-    const ed  = editorRef.current
-    const av  = activeVariableRef.current
+    const ed = editorRef.current
+    const av = activeVariableRef.current
     if (!ed || !av) return
     ed.commands.replaceVariable(av.pos, value)
     setActiveVariable(null)
     setPopupAnchor(null)
-  }, []) // dépendances stables : refs uniquement
+    // Recalcule le nombre de variables restantes
+    setTimeout(() => {
+      const c = editorRef.current ? countVariables(editorRef.current) : 0
+      setVariableCount(c)
+    }, 50)
+  }, [])
 
   const handleVariableClose = useCallback(() => {
     setActiveVariable(null)
     setPopupAnchor(null)
   }, [])
 
-  // ── Contenu initial : injecter les spans de variables dans le HTML brut
+  // Fermeture du dialog global
+  const handleFillDialogClose = useCallback(() => {
+    setShowFillDialog(false)
+    // Recalcule les variables restantes après la session
+    setTimeout(() => {
+      const c = editorRef.current ? countVariables(editorRef.current) : 0
+      setVariableCount(c)
+    }, 50)
+  }, [])
+
+  // Contenu initial
   const initialContent = (() => {
     const parsed = parseContent(document.content)
     if (typeof parsed === 'string') return injectVariableSpans(parsed)
@@ -266,12 +293,18 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         lang: 'fr',
       },
     },
-    onUpdate: ({ editor: ed }) => markAsChanged(JSON.stringify(ed.getJSON())),
+    onUpdate: ({ editor: ed }) => {
+      markAsChanged(JSON.stringify(ed.getJSON()))
+      // Mettre à jour le compteur de variables en temps réel
+      setVariableCount(countVariables(ed))
+    },
   })
 
-  // Maintenir le ref à jour après chaque render
+  // Maintenir le ref à jour
   useEffect(() => {
     editorRef.current = editor ?? null
+    // Comptage initial
+    if (editor) setVariableCount(countVariables(editor))
   }, [editor])
 
   useEffect(() => {
@@ -383,6 +416,8 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           editor={editor}
           onInsertLink={handleInsertLink}
           onInsertImage={handleInsertImage}
+          onFillVariables={() => setShowFillDialog(true)}
+          hasVariables={variableCount > 0}
           defaultFontFamily={prefs.fontFamily}
           defaultFontSize={String(prefs.fontSize)}
         />
@@ -407,6 +442,11 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
               )}
             </div>
             <div className="flex items-center gap-3">
+              {variableCount > 0 && (
+                <span className="opacity-80">
+                  {variableCount} champ{variableCount > 1 ? 's' : ''} à renseigner
+                </span>
+              )}
               {document.type && <span className="opacity-75 capitalize">{document.type}</span>}
               <span className="opacity-75">
                 {lastSavedAt
@@ -429,6 +469,14 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         onCancel={() => setShowCloseDialog(false)}
       />
 
+      {/* Pop-up guidée pour renseigner tous les champs */}
+      <FillAllVariablesDialog
+        open={showFillDialog}
+        editor={editor}
+        onClose={handleFillDialogClose}
+      />
+
+      {/* Pop-up individuelle au clic sur un champ */}
       <VariablePopup
         variableName={activeVariable?.name ?? null}
         anchorEl={popupAnchor}
@@ -479,7 +527,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         .mylex-editor-content mark { border-radius: 2px; padding: 0.1em 0; }
         .mylex-editor-content ::selection { background: rgba(1, 105, 111, 0.2); }
 
-        /* ── Champs variables ───────────────────────────────────────────── */
+        /* ── Champs variables ─────────────────────────────────────────── */
         .mylex-editor-content [data-variable-field] {
           display: inline-flex;
           align-items: center;
