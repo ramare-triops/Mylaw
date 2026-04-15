@@ -1,6 +1,7 @@
 // components/editor/DocumentEditorWrapper.tsx
 // Wrapper éditeur : applique les préférences utilisateur (police, taille, interligne, marges, spellcheck…)
 // Bouton Fermer avec popup 3 actions : Enregistrer sans fermer / Enregistrer et fermer / Annuler
+// Champs variables [Nom] [Ville] etc. cliquables avec pop-up de saisie
 
 'use client'
 
@@ -30,6 +31,8 @@ import { Save, Check, Loader2, Wifi, WifiOff, X } from 'lucide-react'
 
 import { WordToolbar } from './WordToolbar'
 import { FontSize } from './extensions/FontSize'
+import { VariableField } from './extensions/VariableField'
+import { VariablePopup } from './VariablePopup'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
 import { getSetting } from '@/lib/db'
 import type { Document } from '@/lib/db'
@@ -58,6 +61,17 @@ function parseContent(raw: string | undefined | null): string | object {
     return trimmed
   }
   return `<p>${trimmed}</p>`
+}
+
+/**
+ * Transforme un contenu HTML brut en remplaçant les occurrences [Variable]
+ * par des spans reconnus par l'extension VariableField lors du parsing.
+ */
+function injectVariableSpans(html: string): string {
+  return html.replace(/\[([^\]]+)\]/g, (_, name: string) => {
+    const escaped = name.replace(/"/g, '&quot;')
+    return `<span data-variable-field="" data-variable-name="${escaped}">[${escaped}]</span>`
+  })
 }
 
 function CloseDialog({
@@ -116,6 +130,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const [isOnline, setIsOnline]               = useState(true)
   const [prefs, setPrefs]                     = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS)
   const prefsLoaded                           = useRef(false)
+
+  // ── Variable popup state ─────────────────────────────────────────────────
+  const [activeVariable, setActiveVariable] = useState<{ name: string; pos: number } | null>(null)
+  const [popupAnchor, setPopupAnchor]       = useState<HTMLElement | null>(null)
 
   const { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged } =
     useDocumentSave(document.id, prefs.autoSave ? Number(prefs.autoSaveDelay) * 1000 : 0)
@@ -181,6 +199,37 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     return () => window.removeEventListener('beforeunload', onBefore)
   }, [hasUnsavedChanges])
 
+  // ── Variable click handler ───────────────────────────────────────────────
+  const handleVariableClick = useCallback((name: string, pos: number) => {
+    // Trouver l'élément DOM du span cliqué pour positionner la popup
+    const editorDom = window.document.querySelector('.mylex-editor-content')
+    const span = editorDom?.querySelector(`[data-variable-field][data-variable-name="${CSS.escape(name)}"]`) as HTMLElement | null
+    setActiveVariable({ name, pos })
+    setPopupAnchor(span)
+  }, [])
+
+  const handleVariableConfirm = useCallback((value: string) => {
+    if (!editor || !activeVariable) return
+    editor.commands.replaceVariable(activeVariable.pos, value)
+    setActiveVariable(null)
+    setPopupAnchor(null)
+  }, [editor, activeVariable])
+
+  const handleVariableClose = useCallback(() => {
+    setActiveVariable(null)
+    setPopupAnchor(null)
+  }, [])
+
+  // ── Prepare initial content: inject variable spans into HTML ─────────────
+  const initialContent = useCallback(() => {
+    const parsed = parseContent(document.content)
+    if (typeof parsed === 'string') {
+      return injectVariableSpans(parsed)
+    }
+    // For JSON content, return as-is (variables would already be stored as variableField nodes)
+    return parsed
+  }, [document.content])
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
@@ -199,8 +248,12 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
       TaskList, TaskItem.configure({ nested: true }),
       CharacterCount,
       Placeholder.configure({ placeholder: 'Commencez à rédiger votre document…' }),
+      VariableField.configure({
+        onVariableClick: handleVariableClick,
+        HTMLAttributes: {},
+      }),
     ],
-    content: parseContent(document.content),
+    content: initialContent(),
     editorProps: {
       attributes: {
         class: 'mylex-editor-content',
@@ -358,6 +411,14 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         onCancel={() => setShowCloseDialog(false)}
       />
 
+      {/* Variable inline popup */}
+      <VariablePopup
+        variableName={activeVariable?.name ?? null}
+        anchorEl={popupAnchor}
+        onConfirm={handleVariableConfirm}
+        onClose={handleVariableClose}
+      />
+
       <style jsx global>{`
         .mylex-editor-content {
           font-family: ${prefs.fontFamily};
@@ -400,6 +461,44 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         .mylex-editor-content img { max-width: 100%; height: auto; border-radius: 4px; margin: 0.5em 0; }
         .mylex-editor-content mark { border-radius: 2px; padding: 0.1em 0; }
         .mylex-editor-content ::selection { background: rgba(1, 105, 111, 0.2); }
+
+        /* ── Champs variables ───────────────────────────────────────────── */
+        .mylex-editor-content [data-variable-field] {
+          display: inline-flex;
+          align-items: center;
+          cursor: pointer;
+          user-select: none;
+          font-size: 0.82em;
+          font-weight: 500;
+          letter-spacing: 0.01em;
+          padding: 0.1em 0.55em;
+          border-radius: 4px;
+          border: 1.5px dashed #01696f;
+          color: #01696f;
+          background: rgba(1, 105, 111, 0.06);
+          transition: background 0.15s, border-color 0.15s, color 0.15s;
+          vertical-align: baseline;
+          line-height: 1.5;
+          margin: 0 1px;
+        }
+        .mylex-editor-content [data-variable-field]:hover {
+          background: rgba(1, 105, 111, 0.14);
+          border-color: #01696f;
+          color: #0c4e54;
+        }
+        .mylex-editor-content [data-variable-field].ProseMirror-selectednode {
+          outline: 2px solid #01696f;
+          outline-offset: 1px;
+        }
+        [data-theme="dark"] .mylex-editor-content [data-variable-field] {
+          border-color: #2ec4b6;
+          color: #2ec4b6;
+          background: rgba(46, 196, 182, 0.08);
+        }
+        [data-theme="dark"] .mylex-editor-content [data-variable-field]:hover {
+          background: rgba(46, 196, 182, 0.18);
+          color: #5ddfcd;
+        }
       `}</style>
     </>
   )
