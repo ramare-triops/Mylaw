@@ -1,19 +1,14 @@
 // components/editor/FillAllVariablesDialog.tsx
 // Bulle de saisie positionnée directement sur le span variable ciblé.
-// Les spans sont triés par leur position verticale dans le DOM (offsetTop)
-// pour garantir l'ordre visuel, indépendamment de l'ordre ProseMirror.
+// Stratégie : à chaque étape on prend TOUJOURS le 1er span DOM restant
+// (trié par position verticale). Pas d'index stocké qui se désynchronise
+// après chaque remplacement.
 
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { X } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
-
-interface VariableOccurrence {
-  name: string
-  pos: number
-  spanIndex: number  // index dans le tableau trié par position DOM verticale
-}
 
 interface BubblePosition {
   top: number
@@ -34,76 +29,62 @@ const ARROW_H       = 8
 const GAP           = 6
 const VIEWPORT_PAD  = 12
 
-/**
- * Collecte les variables ProseMirror ET les trie selon l'ordre visuel
- * des spans dans le DOM (position verticale offsetTop).
- * Ainsi currentIdx=0 correspond toujours au 1er champ visible de haut en bas.
- */
-function collectVariablesSortedByDOM(editor: Editor): VariableOccurrence[] {
-  // 1. Récupérer toutes les positions ProseMirror
-  const pmVars: { name: string; pos: number }[] = []
-  const seen = new Set<number>()
-  editor.state.doc.descendants((node, pos) => {
-    if (node.type.name !== 'variableField') return
-    if (seen.has(pos)) return
-    seen.add(pos)
-    pmVars.push({ name: node.attrs.name as string, pos })
+/** Compte les nœuds variableField restants dans le doc */
+function countVariables(editor: Editor): number {
+  let count = 0
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === 'variableField') count++
   })
-
-  // 2. Récupérer les spans DOM et les trier par position verticale
-  const editorDom = window.document.querySelector('.mylex-editor-content')
-  if (!editorDom) return pmVars.map((v, i) => ({ ...v, spanIndex: i }))
-
-  const spans = Array.from(
-    editorDom.querySelectorAll('[data-variable-field]')
-  ) as HTMLElement[]
-
-  // Associer chaque span à sa position verticale absolue dans le document
-  const spansWithTop = spans.map((span, idx) => ({
-    span,
-    idx,
-    top: span.getBoundingClientRect().top + window.scrollY,
-  }))
-  spansWithTop.sort((a, b) => a.top - b.top)
-
-  // 3. Construire la liste finale : ordre visuel, avec les données PM
-  // On suppose que le nombre de spans DOM = nombre de nœuds PM
-  return spansWithTop.map((item, visualOrder) => ({
-    name: (item.span.getAttribute('data-variable-name') ?? pmVars[item.idx]?.name ?? ''),
-    pos: pmVars[item.idx]?.pos ?? 0,
-    spanIndex: item.idx,  // index original dans le DOM (non trié) pour retrouver le span
-  }))
+  return count
 }
 
 /**
- * Retrouve le span DOM par son index original (avant tri).
+ * Retourne le 1er span DOM de variable encore présent,
+ * trié par position verticale (haut → bas).
  */
-function getSpanByDomIndex(idx: number): HTMLElement | null {
+function getFirstRemainingSpan(): HTMLElement | null {
   const editorDom = window.document.querySelector('.mylex-editor-content')
   if (!editorDom) return null
   const spans = Array.from(
     editorDom.querySelectorAll('[data-variable-field]')
   ) as HTMLElement[]
-  return spans[idx] ?? null
+  if (spans.length === 0) return null
+  spans.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+  return spans[0]
+}
+
+/**
+ * Trouve la position ProseMirror d'un span DOM via posAtDOM.
+ */
+function getPosFromSpan(editor: Editor, span: HTMLElement): number | null {
+  try {
+    const view    = editor.view
+    const domPos  = view.posAtDOM(span, 0)
+    const nodePos = domPos - 1
+    const node    = editor.state.doc.nodeAt(nodePos)
+    if (node && node.type.name === 'variableField') return nodePos
+    for (let offset = -2; offset <= 2; offset++) {
+      const p = nodePos + offset
+      if (p < 0) continue
+      const n = editor.state.doc.nodeAt(p)
+      if (n && n.type.name === 'variableField') return p
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 function computePosition(span: HTMLElement): BubblePosition {
   const rect = span.getBoundingClientRect()
   const vw   = window.innerWidth
   const vh   = window.innerHeight
-
   const idealLeft = rect.left + rect.width / 2 - BUBBLE_WIDTH / 2
   const left      = Math.max(VIEWPORT_PAD, Math.min(idealLeft, vw - BUBBLE_WIDTH - VIEWPORT_PAD))
   const arrowLeft = Math.max(12, Math.min(rect.left + rect.width / 2 - left, BUBBLE_WIDTH - 12))
-
   const canGoBelow = vh - rect.bottom - GAP >= BUBBLE_HEIGHT + ARROW_H + 4
-  if (canGoBelow) {
-    return { top: rect.bottom + GAP, left, arrowLeft, arrowSide: 'top' }
-  }
-  return {
-    top: rect.top - GAP - ARROW_H - BUBBLE_HEIGHT,
-    left, arrowLeft, arrowSide: 'bottom',
-  }
+  if (canGoBelow) return { top: rect.bottom + GAP, left, arrowLeft, arrowSide: 'top' }
+  return { top: rect.top - GAP - ARROW_H - BUBBLE_HEIGHT, left, arrowLeft, arrowSide: 'bottom' }
 }
 
 function scrollToSpanAndWait(span: HTMLElement): Promise<void> {
@@ -114,106 +95,71 @@ function scrollToSpanAndWait(span: HTMLElement): Promise<void> {
       setTimeout(resolve, 500)
       return
     }
-
     const containerRect = container.getBoundingClientRect()
     const spanRect      = span.getBoundingClientRect()
     const spanOffsetTop = container.scrollTop + spanRect.top - containerRect.top
     const targetScroll  = spanOffsetTop - containerRect.height / 2 + spanRect.height / 2
-
     container.scrollTo({ top: targetScroll, behavior: 'smooth' })
-
     let timer: ReturnType<typeof setTimeout>
     const onScroll = () => {
       clearTimeout(timer)
-      timer = setTimeout(() => {
-        container.removeEventListener('scroll', onScroll)
-        resolve()
-      }, 120)
+      timer = setTimeout(() => { container.removeEventListener('scroll', onScroll); resolve() }, 120)
     }
     container.addEventListener('scroll', onScroll, { passive: true })
-    timer = setTimeout(() => {
-      container.removeEventListener('scroll', onScroll)
-      resolve()
-    }, 500)
+    timer = setTimeout(() => { container.removeEventListener('scroll', onScroll); resolve() }, 500)
   })
 }
 
 export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariablesDialogProps) {
-  const [variables, setVariables]   = useState<VariableOccurrence[]>([])
-  const [currentIdx, setCurrentIdx] = useState(0)
-  const [value, setValue]           = useState('')
-  const [bubblePos, setBubblePos]   = useState<BubblePosition | null>(null)
-  const [targetSpan, setTargetSpan] = useState<HTMLElement | null>(null)
+  const [total, setTotal]             = useState(0)
+  const [remaining, setRemaining]     = useState(0)
+  const [currentName, setCurrentName] = useState('')
+  const [value, setValue]             = useState('')
+  const [bubblePos, setBubblePos]     = useState<BubblePosition | null>(null)
+  const [targetSpan, setTargetSpan]   = useState<HTMLElement | null>(null)
   const inputRef  = useRef<HTMLInputElement>(null)
   const activeRef = useRef(false)
 
-  // Charger les variables à l'ouverture
+  /** Pointe la bulle sur le 1er span DOM restant */
+  const pointToFirstSpan = useCallback(async (isActive: () => boolean) => {
+    if (!editor) return
+    setBubblePos(null)
+    const span = getFirstRemainingSpan()
+    if (!span || !isActive()) return
+    const name = span.getAttribute('data-variable-name') ?? ''
+    setCurrentName(name)
+    setTargetSpan(span)
+    span.dataset.fillActive = 'true'
+    await scrollToSpanAndWait(span)
+    if (!isActive()) return
+    setBubblePos(computePosition(span))
+    setTimeout(() => inputRef.current?.focus(), 40)
+  }, [editor])
+
+  // Initialisation à l'ouverture
   useEffect(() => {
     if (!open || !editor) return
     activeRef.current = true
-    const vars = collectVariablesSortedByDOM(editor)
-    setVariables(vars)
-    setCurrentIdx(0)
+    const t = countVariables(editor)
+    setTotal(t)
+    setRemaining(t)
     setValue('')
     setBubblePos(null)
     setTargetSpan(null)
-    return () => { activeRef.current = false }
-  }, [open, editor])
-
-  // Scroll + positionnement à chaque changement de champ
-  useEffect(() => {
-    if (!open || variables.length === 0) return
-    const current = variables[currentIdx]
-    if (!current) return
-
-    activeRef.current = true
-    setBubblePos(null)
-
-    const run = async () => {
-      const span = getSpanByDomIndex(current.spanIndex)
-      if (!span || !activeRef.current) return
-
-      setTargetSpan(span)
-      span.dataset.fillActive = 'true'
-
-      await scrollToSpanAndWait(span)
-      if (!activeRef.current) return
-
-      setBubblePos(computePosition(span))
-      setTimeout(() => inputRef.current?.focus(), 40)
-    }
-
-    void run()
-
+    let cancelled = false
+    void pointToFirstSpan(() => !cancelled && activeRef.current)
     return () => {
+      cancelled = true
       activeRef.current = false
-      const current = variables[currentIdx]
-      if (current) {
-        const old = getSpanByDomIndex(current.spanIndex)
-        if (old) delete old.dataset.fillActive
-      }
+      window.document.querySelectorAll('[data-fill-active]')
+        .forEach((el) => delete (el as HTMLElement).dataset.fillActive)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIdx, open, variables])
-
-  // Nettoyage à la fermeture
-  useEffect(() => {
-    if (open) return
-    activeRef.current = false
-    window.document
-      .querySelectorAll('[data-fill-active]')
-      .forEach((el) => delete (el as HTMLElement).dataset.fillActive)
-    setBubblePos(null)
-    setTargetSpan(null)
-  }, [open])
+  }, [open, editor, pointToFirstSpan])
 
   // Repositionnement sur scroll / resize
   useEffect(() => {
     if (!open || !targetSpan) return
-    const reposition = () => {
-      if (!activeRef.current) return
-      setBubblePos(computePosition(targetSpan))
-    }
+    const reposition = () => { if (activeRef.current) setBubblePos(computePosition(targetSpan)) }
     const container = targetSpan.closest('.overflow-y-auto')
     container?.addEventListener('scroll', reposition, { passive: true })
     window.addEventListener('resize', reposition, { passive: true })
@@ -223,46 +169,49 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     }
   }, [open, targetSpan])
 
-  const handleConfirm = useCallback(() => {
-    if (!editor || !value.trim()) return
-    const current = variables[currentIdx]
-    if (!current) return
+  // Nettoyage à la fermeture
+  useEffect(() => {
+    if (open) return
+    activeRef.current = false
+    window.document.querySelectorAll('[data-fill-active]')
+      .forEach((el) => delete (el as HTMLElement).dataset.fillActive)
+    setBubblePos(null)
+    setTargetSpan(null)
+  }, [open])
 
-    const span = getSpanByDomIndex(current.spanIndex)
-    if (span) delete span.dataset.fillActive
+  const handleConfirm = useCallback(async () => {
+    if (!editor || !value.trim() || !targetSpan) return
 
-    // Relire les positions après remplacements précédents
-    const freshVars: { name: string; pos: number }[] = []
-    const seen = new Set<number>()
-    editor.state.doc.descendants((node, pos) => {
-      if (node.type.name !== 'variableField') return
-      if (seen.has(pos)) return
-      seen.add(pos)
-      freshVars.push({ name: node.attrs.name as string, pos })
-    })
-    const target = freshVars.find((v) => v.name === current.name)
-    if (target) editor.commands.replaceVariable(target.pos, value.trim())
+    // Retirer le highlight du span courant
+    delete targetSpan.dataset.fillActive
 
-    const next = currentIdx + 1
-    if (next >= variables.length) {
-      onClose()
-    } else {
-      activeRef.current = true
-      setCurrentIdx(next)
-      setValue('')
-      setBubblePos(null)
-    }
-  }, [editor, value, currentIdx, variables, onClose])
+    // Remplacer via la position PM réelle du span (toujours fraîche)
+    const pos = getPosFromSpan(editor, targetSpan)
+    if (pos !== null) editor.commands.replaceVariable(pos, value.trim())
+
+    const newRemaining = remaining - 1
+    setRemaining(newRemaining)
+    setValue('')
+    setBubblePos(null)
+    setTargetSpan(null)
+
+    if (newRemaining <= 0) { onClose(); return }
+
+    // Pointer immédiatement sur le nouveau 1er span restant
+    activeRef.current = true
+    let cancelled = false
+    await pointToFirstSpan(() => !cancelled && activeRef.current)
+    return () => { cancelled = true }
+  }, [editor, value, targetSpan, remaining, onClose, pointToFirstSpan])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter')  { e.preventDefault(); handleConfirm() }
+    if (e.key === 'Enter')  { e.preventDefault(); void handleConfirm() }
     if (e.key === 'Escape') { e.preventDefault(); onClose() }
   }
 
-  if (!open || variables.length === 0) return null
+  if (!open || total === 0) return null
 
-  const current = variables[currentIdx]
-  const total   = variables.length
+  const done = total - remaining
 
   return (
     <>
@@ -274,14 +223,14 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
         }
         @keyframes bubblePop {
           from { opacity: 0; transform: scale(0.90) translateY(-4px); }
-          to   { opacity: 1; transform: scale(1)   translateY(0); }
+          to   { opacity: 1; transform: scale(1) translateY(0); }
         }
       `}</style>
 
-      {bubblePos && current && (
+      {bubblePos && currentName && (
         <div
           role="dialog"
-          aria-label={`Renseigner ${current.name}`}
+          aria-label={`Renseigner ${currentName}`}
           style={{
             position: 'fixed',
             top:    bubblePos.top,
@@ -293,8 +242,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
           }}
         >
           {bubblePos.arrowSide === 'top' && (
-            <svg width={ARROW_H * 2} height={ARROW_H}
-              viewBox={`0 0 ${ARROW_H * 2} ${ARROW_H}`}
+            <svg width={ARROW_H * 2} height={ARROW_H} viewBox={`0 0 ${ARROW_H * 2} ${ARROW_H}`}
               style={{ position: 'absolute', top: -ARROW_H, left: bubblePos.arrowLeft - ARROW_H, display: 'block', overflow: 'visible' }}
             >
               <polygon points={`0,${ARROW_H} ${ARROW_H},0 ${ARROW_H * 2},${ARROW_H}`} fill="#01696f" />
@@ -315,7 +263,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
             boxSizing: 'border-box',
           }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: '#01696f', whiteSpace: 'nowrap', flexShrink: 0, letterSpacing: '0.02em', textTransform: 'uppercase' }}>
-              {current.name}
+              {currentName}
             </span>
             <div style={{ width: 1, height: 18, background: '#01696f', opacity: 0.25, flexShrink: 0 }} />
             <input
@@ -325,13 +273,11 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="…"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
+              autoComplete="off" autoCorrect="off" spellCheck={false}
               style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: 'var(--color-text, #28251d)', caretColor: '#01696f' }}
             />
             <span style={{ fontSize: 10, color: 'var(--color-text-muted, #9ca3af)', whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {currentIdx + 1}/{total}
+              {done + 1}/{total}
             </span>
             <button type="button" onClick={onClose} aria-label="Fermer"
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-text-muted, #9ca3af)', flexShrink: 0, padding: 0 }}
@@ -343,8 +289,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
           </div>
 
           {bubblePos.arrowSide === 'bottom' && (
-            <svg width={ARROW_H * 2} height={ARROW_H}
-              viewBox={`0 0 ${ARROW_H * 2} ${ARROW_H}`}
+            <svg width={ARROW_H * 2} height={ARROW_H} viewBox={`0 0 ${ARROW_H * 2} ${ARROW_H}`}
               style={{ position: 'absolute', bottom: -ARROW_H, left: bubblePos.arrowLeft - ARROW_H, display: 'block', overflow: 'visible' }}
             >
               <polygon points={`0,0 ${ARROW_H * 2},0 ${ARROW_H},${ARROW_H}`} fill="#01696f" />
