@@ -31,9 +31,7 @@ export function useDriveSync() {
     // Vérifier si on revient du callback OAuth avec ?drive=connected
     const params = new URLSearchParams(window.location.search);
     if (params.get('drive') === 'connected') {
-      // Nettoyer l'URL sans recharger la page
       window.history.replaceState({}, '', window.location.pathname);
-      // Charger immédiatement les données Drive
       loadFromDriveAfterAuth();
       return;
     }
@@ -52,7 +50,7 @@ export function useDriveSync() {
           setLastSynced(new Date());
           setStatus('connected');
         } catch {
-          setStatus('connected'); // connecté mais restauration échouée
+          setStatus('connected');
         }
       } else {
         const wasConnected = await getSetting<boolean>('drive_connected', false);
@@ -64,7 +62,7 @@ export function useDriveSync() {
   async function loadFromDriveAfterAuth() {
     setStatus('syncing');
     try {
-      client['_isConnected'] = true; // marquer connecté après callback
+      client['_isConnected'] = true;
       const remote = await client.download();
       if (remote && remote.exportedAt) {
         await restoreFromBackup(remote);
@@ -77,20 +75,14 @@ export function useDriveSync() {
     }
   }
 
-  /**
-   * connect() : lance le flow OAuth PKCE.
-   * Redirige vers Google, puis /api/drive/callback gère le retour.
-   */
   const connect = useCallback(async () => {
     setError(null);
     try {
-      // Stocker le verifier dans un cookie temporaire (lisible côté serveur dans /callback)
       const verifier = generateRandomString(64);
       const challenge = await generateCodeChallenge(verifier);
       const redirectUri = `${window.location.origin}/api/drive/callback`;
       const state = generateRandomString(16);
 
-      // Cookie temporaire pour le callback
       document.cookie = `pkce_verifier=${verifier}; path=/; max-age=300; samesite=lax`;
       document.cookie = `pkce_redirect=${encodeURIComponent(redirectUri)}; path=/; max-age=300; samesite=lax`;
       document.cookie = `pkce_state=${state}; path=/; max-age=300; samesite=lax`;
@@ -109,7 +101,7 @@ export function useDriveSync() {
 
       window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
     } catch (e: any) {
-      setError(e?.message ?? 'Erreur d'initialisation OAuth');
+      setError(e?.message ?? "Erreur d'initialisation OAuth");
     }
   }, []);
 
@@ -153,7 +145,7 @@ export function useDriveSync() {
   return { status, lastSynced, error, connect, disconnect, syncNow, scheduleSync };
 }
 
-// ─── Helpers PKCE (dupliqués côté client) ───────────────────────────────────────────
+// ─── Helpers PKCE ────────────────────────────────────────────────────────────
 
 function generateRandomString(length: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -170,7 +162,7 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-// ─── Backup / Restore ────────────────────────────────────────────────────────────────────
+// ─── Backup / Restore ─────────────────────────────────────────────────────────
 
 export async function buildBackup(): Promise<MylawBackup> {
   const [documents, folders, snippets, deadlines, templates, tools, aiChats] = await Promise.all([
