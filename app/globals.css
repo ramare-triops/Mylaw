@@ -1,0 +1,200 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS Design Tokens ────────────────────────────────────────────────── */
+:root {
+  /* Brand */
+  --color-primary: #01696f;
+  --color-primary-hover: #015a5f;
+  --color-primary-light: #d9f2f3;
+
+  /* Surfaces */
+  --color-surface: #f7f4ef;
+  --color-surface-raised: #f0ece4;
+  --color-sidebar: #ece8e0;
+  --color-border: #ddd8ce;
+
+  /* Text */
+  --color-text: #1a1a1a;
+  --color-text-muted: #6b6b6b;
+  --color-text-subtle: #9b9b9b;
+
+  /* State */
+  --color-danger: #c0392b;
+  --color-warning: #e67e22;
+  --color-success: #27ae60;
+
+  /* Layout */
+  --sidebar-width: 256px;
+  --topbar-height: 52px;
+
+  /* Typography */
+  --font-ui: 'Inter', ui-sans-serif, system-ui;
+  --font-editor: Georgia, 'Source Serif 4', ui-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace;
+}
+
+.dark {
+  --color-surface: #141414;
+  --color-surface-raised: #1a1a1a;
+  --color-sidebar: #111111;
+  --color-border: #2a2a2a;
+  --color-text: #e8e4dc;
+  --color-text-muted: #a0a0a0;
+  --color-text-subtle: #666666;
+}
+
+/* ─── Base Styles ───────────────────────────────────────────────────── */
+body {
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+/* ─── Editor Styles ────────────────────────────────────────────────── */
+.tiptap-editor {
+  font-family: var(--font-editor);
+  font-size: 15px;
+  line-height: 1.8;
+  outline: none;
+}
+
+.tiptap-editor p {
+  margin-bottom: 0.75rem;
+}
+
+.tiptap-editor h1 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  margin-top: 1.5rem;
+}
+
+.tiptap-editor h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.tiptap-editor h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  margin-top: 1rem;
+}
+
+.tiptap-editor ul,
+.tiptap-editor ol {
+  padding-left: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.tiptap-editor blockquote {
+  border-left: 3px solid var(--color-primary);
+  padding-left: 1rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.tiptap-editor table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+.tiptap-editor table td,
+.tiptap-editor table th {
+  border: 1px solid var(--color-border);
+  padding: 0.5rem;
+  vertical-align: top;
+}
+
+.tiptap-editor table th {
+  background-color: var(--color-surface-raised);
+  font-weight: 600;
+}
+
+/* Variable highlights */
+.tiptap-editor .variable {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 0 0.25rem;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+/* Placeholder */
+.tiptap-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--color-text-subtle);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-subtle);
+}
+
+/* ─── Focus visible ────────────────────────────────────────────────── */
+*:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ─── Animations ──────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fadeIn 150ms ease-out;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+.animate-slide-in-right {
+  animation: slideInRight 150ms ease-out;
+}
+
+/* ─── AI Typing indicator ────────────────────────────────────────── */
+.ai-typing span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background-color: var(--color-primary);
+  border-radius: 50%;
+  animation: typing-bounce 1.2s infinite;
+}
+.ai-typing span:nth-child(2) { animation-delay: 0.2s; }
+.ai-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40%            { transform: translateY(-4px); opacity: 1; }
+}
