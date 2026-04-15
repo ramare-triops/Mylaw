@@ -211,7 +211,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     onUpdate: ({ editor }) => markAsChanged(JSON.stringify(editor.getJSON())),
   })
 
-  // Applique police + taille + alignement depuis les prefs au montage
   useEffect(() => {
     if (!editor || !prefsLoaded.current) return
     editor
