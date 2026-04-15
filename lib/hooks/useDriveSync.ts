@@ -6,8 +6,7 @@ import { db, getSetting, setSetting, registerDriveSyncCallback, setRestoreInProg
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '';
 
-// Debounce : attend 3s d'inactivité avant d'uploader
-// (Google Docs utilise ~2s, on prend 3s pour éviter le spam sur frappe rapide)
+// Debounce : attend 3s d'inactivité avant d'uploader (comme Google Docs ~2s)
 const UPLOAD_DEBOUNCE_MS = 3000;
 
 let clientInstance: DriveClient | null = null;
@@ -20,32 +19,44 @@ export function useDriveSync() {
   const [status, setStatus] = useState<DriveStatus>('idle');
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Ref pour accéder au status courant dans les callbacks sans re-créer scheduleSync
+  const statusRef = useRef<DriveStatus>('idle');
   const uploadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const client = getClient();
 
+  function updateStatus(s: DriveStatus) {
+    statusRef.current = s;
+    setStatus(s);
+  }
+
   // ─── scheduleSync : déclenché par le middleware Dexie à chaque écriture ───
+  // On utilise statusRef (pas status) pour éviter de recréer la fonction à chaque render
   const scheduleSync = useCallback(() => {
-    if (!client.isConnected()) return;
+    // Ne sync que si connecté ou en train de syncer (pas idle/disconnected/error)
+    const currentStatus = statusRef.current;
+    if (currentStatus === 'idle' || currentStatus === 'disconnected' || currentStatus === 'loading') return;
+
     if (uploadTimer.current) clearTimeout(uploadTimer.current);
-    setStatus('syncing');
+    updateStatus('syncing');
+
     uploadTimer.current = setTimeout(async () => {
       try {
         const backup = await buildBackup();
         await client.upload(backup);
         setLastSynced(new Date());
-        setStatus('connected');
+        updateStatus('connected');
       } catch {
-        setStatus('error');
+        updateStatus('error');
       }
     }, UPLOAD_DEBOUNCE_MS);
-  }, []);
+  }, []); // deps vides intentionnellement — on lit statusRef
 
-  // ─── Enregistre le callback dans db.ts dès que le composant monte ───
+  // Enregistre le callback dans db.ts dès que le composant monte
   useEffect(() => {
     registerDriveSyncCallback(scheduleSync);
   }, [scheduleSync]);
 
-  // ─── Au démarrage : silent refresh + pull Drive ──────────────────────────
+  // ─── Au démarrage : silent refresh + pull Drive ───
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -57,23 +68,22 @@ export function useDriveSync() {
       return;
     }
 
-    // Sinon tentative silent refresh
-    setStatus('loading');
+    // Tentative silent refresh via cookie
+    updateStatus('loading');
     client.trySilentRefresh().then(async (ok) => {
       if (ok) {
         await loadFromDrive();
       } else {
         const wasConnected = await getSetting<boolean>('drive_connected', false);
-        setStatus(wasConnected ? 'disconnected' : 'idle');
+        updateStatus(wasConnected ? 'disconnected' : 'idle');
       }
     });
   }, []);
 
-  // ─── Pull Drive : télécharge + restaure ───────────────────────────────────
+  // Pull Drive : télécharge + restaure
   async function loadFromDrive() {
-    setStatus('syncing');
+    updateStatus('syncing');
     try {
-      client['_isConnected'] = true;
       const remote = await client.download();
       if (remote && remote.exportedAt) {
         setRestoreInProgress(true);
@@ -82,14 +92,14 @@ export function useDriveSync() {
       }
       await setSetting('drive_connected', true);
       setLastSynced(new Date());
-      setStatus('connected');
+      updateStatus('connected');
     } catch {
       setRestoreInProgress(false);
-      setStatus('error');
+      updateStatus('error');
     }
   }
 
-  // ─── connect() : lance le flow OAuth PKCE ──────────────────────────────────
+  // ─── connect() : lance le flow OAuth PKCE ───
   const connect = useCallback(async () => {
     setError(null);
     try {
@@ -102,7 +112,7 @@ export function useDriveSync() {
       document.cookie = `pkce_redirect=${encodeURIComponent(redirectUri)}; path=/; max-age=300; samesite=lax`;
       document.cookie = `pkce_state=${state}; path=/; max-age=300; samesite=lax`;
 
-      const params = new URLSearchParams({
+      const urlParams = new URLSearchParams({
         client_id: CLIENT_ID,
         redirect_uri: redirectUri,
         response_type: 'code',
@@ -114,7 +124,7 @@ export function useDriveSync() {
         state,
       });
 
-      window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+      window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${urlParams}`;
     } catch (e: any) {
       setError(e?.message ?? "Erreur d'initialisation OAuth");
     }
@@ -123,28 +133,27 @@ export function useDriveSync() {
   const disconnect = useCallback(async () => {
     await client.signOut();
     await setSetting('drive_connected', false);
-    setStatus('idle');
+    updateStatus('idle');
     setLastSynced(null);
   }, []);
 
   const syncNow = useCallback(async () => {
-    if (!client.isConnected()) return;
-    setStatus('syncing');
+    updateStatus('syncing');
     try {
       const backup = await buildBackup();
       await client.upload(backup);
       setLastSynced(new Date());
-      setStatus('connected');
+      updateStatus('connected');
     } catch (e: any) {
       setError(e?.message ?? 'Erreur de synchronisation');
-      setStatus('error');
+      updateStatus('error');
     }
   }, []);
 
   return { status, lastSynced, error, connect, disconnect, syncNow, scheduleSync };
 }
 
-// ─── Helpers PKCE ────────────────────────────────────────────────────────────
+// ─── Helpers PKCE ─────────────────────────────────────────────────────────
 
 function generateRandomString(length: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -161,7 +170,7 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-// ─── Backup / Restore ─────────────────────────────────────────────────────────
+// ─── Backup / Restore ────────────────────────────────────────────────────────
 
 export async function buildBackup(): Promise<MylawBackup> {
   const [documents, folders, snippets, deadlines, templates, tools, aiChats] = await Promise.all([
@@ -184,7 +193,6 @@ export async function buildBackup(): Promise<MylawBackup> {
 }
 
 export async function restoreFromBackup(backup: MylawBackup): Promise<void> {
-  // setRestoreInProgress(true) est appelé par l'appelant
   await Promise.all([
     db.documents.clear(), db.folders.clear(),
     db.table('snippets').clear(), db.table('deadlines').clear(),
