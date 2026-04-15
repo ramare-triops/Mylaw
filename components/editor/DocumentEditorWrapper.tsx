@@ -29,6 +29,7 @@ import Placeholder from '@tiptap/extension-placeholder'
 import { Save, Check, Loader2, Wifi, WifiOff, X } from 'lucide-react'
 
 import { WordToolbar } from './WordToolbar'
+import { FontSize } from './extensions/FontSize'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
 import { getSetting } from '@/lib/db'
 import type { Document } from '@/lib/db'
@@ -40,7 +41,6 @@ interface DocumentEditorWrapperProps {
   onClose?: () => void
 }
 
-// ── Marges page A4 selon le réglage ──────────────────────────────────────────
 const MARGIN_MAP: Record<string, string> = {
   narrow:       '15mm 15mm 15mm 15mm',
   normal:       '25mm 20mm 20mm 25mm',
@@ -48,7 +48,6 @@ const MARGIN_MAP: Record<string, string> = {
   'extra-wide': '35mm 30mm 30mm 35mm',
 }
 
-// ── Détection automatique du format de contenu ────────────────────────────────
 function parseContent(raw: string | undefined | null): string | object {
   if (!raw || raw.trim() === '') return ''
   const trimmed = raw.trim()
@@ -61,7 +60,6 @@ function parseContent(raw: string | undefined | null): string | object {
   return `<p>${trimmed}</p>`
 }
 
-// ── Popup Fermer ──────────────────────────────────────────────────────────────
 function CloseDialog({
   open, isSaving, documentTitle,
   onSaveOnly, onSaveAndClose, onClose, onCancel,
@@ -112,7 +110,6 @@ function CloseDialog({
   )
 }
 
-// ── Composant principal ───────────────────────────────────────────────────────
 export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapperProps) {
   const router = useRouter()
   const [showCloseDialog, setShowCloseDialog] = useState(false)
@@ -123,7 +120,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged } =
     useDocumentSave(document.id, prefs.autoSave ? Number(prefs.autoSaveDelay) * 1000 : 0)
 
-  // ── Chargement des préférences depuis IndexedDB ──────────────────────────
   useEffect(() => {
     getSetting<EditorPrefs>('editorPrefs', DEFAULT_EDITOR_PREFS).then((p) => {
       setPrefs(p)
@@ -131,7 +127,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     })
   }, [])
 
-  // ── Réseau ────────────────────────────────────────────────────────────────
   useEffect(() => {
     const up   = () => setIsOnline(true)
     const down = () => setIsOnline(false)
@@ -141,7 +136,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down) }
   }, [])
 
-  // ── Navigation ───────────────────────────────────────────────────────────
   const performClose = useCallback(() => {
     if (onClose) onClose()
     else router.push('/documents')
@@ -168,7 +162,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     performClose()
   }, [performClose])
 
-  // ── Ctrl+S ───────────────────────────────────────────────────────────────
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -180,7 +173,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [saveNow])
 
-  // ── beforeunload ─────────────────────────────────────────────────────────
   useEffect(() => {
     const onBefore = (e: BeforeUnloadEvent) => {
       if (hasUnsavedChanges) { e.preventDefault(); e.returnValue = '' }
@@ -189,11 +181,15 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     return () => window.removeEventListener('beforeunload', onBefore)
   }, [hasUnsavedChanges])
 
-  // ── Initialisation de l'éditeur ──────────────────────────────────────────
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
-      Underline, TextStyle, FontFamily, Color,
+      Underline,
+      TextStyle,
+      FontFamily,
+      // FontSize doit venir APRÈS TextStyle pour enrichir ses attributs
+      FontSize,
+      Color,
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Link.configure({ openOnClick: false, HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' } }),
@@ -215,17 +211,21 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     onUpdate: ({ editor }) => markAsChanged(JSON.stringify(editor.getJSON())),
   })
 
-  // ── Applique la police + alignement dès que les préférences sont chargées ──
+  // Applique police + taille + alignement depuis les prefs au montage
   useEffect(() => {
     if (!editor || !prefsLoaded.current) return
-    editor.chain().focus().setFontFamily(prefs.fontFamily).run()
+    editor
+      .chain()
+      .focus()
+      .setFontFamily(prefs.fontFamily)
+      .setFontSize(`${prefs.fontSize}pt`)
+      .run()
     if (prefs.defaultTextAlign !== 'left') {
       editor.chain().setTextAlign(prefs.defaultTextAlign).run()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, prefsLoaded.current])
 
-  // ── Liens & images ───────────────────────────────────────────────────────
   const handleInsertLink = useCallback(() => {
     if (!editor) return
     const prev = editor.getAttributes('link').href
@@ -241,11 +241,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     if (url) editor.chain().focus().setImage({ src: url }).run()
   }, [editor])
 
-  const wordCount    = editor?.storage.characterCount.words()      ?? 0
-  const charCount    = editor?.storage.characterCount.characters() ?? 0
-  const pagePadding  = MARGIN_MAP[prefs.pageMargin] ?? MARGIN_MAP.normal
+  const wordCount   = editor?.storage.characterCount.words()      ?? 0
+  const charCount   = editor?.storage.characterCount.characters() ?? 0
+  const pagePadding = MARGIN_MAP[prefs.pageMargin] ?? MARGIN_MAP.normal
 
-  // ── Indicateur de sauvegarde ─────────────────────────────────────────────
   const SaveIndicator = () => {
     if (isSaving) return (
       <span className="flex items-center gap-1.5 text-[var(--text-xs)] text-[var(--color-text-muted)]">
@@ -269,8 +268,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   return (
     <>
       <div className="flex flex-col h-full overflow-hidden bg-[var(--color-surface-offset)]">
-
-        {/* En-tête */}
         <div className="flex items-center justify-between gap-3 px-4 py-2 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex-shrink-0">
           <input
             type="text"
@@ -312,7 +309,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           </div>
         </div>
 
-        {/* Barre d'outils Word — reçoit les valeurs par défaut issues des préférences */}
         <WordToolbar
           editor={editor}
           onInsertLink={handleInsertLink}
@@ -321,7 +317,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           defaultFontSize={String(prefs.fontSize)}
         />
 
-        {/* Page A4 */}
         <div className="flex-1 overflow-y-auto bg-[#e8e8e8] dark:bg-[#2a2a2a] px-8 py-8">
           <div
             className="mx-auto bg-white dark:bg-[#1e1e1e] shadow-[0_2px_8px_rgba(0,0,0,0.15),0_0_0_1px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.5)] min-h-[297mm]"
@@ -331,7 +326,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           </div>
         </div>
 
-        {/* Barre de statut */}
         {prefs.showStatusBar && (
           <div className="flex items-center justify-between px-4 py-1 bg-[var(--color-primary)] text-white text-[var(--text-xs)] flex-shrink-0">
             <div className="flex items-center gap-4">
@@ -355,7 +349,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         )}
       </div>
 
-      {/* Popup Fermer */}
       <CloseDialog
         open={showCloseDialog}
         isSaving={isSaving}
@@ -366,7 +359,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         onCancel={() => setShowCloseDialog(false)}
       />
 
-      {/* Styles TipTap injectés depuis les préférences */}
       <style jsx global>{`
         .mylex-editor-content {
           font-family: ${prefs.fontFamily};
@@ -391,7 +383,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         .mylex-editor-content ol { list-style-type: decimal; }
         .mylex-editor-content ul[data-type="taskList"] { list-style: none; padding-left: 0.5em; }
         .mylex-editor-content ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.5em; }
-        .mylex-editor-content ul[data-type="taskList"] li > label { flex-shrink-0; margin-top: 0.2em; }
+        .mylex-editor-content ul[data-type="taskList"] li > label { flex-shrink: 0; margin-top: 0.2em; }
         .mylex-editor-content blockquote { border-left: 3px solid #01696f; padding: 0.5em 0 0.5em 1.25em; margin: 1em 0; color: #6b7280; font-style: italic; }
         .mylex-editor-content code { font-family: 'JetBrains Mono', 'Courier New', monospace; font-size: 0.875em; background: #f3f4f6; border-radius: 3px; padding: 0.15em 0.4em; color: #c7254e; }
         [data-theme="dark"] .mylex-editor-content code { background: #2d2d2d; color: #e06c75; }

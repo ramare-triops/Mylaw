@@ -1,6 +1,6 @@
 // components/editor/WordToolbar.tsx
 // Barre d'outils style Word — police et taille se mettent à jour en temps réel
-// via useEditorState(). Largeurs fixes pour éviter que la barre change de taille.
+// via useEditorState(). Lecture de fontSize via l'extension FontSize custom.
 
 'use client'
 
@@ -22,9 +22,7 @@ interface WordToolbarProps {
   editor: Editor | null
   onInsertLink: () => void
   onInsertImage: () => void
-  /** Police par défaut issue des préférences (fallback si aucun mark sur le curseur) */
   defaultFontFamily?: string
-  /** Taille par défaut issue des préférences (fallback si aucun mark sur le curseur) */
   defaultFontSize?: string
 }
 
@@ -74,18 +72,16 @@ const TEXT_COLORS = [
   { color: '#01696f', label: 'Teal' },
 ]
 
-/** Extrait le premier nom de la pile CSS (ex: "'Source Serif 4', Georgia" → "Source Serif 4") */
 function fontLabel(value: string): string {
   const known = FONT_FAMILIES.find((f) => f.value === value)
   if (known) return known.label
-  // Extrait le premier token : retire guillemets et apostrophes
   return value.split(',')[0].replace(/['"/]/g, '').trim()
 }
 
-/** Normalise une taille CSS → nombre seul ("12pt" | "16px" | "12" → "12") */
-function normalizeSize(raw: string | undefined): string {
+/** Extrait le nombre seul : "12pt" → "12", "16px" → "16", "12" → "12" */
+function normalizeSize(raw: string | null | undefined): string {
   if (!raw) return ''
-  return raw.replace(/pt|px|em|rem/g, '').trim()
+  return raw.replace(/[^0-9.]/g, '').trim()
 }
 
 function ToolbarTooltip({ label, children }: { label: string; children: React.ReactNode }) {
@@ -94,10 +90,7 @@ function ToolbarTooltip({ label, children }: { label: string; children: React.Re
       <Tooltip.Root>
         <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
         <Tooltip.Portal>
-          <Tooltip.Content
-            className="z-50 px-2 py-1 rounded text-xs bg-[var(--color-text)] text-[var(--color-bg)] shadow-md select-none"
-            sideOffset={4}
-          >
+          <Tooltip.Content className="z-50 px-2 py-1 rounded text-xs bg-[var(--color-text)] text-[var(--color-bg)] shadow-md select-none" sideOffset={4}>
             {label}
           </Tooltip.Content>
         </Tooltip.Portal>
@@ -106,9 +99,7 @@ function ToolbarTooltip({ label, children }: { label: string; children: React.Re
   )
 }
 
-function ToolbarButton({
-  label, isActive = false, disabled = false, onClick, children,
-}: {
+function ToolbarButton({ label, isActive = false, disabled = false, onClick, children }: {
   label: string; isActive?: boolean; disabled?: boolean; onClick: () => void; children: React.ReactNode
 }) {
   return (
@@ -120,9 +111,7 @@ function ToolbarButton({
         aria-label={label}
         aria-pressed={isActive}
         className={`inline-flex items-center justify-center w-7 h-7 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] focus-visible:outline-offset-1 ${
-          isActive
-            ? 'bg-[var(--color-primary-highlight)] text-[var(--color-primary)]'
-            : 'hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]'
+          isActive ? 'bg-[var(--color-primary-highlight)] text-[var(--color-primary)]' : 'hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]'
         }`}
       >
         {children}
@@ -143,7 +132,6 @@ export function WordToolbar({
   defaultFontSize   = '12',
 }: WordToolbarProps) {
 
-  // ── useEditorState : re-render à chaque transaction (frappe, clic, sélection) ──
   const editorState = useEditorState({
     editor,
     selector: (ctx) => {
@@ -158,14 +146,15 @@ export function WordToolbar({
       if (e.isActive('codeBlock'))  headingLabel = 'Code'
 
       const textStyle  = e.getAttributes('textStyle')
-      const fontFamily = textStyle.fontFamily as string | undefined
-      const fontSize   = textStyle.fontSize   as string | undefined
+      // fontSize est maintenant un attribut déclaré par l'extension FontSize
+      const fontSize   = textStyle.fontSize   as string | null | undefined
+      const fontFamily = textStyle.fontFamily as string | null | undefined
 
       return {
         headingLabel,
-        // Si aucun mark explicite sur le nœud, on retombe sur la préférence par défaut
         fontFamily:     fontFamily  ?? defaultFontFamily,
-        fontSize:       fontSize    ?? `${defaultFontSize}pt`,
+        // Retourne null si pas de mark pour déclencher le fallback sur defaultFontSize
+        fontSize:       fontSize    ?? null,
         textColor:      (textStyle.color as string | undefined) ?? '#28251d',
         isBold:         e.isActive('bold'),
         isItalic:       e.isActive('italic'),
@@ -203,9 +192,9 @@ export function WordToolbar({
     canUndo, canRedo,
   } = editorState
 
-  // Nom court pour l'affichage (jamais la chaîne CSS complète)
   const displayFont = fontLabel(fontFamily)
-  const displaySize = normalizeSize(fontSize) || defaultFontSize
+  // Si fontSize est null (pas de mark explicite), affiche la taille par défaut des prefs
+  const displaySize = fontSize ? normalizeSize(fontSize) : defaultFontSize
 
   const applyHeadingStyle = (value: string) => {
     if (!editor) return
@@ -220,17 +209,14 @@ export function WordToolbar({
     }
   }
 
-  // Classes partagées
   const dc = `z-50 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-[var(--radius-md)] shadow-[var(--shadow-md)] py-1 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95`
   const di = `px-3 py-1.5 cursor-pointer outline-none text-sm text-[var(--color-text)] hover:bg-[var(--color-primary-highlight)] hover:text-[var(--color-primary)] transition-colors duration-100`
-  // Trigger commun : hauteur et padding fixes, overflow hidden — la largeur est imposée via className
   const dtBase = `inline-flex items-center gap-1 h-7 px-2 rounded-[var(--radius-sm)] text-[var(--text-xs)] text-[var(--color-text)] bg-transparent hover:bg-[var(--color-surface-offset)] border border-[var(--color-border)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] focus-visible:outline-offset-1 overflow-hidden`
 
   return (
     <div
       role="toolbar"
       aria-label="Barre d'outils de l'éditeur"
-      // h-10 fixe : la barre ne changera jamais de hauteur
       className="flex flex-wrap items-center gap-0.5 px-3 py-0 bg-[var(--color-surface)] border-b border-[var(--color-border)] select-none h-10 overflow-hidden"
     >
       {/* Historique */}
@@ -238,7 +224,7 @@ export function WordToolbar({
       <ToolbarButton label="Rétablir (Ctrl+Y)" disabled={!canRedo} onClick={() => editor.chain().focus().redo().run()}><Redo2 className="w-3.5 h-3.5" /></ToolbarButton>
       <ToolbarDivider />
 
-      {/* Style de paragraphe — largeur fixe 120px */}
+      {/* Style de paragraphe — w fixe */}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button type="button" className={`${dtBase} w-[120px] flex-shrink-0`} aria-label="Style de paragraphe">
@@ -259,27 +245,19 @@ export function WordToolbar({
       </DropdownMenu.Root>
       <ToolbarDivider />
 
-      {/* Police — largeur fixe 140px, affiche le nom court */}
+      {/* Police — w fixe 140px */}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button type="button" className={`${dtBase} w-[140px] flex-shrink-0`} aria-label="Police">
             <Type className="w-3 h-3 text-[var(--color-text-muted)] flex-shrink-0" />
-            {/* Le span est tronqué si trop long, la largeur est fixe donc la toolbar ne bouge pas */}
-            <span className="flex-1 text-left truncate text-[var(--text-xs)]">
-              {displayFont}
-            </span>
+            <span className="flex-1 text-left truncate text-[var(--text-xs)]">{displayFont}</span>
             <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] flex-shrink-0" />
           </button>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content className={`${dc} min-w-[200px] max-h-64 overflow-y-auto`} sideOffset={4}>
             {FONT_FAMILIES.map((font) => (
-              <DropdownMenu.Item
-                key={font.value}
-                onSelect={() => editor.chain().focus().setFontFamily(font.value).run()}
-                className={di}
-                style={{ fontFamily: font.value }}
-              >
+              <DropdownMenu.Item key={font.value} onSelect={() => editor.chain().focus().setFontFamily(font.value).run()} className={di} style={{ fontFamily: font.value }}>
                 {font.label}
               </DropdownMenu.Item>
             ))}
@@ -287,7 +265,7 @@ export function WordToolbar({
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
 
-      {/* Taille — largeur fixe 56px, fallback sur préférence si pas de mark */}
+      {/* Taille — w fixe 56px, utilise setFontSize de l'extension FontSize */}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button type="button" className={`${dtBase} w-[56px] flex-shrink-0`} aria-label="Taille de la police">
@@ -300,7 +278,7 @@ export function WordToolbar({
             {FONT_SIZES.map((size) => (
               <DropdownMenu.Item
                 key={size}
-                onSelect={() => editor.chain().focus().setMark('textStyle', { fontSize: `${size}pt` }).run()}
+                onSelect={() => editor.chain().focus().setFontSize(`${size}pt`).run()}
                 className={`${di} text-center`}
               >
                 {size}
@@ -322,11 +300,7 @@ export function WordToolbar({
       {/* Couleur du texte */}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
-          <button
-            type="button"
-            className="inline-flex flex-col items-center justify-center w-7 h-7 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors flex-shrink-0"
-            aria-label="Couleur du texte"
-          >
+          <button type="button" className="inline-flex flex-col items-center justify-center w-7 h-7 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors flex-shrink-0" aria-label="Couleur du texte">
             <span className="text-[11px] font-bold leading-none" style={{ color: textColor }}>A</span>
             <span className="w-4 h-1 rounded-full mt-0.5" style={{ backgroundColor: textColor }} />
           </button>
@@ -350,15 +324,9 @@ export function WordToolbar({
       {/* Surligneur */}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
-          <button
-            type="button"
-            className={`inline-flex flex-col items-center justify-center w-7 h-7 rounded-[var(--radius-sm)] transition-colors flex-shrink-0 ${
-              isHighlight
-                ? 'bg-[var(--color-primary-highlight)] text-[var(--color-primary)]'
-                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]'
-            }`}
-            aria-label="Surligneur"
-          >
+          <button type="button" className={`inline-flex flex-col items-center justify-center w-7 h-7 rounded-[var(--radius-sm)] transition-colors flex-shrink-0 ${
+            isHighlight ? 'bg-[var(--color-primary-highlight)] text-[var(--color-primary)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]'
+          }`} aria-label="Surligneur">
             <Highlighter className="w-3.5 h-3.5" />
           </button>
         </DropdownMenu.Trigger>
@@ -389,16 +357,16 @@ export function WordToolbar({
       <ToolbarDivider />
 
       {/* Listes */}
-      <ToolbarButton label="Liste à puces"     isActive={isBulletList}  onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="w-3.5 h-3.5" /></ToolbarButton>
-      <ToolbarButton label="Liste numérotée"   isActive={isOrderedList} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered className="w-3.5 h-3.5" /></ToolbarButton>
-      <ToolbarButton label="Liste de tâches"   isActive={isTaskList}    onClick={() => editor.chain().focus().toggleTaskList().run()}><ListTodo className="w-3.5 h-3.5" /></ToolbarButton>
+      <ToolbarButton label="Liste à puces"    isActive={isBulletList}  onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="w-3.5 h-3.5" /></ToolbarButton>
+      <ToolbarButton label="Liste numérotée"  isActive={isOrderedList} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered className="w-3.5 h-3.5" /></ToolbarButton>
+      <ToolbarButton label="Liste de tâches"  isActive={isTaskList}    onClick={() => editor.chain().focus().toggleTaskList().run()}><ListTodo className="w-3.5 h-3.5" /></ToolbarButton>
       <ToolbarButton label="Augmenter le retrait" onClick={() => editor.chain().focus().sinkListItem('listItem').run()}><Indent className="w-3.5 h-3.5" /></ToolbarButton>
       <ToolbarButton label="Diminuer le retrait"  onClick={() => editor.chain().focus().liftListItem('listItem').run()}><Outdent className="w-3.5 h-3.5" /></ToolbarButton>
       <ToolbarDivider />
 
       {/* Insertion */}
-      <ToolbarButton label="Insérer un lien (Ctrl+K)" isActive={isLink}       onClick={onInsertLink}><Link2 className="w-3.5 h-3.5" /></ToolbarButton>
-      <ToolbarButton label="Insérer une image"                                  onClick={onInsertImage}><Image className="w-3.5 h-3.5" /></ToolbarButton>
+      <ToolbarButton label="Insérer un lien (Ctrl+K)" isActive={isLink} onClick={onInsertLink}><Link2 className="w-3.5 h-3.5" /></ToolbarButton>
+      <ToolbarButton label="Insérer une image" onClick={onInsertImage}><Image className="w-3.5 h-3.5" /></ToolbarButton>
       <ToolbarButton label="Insérer un tableau" onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}><Table className="w-3.5 h-3.5" /></ToolbarButton>
       <ToolbarButton label="Ligne de séparation" onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus className="w-3.5 h-3.5" /></ToolbarButton>
       <ToolbarButton label="Citation"    isActive={isBlockquote} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote className="w-3.5 h-3.5" /></ToolbarButton>
@@ -411,9 +379,9 @@ export function WordToolbar({
           <span className="text-[var(--text-xs)] text-[var(--color-text-muted)] px-1 flex-shrink-0">Tableau :</span>
           <ToolbarButton label="Ajouter une colonne après"   onClick={() => editor.chain().focus().addColumnAfter().run()}><span className="text-[10px] font-mono">+C→</span></ToolbarButton>
           <ToolbarButton label="Ajouter une ligne en dessous" onClick={() => editor.chain().focus().addRowAfter().run()}><span className="text-[10px] font-mono">+L↓</span></ToolbarButton>
-          <ToolbarButton label="Supprimer la colonne"  onClick={() => editor.chain().focus().deleteColumn().run()}><span className="text-[10px] font-mono text-[var(--color-error)]">–C</span></ToolbarButton>
-          <ToolbarButton label="Supprimer la ligne"    onClick={() => editor.chain().focus().deleteRow().run()}><span className="text-[10px] font-mono text-[var(--color-error)]">–L</span></ToolbarButton>
-          <ToolbarButton label="Supprimer le tableau"  onClick={() => editor.chain().focus().deleteTable().run()}><span className="text-[10px] font-mono text-[var(--color-error)]">✕T</span></ToolbarButton>
+          <ToolbarButton label="Supprimer la colonne" onClick={() => editor.chain().focus().deleteColumn().run()}><span className="text-[10px] font-mono text-[var(--color-error)]">–C</span></ToolbarButton>
+          <ToolbarButton label="Supprimer la ligne"   onClick={() => editor.chain().focus().deleteRow().run()}><span className="text-[10px] font-mono text-[var(--color-error)]">–L</span></ToolbarButton>
+          <ToolbarButton label="Supprimer le tableau" onClick={() => editor.chain().focus().deleteTable().run()}><span className="text-[10px] font-mono text-[var(--color-error)]">✕T</span></ToolbarButton>
         </>
       )}
     </div>
