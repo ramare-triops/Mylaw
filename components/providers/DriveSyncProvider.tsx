@@ -16,6 +16,12 @@ interface DriveSyncContextType {
 
 const DriveSyncContext = createContext<DriveSyncContextType | null>(null);
 
+/**
+ * DriveSyncProvider monte useDriveSync() une seule fois au niveau racine.
+ * Le useEffect interne enregistre scheduleSync dans db.ts via registerDriveSyncCallback,
+ * ce qui branche le middleware Dexie — toute écriture Dexie déclenche alors
+ * automatiquement un upload Drive debounced.
+ */
 export function DriveSyncProvider({ children }: { children: ReactNode }) {
   const driveSync = useDriveSync();
   return (

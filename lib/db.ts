@@ -13,6 +13,21 @@ import type {
 
 type SettingsRecord = { key: string; value: unknown };
 
+// ─── Callback de sync ─────────────────────────────────────────────────────────────────
+// Enregistre un callback que le DriveSyncProvider branche au démarrage.
+// Appelé automatiquement à chaque écriture Dexie (add, put, delete, clear).
+let _driveScheduleSync: (() => void) | null = null;
+
+export function registerDriveSyncCallback(fn: () => void) {
+  _driveScheduleSync = fn;
+}
+
+export function triggerDriveSync() {
+  _driveScheduleSync?.();
+}
+
+// ─── Base de données ───────────────────────────────────────────────────────────────────
+
 export class MyLexDatabase extends Dexie {
   documents!: Table<Document>;
   folders!: Table<Folder>;
@@ -41,12 +56,52 @@ export class MyLexDatabase extends Dexie {
       history: '++id, action, entityId, entityType, timestamp',
       deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
     });
+
+    // ─── Middleware : déclenche le sync Drive sur toute mutation ───
+    // On intercepte add, put, delete, clear sur toutes les tables sauf
+    // 'history' (audit log interne) et 'settings' pour la clé 'drive_connected'
+    // pour éviter les boucles infinies.
+    this.use({
+      stack: 'dbcore',
+      name: 'drive-auto-sync',
+      create(downlevel) {
+        return {
+          ...downlevel,
+          table(tableName: string) {
+            const table = downlevel.table(tableName);
+            // Ne pas syncer la table history (bruit inutile)
+            if (tableName === 'history') return table;
+            return {
+              ...table,
+              mutate(req: any) {
+                const result = table.mutate(req);
+                // Après toute mutation réussie, déclencher le sync
+                // (mais pas pendant un restore Drive pour éviter les boucles)
+                result.then(() => {
+                  if (!_restoreInProgress) triggerDriveSync();
+                }).catch(() => {});
+                return result;
+              },
+            };
+          },
+        };
+      },
+    });
   }
 }
 
 export const db = new MyLexDatabase();
 
-// ─── Settings helpers ────────────────────────────────────────────────────────
+// ─── Flag anti-boucle pour le restore ────────────────────────────────────────────────
+// Pendant un restoreFromBackup, on désactive le middleware pour ne pas
+// re-uploader immédiatement les données qu'on vient de télécharger.
+let _restoreInProgress = false;
+
+export function setRestoreInProgress(v: boolean) {
+  _restoreInProgress = v;
+}
+
+// ─── Settings helpers ───────────────────────────────────────────────────────────────────
 export async function getSetting<T>(key: string, fallback: T): Promise<T> {
   const record = await db.settings.get(key);
   return record ? (record.value as T) : fallback;
@@ -56,7 +111,7 @@ export async function setSetting(key: string, value: unknown): Promise<void> {
   await db.settings.put({ key, value });
 }
 
-// ─── Document helpers ────────────────────────────────────────────────────────
+// ─── Document helpers ───────────────────────────────────────────────────────────────────
 export async function saveDocument(doc: Document): Promise<number> {
   const id = await db.documents.put(doc);
   await db.history.add({

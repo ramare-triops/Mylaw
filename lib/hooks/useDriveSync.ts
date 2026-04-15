@@ -2,10 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { DriveClient, DriveStatus, MylawBackup } from '@/lib/drive-sync';
-import { db, getSetting, setSetting } from '@/lib/db';
+import { db, getSetting, setSetting, registerDriveSyncCallback, setRestoreInProgress } from '@/lib/db';
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '';
-const UPLOAD_DEBOUNCE_MS = 2000;
+
+// Debounce : attend 3s d'inactivité avant d'uploader
+// (Google Docs utilise ~2s, on prend 3s pour éviter le spam sur frappe rapide)
+const UPLOAD_DEBOUNCE_MS = 3000;
 
 let clientInstance: DriveClient | null = null;
 function getClient(): DriveClient {
@@ -20,38 +23,45 @@ export function useDriveSync() {
   const uploadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const client = getClient();
 
-  /**
-   * Au démarrage : tente un rafraîchissement silencieux via le cookie.
-   * Si le cookie existe, charge automatiquement les données Drive.
-   * L'utilisateur ne voit aucun popup.
-   */
+  // ─── scheduleSync : déclenché par le middleware Dexie à chaque écriture ───
+  const scheduleSync = useCallback(() => {
+    if (!client.isConnected()) return;
+    if (uploadTimer.current) clearTimeout(uploadTimer.current);
+    setStatus('syncing');
+    uploadTimer.current = setTimeout(async () => {
+      try {
+        const backup = await buildBackup();
+        await client.upload(backup);
+        setLastSynced(new Date());
+        setStatus('connected');
+      } catch {
+        setStatus('error');
+      }
+    }, UPLOAD_DEBOUNCE_MS);
+  }, []);
+
+  // ─── Enregistre le callback dans db.ts dès que le composant monte ───
+  useEffect(() => {
+    registerDriveSyncCallback(scheduleSync);
+  }, [scheduleSync]);
+
+  // ─── Au démarrage : silent refresh + pull Drive ──────────────────────────
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // Vérifier si on revient du callback OAuth avec ?drive=connected
+    // Retour du callback OAuth ?
     const params = new URLSearchParams(window.location.search);
     if (params.get('drive') === 'connected') {
       window.history.replaceState({}, '', window.location.pathname);
-      loadFromDriveAfterAuth();
+      loadFromDrive();
       return;
     }
 
-    // Sinon, tenter le rafraîchissement silencieux
+    // Sinon tentative silent refresh
     setStatus('loading');
     client.trySilentRefresh().then(async (ok) => {
       if (ok) {
-        setStatus('syncing');
-        try {
-          const remote = await client.download();
-          if (remote && remote.exportedAt) {
-            await restoreFromBackup(remote);
-          }
-          await setSetting('drive_connected', true);
-          setLastSynced(new Date());
-          setStatus('connected');
-        } catch {
-          setStatus('connected');
-        }
+        await loadFromDrive();
       } else {
         const wasConnected = await getSetting<boolean>('drive_connected', false);
         setStatus(wasConnected ? 'disconnected' : 'idle');
@@ -59,22 +69,27 @@ export function useDriveSync() {
     });
   }, []);
 
-  async function loadFromDriveAfterAuth() {
+  // ─── Pull Drive : télécharge + restaure ───────────────────────────────────
+  async function loadFromDrive() {
     setStatus('syncing');
     try {
       client['_isConnected'] = true;
       const remote = await client.download();
       if (remote && remote.exportedAt) {
+        setRestoreInProgress(true);
         await restoreFromBackup(remote);
+        setRestoreInProgress(false);
       }
       await setSetting('drive_connected', true);
       setLastSynced(new Date());
       setStatus('connected');
     } catch {
+      setRestoreInProgress(false);
       setStatus('error');
     }
   }
 
+  // ─── connect() : lance le flow OAuth PKCE ──────────────────────────────────
   const connect = useCallback(async () => {
     setError(null);
     try {
@@ -126,22 +141,6 @@ export function useDriveSync() {
     }
   }, []);
 
-  const scheduleSync = useCallback(() => {
-    if (!client.isConnected()) return;
-    if (uploadTimer.current) clearTimeout(uploadTimer.current);
-    setStatus('syncing');
-    uploadTimer.current = setTimeout(async () => {
-      try {
-        const backup = await buildBackup();
-        await client.upload(backup);
-        setLastSynced(new Date());
-        setStatus('connected');
-      } catch {
-        setStatus('error');
-      }
-    }, UPLOAD_DEBOUNCE_MS);
-  }, []);
-
   return { status, lastSynced, error, connect, disconnect, syncNow, scheduleSync };
 }
 
@@ -185,6 +184,7 @@ export async function buildBackup(): Promise<MylawBackup> {
 }
 
 export async function restoreFromBackup(backup: MylawBackup): Promise<void> {
+  // setRestoreInProgress(true) est appelé par l'appelant
   await Promise.all([
     db.documents.clear(), db.folders.clear(),
     db.table('snippets').clear(), db.table('deadlines').clear(),
