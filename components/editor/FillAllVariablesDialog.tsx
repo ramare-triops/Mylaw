@@ -1,8 +1,7 @@
 // components/editor/FillAllVariablesDialog.tsx
-// Bulle de saisie positionnée directement sur le span variable ciblé.
-// Stratégie : à chaque étape on prend TOUJOURS le 1er span DOM restant
-// (trié par position verticale). Pas d'index stocké qui se désynchronise
-// après chaque remplacement.
+// Bulle minimaliste : champ texte + croix uniquement.
+// La bulle se déplace via transition CSS sur top/left — elle ne disparaît jamais
+// entre deux champs, elle glisse directement vers le suivant.
 
 'use client'
 
@@ -23,56 +22,41 @@ interface FillAllVariablesDialogProps {
   onClose: () => void
 }
 
-const BUBBLE_WIDTH  = 280
-const BUBBLE_HEIGHT = 52
+const BUBBLE_WIDTH  = 220
+const BUBBLE_HEIGHT = 44
 const ARROW_H       = 8
 const GAP           = 6
 const VIEWPORT_PAD  = 12
 
-/** Compte les nœuds variableField restants dans le doc */
 function countVariables(editor: Editor): number {
   let count = 0
-  editor.state.doc.descendants((node) => {
-    if (node.type.name === 'variableField') count++
-  })
+  editor.state.doc.descendants((node) => { if (node.type.name === 'variableField') count++ })
   return count
 }
 
-/**
- * Retourne le 1er span DOM de variable encore présent,
- * trié par position verticale (haut → bas).
- */
 function getFirstRemainingSpan(): HTMLElement | null {
   const editorDom = window.document.querySelector('.mylex-editor-content')
   if (!editorDom) return null
-  const spans = Array.from(
-    editorDom.querySelectorAll('[data-variable-field]')
-  ) as HTMLElement[]
+  const spans = Array.from(editorDom.querySelectorAll('[data-variable-field]')) as HTMLElement[]
   if (spans.length === 0) return null
   spans.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
   return spans[0]
 }
 
-/**
- * Trouve la position ProseMirror d'un span DOM via posAtDOM.
- */
 function getPosFromSpan(editor: Editor, span: HTMLElement): number | null {
   try {
-    const view    = editor.view
-    const domPos  = view.posAtDOM(span, 0)
+    const domPos  = editor.view.posAtDOM(span, 0)
     const nodePos = domPos - 1
     const node    = editor.state.doc.nodeAt(nodePos)
     if (node && node.type.name === 'variableField') return nodePos
-    for (let offset = -2; offset <= 2; offset++) {
-      const p = nodePos + offset
+    for (let o = -2; o <= 2; o++) {
+      const p = nodePos + o
       if (p < 0) continue
       const n = editor.state.doc.nodeAt(p)
       if (n && n.type.name === 'variableField') return p
     }
     return null
-  } catch {
-    return null
-  }
+  } catch { return null }
 }
 
 function computePosition(span: HTMLElement): BubblePosition {
@@ -111,35 +95,44 @@ function scrollToSpanAndWait(span: HTMLElement): Promise<void> {
 }
 
 export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariablesDialogProps) {
-  const [total, setTotal]             = useState(0)
-  const [remaining, setRemaining]     = useState(0)
-  const [currentName, setCurrentName] = useState('')
-  const [value, setValue]             = useState('')
-  const [bubblePos, setBubblePos]     = useState<BubblePosition | null>(null)
-  const [targetSpan, setTargetSpan]   = useState<HTMLElement | null>(null)
+  const [total, setTotal]           = useState(0)
+  const [remaining, setRemaining]   = useState(0)
+  const [value, setValue]           = useState('')
+  // bubblePos = null uniquement avant le 1er positionnement
+  // Après, on met toujours à jour sans remettre à null → transition CSS glisse
+  const [bubblePos, setBubblePos]   = useState<BubblePosition | null>(null)
+  const [targetSpan, setTargetSpan] = useState<HTMLElement | null>(null)
   const inputRef  = useRef<HTMLInputElement>(null)
   const activeRef = useRef(false)
+  const isFirstRef = useRef(true)  // 1er positionnement : on attend le scroll
 
-  /** Pointe la bulle sur le 1er span DOM restant */
-  const pointToFirstSpan = useCallback(async (isActive: () => boolean) => {
+  const pointToFirstSpan = useCallback(async (isActive: () => boolean, waitScroll: boolean) => {
     if (!editor) return
-    setBubblePos(null)
     const span = getFirstRemainingSpan()
     if (!span || !isActive()) return
-    const name = span.getAttribute('data-variable-name') ?? ''
-    setCurrentName(name)
-    setTargetSpan(span)
+
+    // Retirer l'ancien highlight
+    window.document.querySelectorAll('[data-fill-active]')
+      .forEach((el) => delete (el as HTMLElement).dataset.fillActive)
     span.dataset.fillActive = 'true'
-    await scrollToSpanAndWait(span)
-    if (!isActive()) return
+    setTargetSpan(span)
+
+    if (waitScroll) {
+      // Première fois ou saut éloigné : scroll puis mesure
+      await scrollToSpanAndWait(span)
+      if (!isActive()) return
+    }
+    // Mesurer et glisser immédiatement (la transition CSS fait le reste)
     setBubblePos(computePosition(span))
-    setTimeout(() => inputRef.current?.focus(), 40)
+    setValue('')
+    setTimeout(() => inputRef.current?.focus(), 30)
   }, [editor])
 
   // Initialisation à l'ouverture
   useEffect(() => {
     if (!open || !editor) return
     activeRef.current = true
+    isFirstRef.current = true
     const t = countVariables(editor)
     setTotal(t)
     setRemaining(t)
@@ -147,7 +140,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     setBubblePos(null)
     setTargetSpan(null)
     let cancelled = false
-    void pointToFirstSpan(() => !cancelled && activeRef.current)
+    void pointToFirstSpan(() => !cancelled && activeRef.current, true)
     return () => {
       cancelled = true
       activeRef.current = false
@@ -182,25 +175,26 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
   const handleConfirm = useCallback(async () => {
     if (!editor || !value.trim() || !targetSpan) return
 
-    // Retirer le highlight du span courant
     delete targetSpan.dataset.fillActive
-
-    // Remplacer via la position PM réelle du span (toujours fraîche)
     const pos = getPosFromSpan(editor, targetSpan)
     if (pos !== null) editor.commands.replaceVariable(pos, value.trim())
 
     const newRemaining = remaining - 1
     setRemaining(newRemaining)
-    setValue('')
-    setBubblePos(null)
-    setTargetSpan(null)
 
     if (newRemaining <= 0) { onClose(); return }
 
-    // Pointer immédiatement sur le nouveau 1er span restant
+    // Passer au suivant sans remettre bubblePos à null
+    // → la bulle glisse via transition CSS
     activeRef.current = true
     let cancelled = false
-    await pointToFirstSpan(() => !cancelled && activeRef.current)
+    // Scroll uniquement si le prochain span est hors de la zone visible
+    const nextSpan = getFirstRemainingSpan()
+    const needsScroll = nextSpan ? (() => {
+      const r = nextSpan.getBoundingClientRect()
+      return r.top < 80 || r.bottom > window.innerHeight - 80
+    })() : false
+    await pointToFirstSpan(() => !cancelled && activeRef.current, needsScroll)
     return () => { cancelled = true }
   }, [editor, value, targetSpan, remaining, onClose, pointToFirstSpan])
 
@@ -209,9 +203,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     if (e.key === 'Escape') { e.preventDefault(); onClose() }
   }
 
-  if (!open || total === 0) return null
-
-  const done = total - remaining
+    if (!open || total === 0) return null
 
   return (
     <>
@@ -221,16 +213,16 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
           outline-offset: 2px !important;
           background: rgba(1,105,111,0.18) !important;
         }
-        @keyframes bubblePop {
-          from { opacity: 0; transform: scale(0.90) translateY(-4px); }
-          to   { opacity: 1; transform: scale(1) translateY(0); }
+        .fill-bubble {
+          transition: top 0.22s cubic-bezier(0.4,0,0.2,1),
+                      left 0.22s cubic-bezier(0.4,0,0.2,1);
         }
       `}</style>
 
-      {bubblePos && currentName && (
+      {bubblePos && (
         <div
+          className="fill-bubble"
           role="dialog"
-          aria-label={`Renseigner ${currentName}`}
           style={{
             position: 'fixed',
             top:    bubblePos.top,
@@ -238,46 +230,52 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
             width:  BUBBLE_WIDTH,
             zIndex: 9999,
             pointerEvents: 'auto',
-            animation: 'bubblePop 0.18s cubic-bezier(0.34,1.56,0.64,1) both',
           }}
         >
+          {/* Flèche vers le haut */}
           {bubblePos.arrowSide === 'top' && (
             <svg width={ARROW_H * 2} height={ARROW_H} viewBox={`0 0 ${ARROW_H * 2} ${ARROW_H}`}
-              style={{ position: 'absolute', top: -ARROW_H, left: bubblePos.arrowLeft - ARROW_H, display: 'block', overflow: 'visible' }}
+              style={{ position: 'absolute', top: -ARROW_H, left: bubblePos.arrowLeft - ARROW_H, display: 'block', overflow: 'visible', transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1)' }}
             >
               <polygon points={`0,${ARROW_H} ${ARROW_H},0 ${ARROW_H * 2},${ARROW_H}`} fill="#01696f" />
               <polygon points={`2,${ARROW_H} ${ARROW_H},2 ${ARROW_H * 2 - 2},${ARROW_H}`} fill="var(--color-surface, #fff)" />
             </svg>
           )}
 
+          {/* Corps */}
           <div style={{
             background: 'var(--color-surface, #fff)',
             border: '2px solid #01696f',
             borderRadius: 10,
             boxShadow: '0 4px 20px rgba(1,105,111,0.20), 0 1px 6px rgba(0,0,0,0.10)',
-            padding: '7px 10px',
+            padding: '6px 10px',
             display: 'flex',
             alignItems: 'center',
-            gap: 7,
+            gap: 6,
             height: BUBBLE_HEIGHT,
             boxSizing: 'border-box',
           }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#01696f', whiteSpace: 'nowrap', flexShrink: 0, letterSpacing: '0.02em', textTransform: 'uppercase' }}>
-              {currentName}
-            </span>
-            <div style={{ width: 1, height: 18, background: '#01696f', opacity: 0.25, flexShrink: 0 }} />
             <input
               ref={inputRef}
               type="text"
               value={value}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="…"
+              placeholder="Saisir…"
               autoComplete="off" autoCorrect="off" spellCheck={false}
-              style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: 'var(--color-text, #28251d)', caretColor: '#01696f' }}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: 'none',
+                outline: 'none',
+                background: 'transparent',
+                fontSize: 13,
+                color: 'var(--color-text, #28251d)',
+                caretColor: '#01696f',
+              }}
             />
             <span style={{ fontSize: 10, color: 'var(--color-text-muted, #9ca3af)', whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {done + 1}/{total}
+              {total - remaining + 1}/{total}
             </span>
             <button type="button" onClick={onClose} aria-label="Fermer"
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-text-muted, #9ca3af)', flexShrink: 0, padding: 0 }}
@@ -288,9 +286,10 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
             </button>
           </div>
 
+          {/* Flèche vers le bas */}
           {bubblePos.arrowSide === 'bottom' && (
             <svg width={ARROW_H * 2} height={ARROW_H} viewBox={`0 0 ${ARROW_H * 2} ${ARROW_H}`}
-              style={{ position: 'absolute', bottom: -ARROW_H, left: bubblePos.arrowLeft - ARROW_H, display: 'block', overflow: 'visible' }}
+              style={{ position: 'absolute', bottom: -ARROW_H, left: bubblePos.arrowLeft - ARROW_H, display: 'block', overflow: 'visible', transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1)' }}
             >
               <polygon points={`0,0 ${ARROW_H * 2},0 ${ARROW_H},${ARROW_H}`} fill="#01696f" />
               <polygon points={`2,0 ${ARROW_H * 2 - 2},0 ${ARROW_H},${ARROW_H - 2}`} fill="var(--color-surface, #fff)" />
