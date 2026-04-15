@@ -1,6 +1,6 @@
 // hooks/useDocumentSave.ts
-// Gestion de la sauvegarde avec double persistance : IndexedDB (local) + API serveur (sync multi-appareils)
-// Même pattern que les réglages : local-first, puis propagation serveur asynchrone.
+// Sauvegarde double persistance : IndexedDB (local-first) + API serveur (sync).
+// Le délai d'auto-save est maintenant paramétrable depuis les préférences éditeur.
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { db } from '@/lib/db'
@@ -19,24 +19,22 @@ export interface UseDocumentSaveReturn extends SaveState {
 }
 
 /**
- * Hook de sauvegarde pour les documents Mylex.
- *
- * Stratégie de synchronisation (identique aux réglages) :
- * 1. Écriture immédiate dans IndexedDB (toujours disponible, offline-first)
- * 2. Propagation vers l'API serveur (/api/documents/:id) en arrière-plan
- *    → Si le serveur est indisponible, la donnée locale est prioritaire.
- *    → À la prochaine connexion, la version la plus récente (updatedAt) gagne.
- * 3. Auto-save déclenché 2 secondes après la dernière frappe (debounce).
+ * @param documentId   ID du document dans IndexedDB
+ * @param autoSaveDelay  Délai en ms avant auto-save (0 = désactivé). Défaut: 2000 ms.
  */
-export function useDocumentSave(documentId: number): UseDocumentSaveReturn {
-  const [isSaved, setIsSaved] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+export function useDocumentSave(documentId: number, autoSaveDelay = 2000): UseDocumentSaveReturn {
+  const [isSaved,            setIsSaved]            = useState(true)
+  const [isSaving,           setIsSaving]           = useState(false)
+  const [lastSavedAt,        setLastSavedAt]        = useState<Date | null>(null)
+  const [hasUnsavedChanges,  setHasUnsavedChanges]  = useState(false)
 
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const debounceTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingContent = useRef<{ content: string; title?: string } | null>(null)
-  const isMounted = useRef(true)
+  const isMounted      = useRef(true)
+  // Garde une référence stable au délai pour éviter de redéclarer markAsChanged
+  const autoSaveDelayRef = useRef(autoSaveDelay)
+
+  useEffect(() => { autoSaveDelayRef.current = autoSaveDelay }, [autoSaveDelay])
 
   useEffect(() => {
     isMounted.current = true
@@ -46,36 +44,23 @@ export function useDocumentSave(documentId: number): UseDocumentSaveReturn {
     }
   }, [])
 
-  /**
-   * saveNow : sauvegarde synchrone immédiate.
-   * Appelée par le bouton "Enregistrer" ou avant fermeture.
-   */
   const saveNow = useCallback(
     async (content: string, title?: string) => {
       if (debounceTimer.current) {
         clearTimeout(debounceTimer.current)
         debounceTimer.current = null
       }
-
       if (!isMounted.current) return
       setIsSaving(true)
 
       const updatedAt = new Date()
-
       try {
-        // ── 1. Persistance locale IndexedDB ──────────────────────────────
-        const updatePayload: Partial<{ content: string; title: string; updatedAt: Date }> = {
-          content,
-          updatedAt,
-        }
+        const updatePayload: Partial<{ content: string; title: string; updatedAt: Date }> = { content, updatedAt }
         if (title !== undefined) updatePayload.title = title
-
         await db.documents.update(documentId, updatePayload)
 
-        // ── 2. Synchronisation serveur (même processus que les settings) ─
-        //    On ne bloque pas l'UI sur cette étape.
         syncToServer(documentId, { content, title, updatedAt }).catch(() => {
-          console.warn('[Mylex] Sync serveur échouée — le document est sauvegardé localement.')
+          console.warn('[Mylex] Sync serveur échouée — document sauvegardé localement.')
         })
 
         if (isMounted.current) {
@@ -93,10 +78,6 @@ export function useDocumentSave(documentId: number): UseDocumentSaveReturn {
     [documentId]
   )
 
-  /**
-   * markAsChanged : signale une modification et programme l'auto-save.
-   * À appeler à chaque onChange de l'éditeur TipTap.
-   */
   const markAsChanged = useCallback(
     (content: string) => {
       pendingContent.current = { content }
@@ -104,11 +85,15 @@ export function useDocumentSave(documentId: number): UseDocumentSaveReturn {
       setHasUnsavedChanges(true)
 
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
+
+      // Si autoSaveDelay === 0, pas d'auto-save
+      if (autoSaveDelayRef.current <= 0) return
+
       debounceTimer.current = setTimeout(() => {
         if (pendingContent.current) {
           saveNow(pendingContent.current.content, pendingContent.current.title)
         }
-      }, 2000)
+      }, autoSaveDelayRef.current)
     },
     [saveNow]
   )
@@ -122,9 +107,6 @@ export function useDocumentSave(documentId: number): UseDocumentSaveReturn {
   return { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged, resetSaveState }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Synchronisation serveur
-// ─────────────────────────────────────────────────────────────────────────────
 async function syncToServer(
   documentId: number,
   payload: { content: string; title?: string; updatedAt: Date }
@@ -132,13 +114,7 @@ async function syncToServer(
   const response = await fetch(`/api/documents/${documentId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ...payload,
-      updatedAt: payload.updatedAt.toISOString(),
-    }),
+    body: JSON.stringify({ ...payload, updatedAt: payload.updatedAt.toISOString() }),
   })
-
-  if (!response.ok) {
-    throw new Error(`Sync serveur échouée : ${response.status}`)
-  }
+  if (!response.ok) throw new Error(`Sync serveur échouée : ${response.status}`)
 }
