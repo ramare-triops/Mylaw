@@ -1,6 +1,7 @@
 // components/editor/DocumentEditorWrapper.tsx
 // Wrapper principal : page A4 blanche, barre d'outils style Word,
-// boutons Enregistrer / Fermer, popup modifications non enregistrées.
+// bouton Enregistrer, indicateur de sauvegarde.
+// Le bouton Fermer a été retiré : la navigation est gérée par la Sidebar.
 
 'use client'
 
@@ -26,7 +27,7 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import CharacterCount from '@tiptap/extension-character-count'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Save, X, Check, Loader2, Wifi, WifiOff } from 'lucide-react'
+import { Save, Check, Loader2, Wifi, WifiOff } from 'lucide-react'
 
 import { WordToolbar } from './WordToolbar'
 import { UnsavedChangesDialog } from './UnsavedChangesDialog'
@@ -38,38 +39,16 @@ interface DocumentEditorWrapperProps {
   onClose?: () => void
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Détection automatique du format de contenu stocké en base
-// Les documents créés depuis un modèle peuvent être en HTML pur.
-// Les documents créés depuis l'éditeur sont en JSON TipTap.
-// Les anciens documents peuvent être en texte brut.
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Détection automatique du format de contenu ────────────────────────────────────
 function parseContent(raw: string | undefined | null): string | object {
   if (!raw || raw.trim() === '') return ''
-
   const trimmed = raw.trim()
-
-  // 1. Tenter le parsing JSON (format TipTap natif)
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try {
-      return JSON.parse(trimmed)
-    } catch {
-      // Pas du JSON valide — continuer
-    }
+    try { return JSON.parse(trimmed) } catch { /* pas du JSON */ }
   }
-
-  // 2. HTML : TipTap accepte directement les chaînes HTML
-  if (
-    trimmed.startsWith('<') ||
-    trimmed.includes('</') ||
-    trimmed.includes('<p') ||
-    trimmed.includes('<br') ||
-    trimmed.includes('<div')
-  ) {
-    return trimmed // TipTap parse le HTML nativement via son option `content`
+  if (trimmed.startsWith('<') || trimmed.includes('</') || trimmed.includes('<p') || trimmed.includes('<br') || trimmed.includes('<div')) {
+    return trimmed
   }
-
-  // 3. Texte brut : l'envelopper dans un paragraphe pour que TipTap l'accepte
   return `<p>${trimmed}</p>`
 }
 
@@ -81,23 +60,18 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged } = useDocumentSave(document.id)
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true)
-    const handleOffline = () => setIsOnline(false)
+    const up = () => setIsOnline(true)
+    const down = () => setIsOnline(false)
     setIsOnline(navigator.onLine)
-    window.addEventListener('online', handleOnline)
-    window.addEventListener('offline', handleOffline)
-    return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline) }
+    window.addEventListener('online', up)
+    window.addEventListener('offline', down)
+    return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down) }
   }, [])
 
   const performClose = useCallback(() => {
     if (onClose) onClose()
     else router.push('/documents')
   }, [onClose, router])
-
-  const handleClose = useCallback(() => {
-    if (hasUnsavedChanges) setShowUnsavedDialog(true)
-    else performClose()
-  }, [hasUnsavedChanges, performClose])
 
   const handleSaveAndClose = useCallback(async () => {
     if (editor) await saveNow(JSON.stringify(editor.getJSON()))
@@ -111,22 +85,22 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   }, [performClose])
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault()
         if (editor) saveNow(JSON.stringify(editor.getJSON()))
       }
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
   }, [saveNow])
 
   useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+    const onBefore = (e: BeforeUnloadEvent) => {
       if (hasUnsavedChanges) { e.preventDefault(); e.returnValue = '' }
     }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('beforeunload', onBefore)
+    return () => window.removeEventListener('beforeunload', onBefore)
   }, [hasUnsavedChanges])
 
   const editor = useEditor({
@@ -143,7 +117,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
       CharacterCount,
       Placeholder.configure({ placeholder: 'Commencez à rédiger votre document…' }),
     ],
-    // ← Correction : détection automatique du format (JSON / HTML / texte brut)
     content: parseContent(document.content),
     editorProps: { attributes: { class: 'mylex-editor-content', spellcheck: 'true', lang: 'fr' } },
     onUpdate: ({ editor }) => markAsChanged(JSON.stringify(editor.getJSON())),
@@ -151,8 +124,8 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
 
   const handleInsertLink = useCallback(() => {
     if (!editor) return
-    const previousUrl = editor.getAttributes('link').href
-    const url = window.prompt('URL du lien :', previousUrl ?? 'https://')
+    const prev = editor.getAttributes('link').href
+    const url = window.prompt('URL du lien :', prev ?? 'https://')
     if (url === null) return
     if (url === '') editor.chain().focus().extendMarkRange('link').unsetLink().run()
     else editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
@@ -168,29 +141,49 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const charCount = editor?.storage.characterCount.characters() ?? 0
 
   const SaveIndicator = () => {
-    if (isSaving) return <span className="flex items-center gap-1.5 text-[var(--text-xs)] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" />Enregistrement…</span>
-    if (isSaved && lastSavedAt) return <span className="flex items-center gap-1.5 text-[var(--text-xs)] text-[var(--color-text-muted)]"><Check className="w-3 h-3 text-[var(--color-success)]" />Enregistré {formatRelativeTime(lastSavedAt)}</span>
-    if (hasUnsavedChanges) return <span className="flex items-center gap-1.5 text-[var(--text-xs)] text-[var(--color-warning)]"><span className="w-1.5 h-1.5 rounded-full bg-[var(--color-warning)] animate-pulse" />Modifications non enregistrées</span>
+    if (isSaving) return (
+      <span className="flex items-center gap-1.5 text-[var(--text-xs)] text-[var(--color-text-muted)]">
+        <Loader2 className="w-3 h-3 animate-spin" />Enregistrement…
+      </span>
+    )
+    if (isSaved && lastSavedAt) return (
+      <span className="flex items-center gap-1.5 text-[var(--text-xs)] text-[var(--color-text-muted)]">
+        <Check className="w-3 h-3 text-[var(--color-success)]" />Enregistré {formatRelativeTime(lastSavedAt)}
+      </span>
+    )
+    if (hasUnsavedChanges) return (
+      <span className="flex items-center gap-1.5 text-[var(--text-xs)] text-[var(--color-warning)]">
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-warning)] animate-pulse" />
+        Modifications non enregistrées
+      </span>
+    )
     return null
   }
 
   return (
     <>
-      <div className="flex flex-col h-full bg-[var(--color-surface-offset)] overflow-hidden">
+      {/* L'éditeur remplit exactement la zone <main> de l'AppShell */}
+      <div className="flex flex-col h-full overflow-hidden bg-[var(--color-surface-offset)]">
 
-        {/* En-tête : titre + Enregistrer + Fermer */}
+        {/* En-tête compact : titre + indicateur + Enregistrer */}
         <div className="flex items-center justify-between gap-3 px-4 py-2 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex-shrink-0">
           <input
             type="text"
             defaultValue={document.title || 'Sans titre'}
             onBlur={(e) => { if (editor) saveNow(JSON.stringify(editor.getJSON()), e.target.value) }}
-            className="flex-1 min-w-0 text-[var(--text-sm)] font-medium text-[var(--color-text)] bg-transparent border-none outline-none hover:bg-[var(--color-surface-offset)] focus:bg-[var(--color-surface-offset)] rounded-[var(--radius-sm)] px-2 py-1 -mx-2 transition-colors"
+            className="flex-1 min-w-0 text-[var(--text-sm)] font-semibold text-[var(--color-text)] bg-transparent border-none outline-none hover:bg-[var(--color-surface-offset)] focus:bg-[var(--color-surface-offset)] rounded-[var(--radius-sm)] px-2 py-1 -mx-2 transition-colors"
             placeholder="Sans titre"
             aria-label="Titre du document"
           />
           <div className="flex items-center gap-3 flex-shrink-0">
             <SaveIndicator />
-            <span className={`flex items-center gap-1 text-[var(--text-xs)] ${isOnline ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'}`} title={isOnline ? 'Synchronisation active' : 'Hors ligne — modifications enregistrées localement'}>
+            {/* Indicateur en ligne */}
+            <span
+              className={`flex items-center gap-1 text-[var(--text-xs)] ${
+                isOnline ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'
+              }`}
+              title={isOnline ? 'Synchronisation active' : 'Hors ligne — sauvegarde locale uniquement'}
+            >
               {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
             </span>
             {/* Bouton Enregistrer */}
@@ -199,21 +192,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
               onClick={() => editor && saveNow(JSON.stringify(editor.getJSON()))}
               disabled={isSaving || isSaved}
               className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-text-inverse)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] focus-visible:outline-offset-2"
-              aria-label="Enregistrer le document (Ctrl+S)"
               title="Enregistrer (Ctrl+S)"
             >
               {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               <span>Enregistrer</span>
-            </button>
-            {/* Bouton Fermer */}
-            <button
-              type="button"
-              onClick={handleClose}
-              className="inline-flex items-center justify-center w-8 h-8 rounded-[var(--radius-md)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset-2)] hover:text-[var(--color-text)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] focus-visible:outline-offset-2"
-              aria-label="Fermer le document"
-              title="Fermer"
-            >
-              <X className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -239,7 +221,12 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           </div>
           <div className="flex items-center gap-3">
             {document.type && <span className="opacity-75 capitalize">{document.type}</span>}
-            <span className="opacity-75">{lastSavedAt ? `Modifié ${formatRelativeTime(lastSavedAt)}` : `Créé ${formatRelativeTime(new Date(document.createdAt))}`}</span>
+            <span className="opacity-75">
+              {lastSavedAt
+                ? `Modifié ${formatRelativeTime(lastSavedAt)}`
+                : `Créé ${formatRelativeTime(new Date(document.createdAt))}`
+              }
+            </span>
           </div>
         </div>
       </div>
@@ -267,7 +254,9 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         .mylex-editor-content p:last-child { margin-bottom: 0; }
         .mylex-editor-content ul, .mylex-editor-content ol { padding-left: 1.5em; margin-bottom: 0.75em; }
         .mylex-editor-content li { margin-bottom: 0.25em; }
-        .mylex-editor-content ul { list-style-type: disc; } .mylex-editor-content ul ul { list-style-type: circle; } .mylex-editor-content ol { list-style-type: decimal; }
+        .mylex-editor-content ul { list-style-type: disc; }
+        .mylex-editor-content ul ul { list-style-type: circle; }
+        .mylex-editor-content ol { list-style-type: decimal; }
         .mylex-editor-content ul[data-type="taskList"] { list-style: none; padding-left: 0.5em; }
         .mylex-editor-content ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.5em; }
         .mylex-editor-content ul[data-type="taskList"] li > label { flex-shrink: 0; margin-top: 0.2em; }

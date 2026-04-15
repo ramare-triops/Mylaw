@@ -1,5 +1,5 @@
 // app/documents/[docId]/page.tsx
-// Page d'édition d'un document — charge depuis IndexedDB et monte l'éditeur.
+// Page d'édition intégrée dans l'AppShell : sidebar + topbar restent visibles.
 
 'use client'
 
@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { db } from '@/lib/db'
 import type { Document } from '@/lib/db'
+import { AppShell } from '@/components/layout/AppShell'
 import { DocumentEditorWrapper } from '@/components/editor/DocumentEditorWrapper'
 import { Loader2 } from 'lucide-react'
 
@@ -31,18 +32,26 @@ export default function DocumentEditorPage() {
   }, [docId])
 
   if (loading) return (
-    <div className="flex items-center justify-center h-full gap-3 text-[var(--color-text-muted)]">
-      <Loader2 className="w-5 h-5 animate-spin" />
-      <span className="text-[var(--text-sm)]">Chargement du document…</span>
-    </div>
+    <AppShell>
+      <div className="flex items-center justify-center h-full gap-3 text-[var(--color-text-muted)]">
+        <Loader2 className="w-5 h-5 animate-spin" />
+        <span className="text-[var(--text-sm)]">Chargement du document…</span>
+      </div>
+    </AppShell>
   )
 
   if (error || !document) return (
-    <div className="flex flex-col items-center justify-center h-full gap-2 text-[var(--color-text-muted)]">
-      <p className="text-[var(--text-base)] text-[var(--color-error)]">{error ?? 'Document introuvable.'}</p>
-      <a href="/documents" className="text-[var(--text-sm)] text-[var(--color-primary)] hover:underline">← Retour à la bibliothèque</a>
-    </div>
+    <AppShell>
+      <div className="flex flex-col items-center justify-center h-full gap-2">
+        <p className="text-[var(--text-base)] text-[var(--color-error)]">{error ?? 'Document introuvable.'}</p>
+        <a href="/documents" className="text-[var(--text-sm)] text-[var(--color-primary)] hover:underline">← Retour à la bibliothèque</a>
+      </div>
+    </AppShell>
   )
 
-  return <div className="h-full flex flex-col overflow-hidden"><DocumentEditorWrapper document={document} /></div>
+  return (
+    <AppShell>
+      <DocumentEditorWrapper document={document} />
+    </AppShell>
+  )
 }
