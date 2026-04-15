@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'Mylex — Atelier juridique personnel',
+  title: 'Mylaw — Atelier juridique personnel',
   description: 'Assistant personnel pour avocat : rédaction, documents, IA, délais.',
   icons: { icon: '/favicon.ico' },
 };

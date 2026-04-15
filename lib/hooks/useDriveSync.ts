@@ -1,12 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { DriveClient, DriveStatus, MylexBackup } from '@/lib/drive-sync';
+import { DriveClient, DriveStatus, MylawBackup } from '@/lib/drive-sync';
 import { db, getSetting, setSetting } from '@/lib/db';
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '';
-
-// Debounce upload: wait 3s after last change before uploading
 const UPLOAD_DEBOUNCE_MS = 3000;
 
 let clientInstance: DriveClient | null = null;
@@ -22,24 +20,17 @@ export function useDriveSync() {
   const uploadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const client = getClient();
 
-  // On mount: init gapi and auto-reconnect if previously connected
   useEffect(() => {
     if (!CLIENT_ID || typeof window === 'undefined') return;
     setStatus('loading');
     client.init()
       .then(async () => {
         const wasConnected = await getSetting<boolean>('drive_connected', false);
-        if (wasConnected) {
-          // Silently try to reconnect (will prompt if token expired)
-          setStatus('disconnected');
-        } else {
-          setStatus('idle');
-        }
+        setStatus(wasConnected ? 'disconnected' : 'idle');
       })
       .catch(() => setStatus('idle'));
   }, []);
 
-  // ─── Sign in & initial download ───────────────────────────────────────────
   const connect = useCallback(async () => {
     setStatus('loading');
     setError(null);
@@ -47,11 +38,8 @@ export function useDriveSync() {
       await client.init();
       await client.signIn();
       setStatus('syncing');
-
-      // Download remote backup and merge into local IndexedDB
       const remote = await client.download();
       if (remote) await restoreFromBackup(remote);
-
       await setSetting('drive_connected', true);
       setLastSynced(new Date());
       setStatus('connected');
@@ -61,7 +49,6 @@ export function useDriveSync() {
     }
   }, []);
 
-  // ─── Sign out ─────────────────────────────────────────────────────────────
   const disconnect = useCallback(async () => {
     client.signOut();
     await setSetting('drive_connected', false);
@@ -69,7 +56,6 @@ export function useDriveSync() {
     setLastSynced(null);
   }, []);
 
-  // ─── Manual sync (upload now) ─────────────────────────────────────────────
   const syncNow = useCallback(async () => {
     if (!client.isConnected()) return;
     setStatus('syncing');
@@ -84,7 +70,6 @@ export function useDriveSync() {
     }
   }, []);
 
-  // ─── Auto-sync with debounce (call after any data mutation) ───────────────
   const scheduleSync = useCallback(() => {
     if (!client.isConnected()) return;
     if (uploadTimer.current) clearTimeout(uploadTimer.current);
@@ -104,9 +89,7 @@ export function useDriveSync() {
   return { status, lastSynced, error, connect, disconnect, syncNow, scheduleSync };
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async function buildBackup(): Promise<MylexBackup> {
+async function buildBackup(): Promise<MylawBackup> {
   const [documents, snippets, deadlines, templates] = await Promise.all([
     db.documents.toArray(),
     db.table('snippets').toArray(),
@@ -116,20 +99,14 @@ async function buildBackup(): Promise<MylexBackup> {
   const settingsRows = await db.settings.toArray();
   const settings: Record<string, any> = {};
   for (const row of settingsRows) settings[row.key] = row.value;
-
   return {
     version: 1,
     exportedAt: new Date().toISOString(),
-    documents,
-    snippets,
-    deadlines,
-    templates,
-    settings,
+    documents, snippets, deadlines, templates, settings,
   };
 }
 
-async function restoreFromBackup(backup: MylexBackup): Promise<void> {
-  // Remote wins: clear local and repopulate
+async function restoreFromBackup(backup: MylawBackup): Promise<void> {
   await Promise.all([
     db.documents.clear(),
     db.table('snippets').clear(),
@@ -137,7 +114,6 @@ async function restoreFromBackup(backup: MylexBackup): Promise<void> {
     db.table('templates').clear(),
     db.settings.clear(),
   ]);
-
   if (backup.documents?.length) await db.documents.bulkAdd(backup.documents);
   if (backup.snippets?.length) await db.table('snippets').bulkAdd(backup.snippets);
   if (backup.deadlines?.length) await db.table('deadlines').bulkAdd(backup.deadlines);

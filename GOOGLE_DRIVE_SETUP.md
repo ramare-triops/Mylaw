@@ -1,12 +1,12 @@
-# Configuration Google Drive Sync
+# Configuration Google Drive Sync — Mylaw
 
-Suivez ces étapes pour activer la synchronisation Google Drive dans Mylex.
+Suivez ces étapes pour activer la synchronisation Google Drive dans Mylaw.
 
 ## 1. Créer un projet Google Cloud
 
 1. Allez sur [console.cloud.google.com](https://console.cloud.google.com)
 2. Cliquez sur **"Nouveau projet"**
-3. Nommez-le `Mylex` et cliquez **Créer**
+3. Nommez-le `Mylaw` et cliquez **Créer**
 
 ## 2. Activer l'API Google Drive
 
@@ -19,54 +19,45 @@ Suivez ces étapes pour activer la synchronisation Google Drive dans Mylex.
 1. **APIs & Services → Écran de consentement OAuth**
 2. Choisissez **Externe** → Créer
 3. Remplissez :
-   - Nom de l'application : `Mylex`
+   - Nom de l'application : `Mylaw`
    - Email d'assistance : votre email
    - Email du développeur : votre email
-4. Cliquez **Enregistrer et continuer** (les autres étapes peuvent être passées)
-5. Sur la page **"Utilisateurs tests"**, cliquez **+ Add users** et ajoutez votre adresse Gmail
+4. Cliquez **Enregistrer et continuer**
+5. Sur la page **"Utilisateurs tests"**, ajoutez votre adresse Gmail
 
 ## 4. Créer les identifiants OAuth
 
 1. **APIs & Services → Identifiants → + Créer des identifiants → ID client OAuth**
 2. Type d'application : **Application Web**
-3. Nom : `Mylex Local`
-4. **Origines JavaScript autorisées** — ajoutez :
+3. Nom : `Mylaw Local`
+4. **Origines JavaScript autorisées** :
    ```
    http://localhost:3000
    ```
-5. **URI de redirection autorisés** — ajoutez :
+5. **URI de redirection autorisés** :
    ```
    http://localhost:3000
    ```
-6. Cliquez **Créer**
-7. Copiez le **Client ID** (format : `xxxx.apps.googleusercontent.com`)
+6. Cliquez **Créer** et copiez le **Client ID**
 
-## 5. Configurer Mylex
+## 5. Configurer Mylaw
 
-1. À la racine du projet, copiez le fichier d'exemple :
-   ```bash
-   cp .env.local.example .env.local
-   ```
-2. Ouvrez `.env.local` et remplacez la valeur :
-   ```
-   NEXT_PUBLIC_GOOGLE_CLIENT_ID=VOTRE_CLIENT_ID_ICI.apps.googleusercontent.com
-   ```
-3. Redémarrez le serveur :
-   ```bash
-   npm run dev
-   ```
+```bash
+cp .env.local.example .env.local
+# Le Client ID est déjà renseigné dans .env.local.example
+npm run dev
+```
 
-## 6. Connecter Drive dans Mylex
+## 6. Connecter Drive dans Mylaw
 
-1. Allez dans **Paramètres → Synchronisation**
+1. **Paramètres → Synchronisation**
 2. Cliquez **Connecter Google Drive**
-3. Une fenêtre Google s'ouvre → connectez-vous avec votre compte
-4. Autorisez l'accès (scope limité : l'app ne voit que ses propres fichiers)
+3. Autorisez l'accès dans la fenêtre Google
 
 ✅ La synchronisation est active. Vos données sont sauvegardées automatiquement 3 secondes après chaque modification.
 
 ## Notes
 
-- Le fichier de sauvegarde `mylex-backup.json` est stocké dans l'espace **AppData** de Drive (privé, invisible dans "Mon Drive")
-- Sur un nouvel appareil : répétez l'étape 5 et 6 — vos données seront restaurées automatiquement
-- Le statut de sync est visible dans **Paramètres → Synchronisation**
+- Le fichier `mylaw-backup.json` est stocké dans l'espace **AppData** privé de Drive
+- Sur un nouvel appareil : `cp .env.local.example .env.local && npm run dev`, puis reconnectez Drive — vos données sont restaurées automatiquement
+- Statut visible dans **Paramètres → Synchronisation**

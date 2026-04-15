@@ -1,14 +1,14 @@
 /**
  * Google Drive Sync — lib/drive-sync.ts
  *
- * Stocke toutes les données Mylex dans un fichier JSON unique
+ * Stocke toutes les données Mylaw dans un fichier JSON unique
  * dans l'espace AppData privé de Google Drive (invisible pour l'utilisateur
  * dans "Mon Drive", accessible uniquement par cette app).
  *
  * Nécessite : NEXT_PUBLIC_GOOGLE_CLIENT_ID dans .env.local
  */
 
-const DRIVE_FILE_NAME = 'mylex-backup.json';
+const DRIVE_FILE_NAME = 'mylaw-backup.json';
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
 const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
 
@@ -21,7 +21,7 @@ declare global {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface MylexBackup {
+export interface MylawBackup {
   version: number;
   exportedAt: string;
   documents: any[];
@@ -40,7 +40,7 @@ export type DriveStatus =
   | 'error'
   | 'disconnected';
 
-// ─── Load Google API scripts ─────────────────────────────────────────────────
+// ─── Load Google API scripts ──────────────────────────────────────────────────
 
 let gapiLoaded = false;
 let gisLoaded = false;
@@ -65,7 +65,7 @@ export function loadGisScript(): Promise<void> {
   });
 }
 
-// ─── DriveClient ─────────────────────────────────────────────────────────────
+// ─── DriveClient ──────────────────────────────────────────────────────────────
 
 export class DriveClient {
   private clientId: string;
@@ -117,7 +117,6 @@ export class DriveClient {
     return !!this.accessToken;
   }
 
-  // Find or create the backup file in appDataFolder
   private async resolveFileId(): Promise<string> {
     if (this.fileId) return this.fileId;
 
@@ -132,12 +131,11 @@ export class DriveClient {
       return this.fileId!;
     }
 
-    // Create the file
     const boundary = '-------314159265358979323846';
     const delimiter = `\r\n--${boundary}\r\n`;
     const closeDelimiter = `\r\n--${boundary}--`;
     const metadata = JSON.stringify({ name: DRIVE_FILE_NAME, parents: ['appDataFolder'] });
-    const emptyBackup: MylexBackup = {
+    const emptyBackup: MylawBackup = {
       version: 1, exportedAt: new Date().toISOString(),
       documents: [], snippets: [], deadlines: [], settings: {}, templates: [],
     };
@@ -157,20 +155,20 @@ export class DriveClient {
     return this.fileId!;
   }
 
-  async download(): Promise<MylexBackup | null> {
+  async download(): Promise<MylawBackup | null> {
     try {
       const fileId = await this.resolveFileId();
       const res = await window.gapi.client.drive.files.get({
         fileId,
         alt: 'media',
       });
-      return res.result as MylexBackup;
+      return res.result as MylawBackup;
     } catch {
       return null;
     }
   }
 
-  async upload(backup: MylexBackup): Promise<void> {
+  async upload(backup: MylawBackup): Promise<void> {
     const fileId = await this.resolveFileId();
     backup.exportedAt = new Date().toISOString();
     await window.gapi.client.request({
