@@ -1,11 +1,10 @@
 // components/editor/DocumentEditorWrapper.tsx
-// Wrapper principal : page A4 blanche, barre d'outils style Word,
-// bouton Enregistrer, indicateur de sauvegarde.
-// Le bouton Fermer a été retiré : la navigation est gérée par la Sidebar.
+// Wrapper éditeur : applique les préférences utilisateur (police, taille, interligne, marges, spellcheck…)
+// Bouton Fermer avec popup 3 actions : Enregistrer sans fermer / Enregistrer et fermer / Annuler
 
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
@@ -27,19 +26,29 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import CharacterCount from '@tiptap/extension-character-count'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Save, Check, Loader2, Wifi, WifiOff } from 'lucide-react'
+import { Save, Check, Loader2, Wifi, WifiOff, X } from 'lucide-react'
 
 import { WordToolbar } from './WordToolbar'
-import { UnsavedChangesDialog } from './UnsavedChangesDialog'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
+import { getSetting } from '@/lib/db'
 import type { Document } from '@/lib/db'
+import type { EditorPrefs } from '@/components/settings/Settings'
+import { DEFAULT_EDITOR_PREFS } from '@/components/settings/Settings'
 
 interface DocumentEditorWrapperProps {
   document: Document
   onClose?: () => void
 }
 
-// ── Détection automatique du format de contenu ────────────────────────────────────
+// ── Marges page A4 selon le réglage ──────────────────────────────────────────
+const MARGIN_MAP: Record<string, string> = {
+  narrow:     '15mm 15mm 15mm 15mm',
+  normal:     '25mm 20mm 20mm 25mm',
+  wide:       '30mm 25mm 25mm 30mm',
+  'extra-wide': '35mm 30mm 30mm 35mm',
+}
+
+// ── Détection automatique du format de contenu ────────────────────────────────
 function parseContent(raw: string | undefined | null): string | object {
   if (!raw || raw.trim() === '') return ''
   const trimmed = raw.trim()
@@ -52,38 +61,146 @@ function parseContent(raw: string | undefined | null): string | object {
   return `<p>${trimmed}</p>`
 }
 
+// ── Popup Fermer ──────────────────────────────────────────────────────────────
+function CloseDialog({
+  open, isSaving, documentTitle,
+  onSaveOnly, onSaveAndClose, onClose, onCancel,
+}: {
+  open: boolean
+  isSaving: boolean
+  documentTitle: string
+  onSaveOnly: () => void
+  onSaveAndClose: () => void
+  onClose: () => void
+  onCancel: () => void
+}) {
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Overlay */}
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onCancel} />
+      {/* Modal */}
+      <div className="relative z-10 w-full max-w-sm mx-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-6 flex flex-col gap-5">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[var(--text-base)] font-semibold text-[var(--color-text)] leading-tight">
+              Fermer le document
+            </h2>
+            <p className="text-[var(--text-xs)] text-[var(--color-text-muted)] mt-1">
+              &laquo;&nbsp;{documentTitle}&nbsp;&raquo; contient des modifications non enregistrées.
+            </p>
+          </div>
+          <button
+            onClick={onCancel}
+            className="flex-shrink-0 p-1 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
+            aria-label="Annuler"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-col gap-2">
+          {/* Enregistrer sans fermer */}
+          <button
+            onClick={onSaveOnly}
+            disabled={isSaving}
+            className="w-full h-9 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium border border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Enregistrer sans fermer
+          </button>
+
+          {/* Enregistrer et fermer */}
+          <button
+            onClick={onSaveAndClose}
+            disabled={isSaving}
+            className="w-full h-9 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-text-inverse)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            Enregistrer et fermer
+          </button>
+
+          {/* Fermer sans enregistrer */}
+          <button
+            onClick={onClose}
+            className="w-full h-9 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium border border-[var(--color-error)]/40 text-[var(--color-error)] hover:bg-[var(--color-error)]/8 transition-colors flex items-center justify-center gap-2"
+          >
+            <X className="w-3.5 h-3.5" />
+            Fermer sans enregistrer
+          </button>
+
+          {/* Annuler */}
+          <button
+            onClick={onCancel}
+            className="w-full h-8 rounded-[var(--radius-md)] text-[var(--text-xs)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+          >
+            Annuler
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Composant principal ───────────────────────────────────────────────────────
 export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapperProps) {
   const router = useRouter()
-  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
-  const [isOnline, setIsOnline] = useState(true)
+  const [showCloseDialog, setShowCloseDialog] = useState(false)
+  const [isOnline, setIsOnline]               = useState(true)
+  const [prefs, setPrefs]                     = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS)
+  const prefsLoaded                           = useRef(false)
 
-  const { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged } = useDocumentSave(document.id)
+  const { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged } =
+    useDocumentSave(document.id, prefs.autoSave ? Number(prefs.autoSaveDelay) * 1000 : 0)
 
+  // ── Chargement des préférences depuis IndexedDB ──────────────────────────
   useEffect(() => {
-    const up = () => setIsOnline(true)
+    getSetting<EditorPrefs>('editorPrefs', DEFAULT_EDITOR_PREFS).then((p) => {
+      setPrefs(p)
+      prefsLoaded.current = true
+    })
+  }, [])
+
+  // ── Réseau ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const up   = () => setIsOnline(true)
     const down = () => setIsOnline(false)
     setIsOnline(navigator.onLine)
-    window.addEventListener('online', up)
+    window.addEventListener('online',  up)
     window.addEventListener('offline', down)
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down) }
   }, [])
 
+  // ── Navigation ───────────────────────────────────────────────────────────
   const performClose = useCallback(() => {
     if (onClose) onClose()
     else router.push('/documents')
   }, [onClose, router])
 
+  const handleCloseRequest = useCallback(() => {
+    if (hasUnsavedChanges) setShowCloseDialog(true)
+    else performClose()
+  }, [hasUnsavedChanges, performClose])
+
+  const handleSaveOnly = useCallback(async () => {
+    if (editor) await saveNow(JSON.stringify(editor.getJSON()))
+    setShowCloseDialog(false)
+  }, [saveNow])
+
   const handleSaveAndClose = useCallback(async () => {
     if (editor) await saveNow(JSON.stringify(editor.getJSON()))
-    setShowUnsavedDialog(false)
+    setShowCloseDialog(false)
     performClose()
   }, [saveNow, performClose])
 
-  const handleDiscardAndClose = useCallback(() => {
-    setShowUnsavedDialog(false)
+  const handleCloseWithoutSave = useCallback(() => {
+    setShowCloseDialog(false)
     performClose()
   }, [performClose])
 
+  // ── Ctrl+S ───────────────────────────────────────────────────────────────
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -95,6 +212,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [saveNow])
 
+  // ── beforeunload ─────────────────────────────────────────────────────────
   useEffect(() => {
     const onBefore = (e: BeforeUnloadEvent) => {
       if (hasUnsavedChanges) { e.preventDefault(); e.returnValue = '' }
@@ -103,6 +221,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     return () => window.removeEventListener('beforeunload', onBefore)
   }, [hasUnsavedChanges])
 
+  // ── Initialisation de l'éditeur ──────────────────────────────────────────
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
@@ -118,10 +237,30 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
       Placeholder.configure({ placeholder: 'Commencez à rédiger votre document…' }),
     ],
     content: parseContent(document.content),
-    editorProps: { attributes: { class: 'mylex-editor-content', spellcheck: 'true', lang: 'fr' } },
+    editorProps: {
+      attributes: {
+        class: 'mylex-editor-content',
+        spellcheck: prefs.spellcheck ? 'true' : 'false',
+        lang: 'fr',
+      },
+    },
     onUpdate: ({ editor }) => markAsChanged(JSON.stringify(editor.getJSON())),
   })
 
+  // ── Applique la police + alignement dès que les préférences sont chargées
+  // et que l'éditeur est prêt (uniquement si document vierge) ─────────────
+  useEffect(() => {
+    if (!editor || !prefsLoaded.current) return
+    // Applique la police via TipTap FontFamily
+    editor.chain().focus().setFontFamily(prefs.fontFamily).run()
+    // Applique l'alignement par défaut
+    if (prefs.defaultTextAlign !== 'left') {
+      editor.chain().setTextAlign(prefs.defaultTextAlign).run()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, prefsLoaded.current])
+
+  // ── Liens & images ───────────────────────────────────────────────────────
   const handleInsertLink = useCallback(() => {
     if (!editor) return
     const prev = editor.getAttributes('link').href
@@ -137,9 +276,11 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     if (url) editor.chain().focus().setImage({ src: url }).run()
   }, [editor])
 
-  const wordCount = editor?.storage.characterCount.words() ?? 0
+  const wordCount = editor?.storage.characterCount.words()      ?? 0
   const charCount = editor?.storage.characterCount.characters() ?? 0
+  const pagePadding = MARGIN_MAP[prefs.pageMargin] ?? MARGIN_MAP.normal
 
+  // ── Indicateur de sauvegarde ─────────────────────────────────────────────
   const SaveIndicator = () => {
     if (isSaving) return (
       <span className="flex items-center gap-1.5 text-[var(--text-xs)] text-[var(--color-text-muted)]">
@@ -162,11 +303,11 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
 
   return (
     <>
-      {/* L'éditeur remplit exactement la zone <main> de l'AppShell */}
       <div className="flex flex-col h-full overflow-hidden bg-[var(--color-surface-offset)]">
 
-        {/* En-tête compact : titre + indicateur + Enregistrer */}
+        {/* En-tête */}
         <div className="flex items-center justify-between gap-3 px-4 py-2 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex-shrink-0">
+          {/* Titre éditable */}
           <input
             type="text"
             defaultValue={document.title || 'Sans titre'}
@@ -175,9 +316,11 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
             placeholder="Sans titre"
             aria-label="Titre du document"
           />
+
           <div className="flex items-center gap-3 flex-shrink-0">
             <SaveIndicator />
-            {/* Indicateur en ligne */}
+
+            {/* Indicateur réseau */}
             <span
               className={`flex items-center gap-1 text-[var(--text-xs)] ${
                 isOnline ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'
@@ -186,64 +329,90 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
             >
               {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
             </span>
+
             {/* Bouton Enregistrer */}
             <button
               type="button"
               onClick={() => editor && saveNow(JSON.stringify(editor.getJSON()))}
               disabled={isSaving || isSaved}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-text-inverse)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] focus-visible:outline-offset-2"
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-text-inverse)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Enregistrer (Ctrl+S)"
             >
               {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               <span>Enregistrer</span>
             </button>
+
+            {/* Bouton Fermer */}
+            <button
+              type="button"
+              onClick={handleCloseRequest}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium border border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
+              title="Fermer le document"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Fermer</span>
+            </button>
           </div>
         </div>
 
-        {/* Barre d'outils style Word */}
+        {/* Barre d'outils Word */}
         <WordToolbar editor={editor} onInsertLink={handleInsertLink} onInsertImage={handleInsertImage} />
 
-        {/* Page A4 blanche sur fond gris */}
+        {/* Page A4 */}
         <div className="flex-1 overflow-y-auto bg-[#e8e8e8] dark:bg-[#2a2a2a] px-8 py-8">
           <div
             className="mx-auto bg-white dark:bg-[#1e1e1e] shadow-[0_2px_8px_rgba(0,0,0,0.15),0_0_0_1px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.5)] min-h-[297mm]"
-            style={{ width: '210mm', maxWidth: '100%', padding: '25mm 20mm 20mm 25mm' }}
+            style={{ width: '210mm', maxWidth: '100%', padding: pagePadding }}
           >
             <EditorContent editor={editor} />
           </div>
         </div>
 
         {/* Barre de statut */}
-        <div className="flex items-center justify-between px-4 py-1 bg-[var(--color-primary)] text-white text-[var(--text-xs)] flex-shrink-0">
-          <div className="flex items-center gap-4">
-            <span>{wordCount} mot{wordCount !== 1 ? 's' : ''}</span>
-            <span>{charCount} caractère{charCount !== 1 ? 's' : ''}</span>
+        {prefs.showStatusBar && (
+          <div className="flex items-center justify-between px-4 py-1 bg-[var(--color-primary)] text-white text-[var(--text-xs)] flex-shrink-0">
+            <div className="flex items-center gap-4">
+              {prefs.showWordCount && (
+                <>
+                  <span>{wordCount} mot{wordCount !== 1 ? 's' : ''}</span>
+                  <span>{charCount} caractère{charCount !== 1 ? 's' : ''}</span>
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              {document.type && <span className="opacity-75 capitalize">{document.type}</span>}
+              <span className="opacity-75">
+                {lastSavedAt
+                  ? `Modifié ${formatRelativeTime(lastSavedAt)}`
+                  : `Créé ${formatRelativeTime(new Date(document.createdAt))}`
+                }
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            {document.type && <span className="opacity-75 capitalize">{document.type}</span>}
-            <span className="opacity-75">
-              {lastSavedAt
-                ? `Modifié ${formatRelativeTime(lastSavedAt)}`
-                : `Créé ${formatRelativeTime(new Date(document.createdAt))}`
-              }
-            </span>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Popup modifications non enregistrées */}
-      <UnsavedChangesDialog
-        open={showUnsavedDialog}
+      {/* Popup Fermer */}
+      <CloseDialog
+        open={showCloseDialog}
         isSaving={isSaving}
         documentTitle={document.title || 'Sans titre'}
+        onSaveOnly={handleSaveOnly}
         onSaveAndClose={handleSaveAndClose}
-        onDiscardAndClose={handleDiscardAndClose}
-        onCancel={() => setShowUnsavedDialog(false)}
+        onClose={handleCloseWithoutSave}
+        onCancel={() => setShowCloseDialog(false)}
       />
 
-      {/* Styles TipTap — page blanche style Word */}
+      {/* Styles TipTap — police et interligne injectés depuis les préférences */}
       <style jsx global>{`
-        .mylex-editor-content { font-family: 'Georgia', 'Source Serif 4', serif; font-size: 12pt; line-height: 1.8; color: #28251d; min-height: 200px; outline: none; }
+        .mylex-editor-content {
+          font-family: ${prefs.fontFamily};
+          font-size: ${prefs.fontSize}pt;
+          line-height: ${prefs.lineHeight};
+          color: #28251d;
+          min-height: 200px;
+          outline: none;
+        }
         [data-theme="dark"] .mylex-editor-content { color: #d4d0c8; }
         .mylex-editor-content p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; color: #9ca3af; pointer-events: none; height: 0; font-style: italic; }
         .mylex-editor-content h1 { font-size: 2em; font-weight: 700; margin: 1em 0 0.5em; line-height: 1.2; }
