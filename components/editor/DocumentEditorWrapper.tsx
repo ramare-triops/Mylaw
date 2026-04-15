@@ -28,6 +28,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import CharacterCount from '@tiptap/extension-character-count'
 import Placeholder from '@tiptap/extension-placeholder'
 import { Save, Check, Loader2, Wifi, WifiOff, X } from 'lucide-react'
+import type { Editor } from '@tiptap/react'
 
 import { WordToolbar } from './WordToolbar'
 import { FontSize } from './extensions/FontSize'
@@ -63,10 +64,6 @@ function parseContent(raw: string | undefined | null): string | object {
   return `<p>${trimmed}</p>`
 }
 
-/**
- * Transforme un contenu HTML brut en remplaçant les occurrences [Variable]
- * par des spans reconnus par l'extension VariableField lors du parsing.
- */
 function injectVariableSpans(html: string): string {
   return html.replace(/\[([^\]]+)\]/g, (_, name: string) => {
     const escaped = name.replace(/"/g, '&quot;')
@@ -131,9 +128,14 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const [prefs, setPrefs]                     = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS)
   const prefsLoaded                           = useRef(false)
 
+  // ── Ref stable vers l'instance editor (jamais de dépendance cyclique) ────
+  const editorRef = useRef<Editor | null>(null)
+
   // ── Variable popup state ─────────────────────────────────────────────────
   const [activeVariable, setActiveVariable] = useState<{ name: string; pos: number } | null>(null)
   const [popupAnchor, setPopupAnchor]       = useState<HTMLElement | null>(null)
+  const activeVariableRef = useRef(activeVariable)
+  useEffect(() => { activeVariableRef.current = activeVariable }, [activeVariable])
 
   const { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged } =
     useDocumentSave(document.id, prefs.autoSave ? Number(prefs.autoSaveDelay) * 1000 : 0)
@@ -164,13 +166,16 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     else performClose()
   }, [hasUnsavedChanges, performClose])
 
+  // Utilise editorRef.current pour éviter toute référence à editor avant sa déclaration
   const handleSaveOnly = useCallback(async () => {
-    if (editor) await saveNow(JSON.stringify(editor.getJSON()))
+    const ed = editorRef.current
+    if (ed) await saveNow(JSON.stringify(ed.getJSON()))
     setShowCloseDialog(false)
   }, [saveNow])
 
   const handleSaveAndClose = useCallback(async () => {
-    if (editor) await saveNow(JSON.stringify(editor.getJSON()))
+    const ed = editorRef.current
+    if (ed) await saveNow(JSON.stringify(ed.getJSON()))
     setShowCloseDialog(false)
     performClose()
   }, [saveNow, performClose])
@@ -184,7 +189,8 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault()
-        if (editor) saveNow(JSON.stringify(editor.getJSON()))
+        const ed = editorRef.current
+        if (ed) saveNow(JSON.stringify(ed.getJSON()))
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -199,36 +205,36 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     return () => window.removeEventListener('beforeunload', onBefore)
   }, [hasUnsavedChanges])
 
-  // ── Variable click handler ───────────────────────────────────────────────
+  // ── Variable handlers — utilisent editorRef pour éviter la référence anticipée
   const handleVariableClick = useCallback((name: string, pos: number) => {
-    // Trouver l'élément DOM du span cliqué pour positionner la popup
     const editorDom = window.document.querySelector('.mylex-editor-content')
-    const span = editorDom?.querySelector(`[data-variable-field][data-variable-name="${CSS.escape(name)}"]`) as HTMLElement | null
+    const span = editorDom?.querySelector(
+      `[data-variable-field][data-variable-name="${CSS.escape(name)}"]`
+    ) as HTMLElement | null
     setActiveVariable({ name, pos })
     setPopupAnchor(span)
   }, [])
 
   const handleVariableConfirm = useCallback((value: string) => {
-    if (!editor || !activeVariable) return
-    editor.commands.replaceVariable(activeVariable.pos, value)
+    const ed  = editorRef.current
+    const av  = activeVariableRef.current
+    if (!ed || !av) return
+    ed.commands.replaceVariable(av.pos, value)
     setActiveVariable(null)
     setPopupAnchor(null)
-  }, [editor, activeVariable])
+  }, []) // dépendances stables : refs uniquement
 
   const handleVariableClose = useCallback(() => {
     setActiveVariable(null)
     setPopupAnchor(null)
   }, [])
 
-  // ── Prepare initial content: inject variable spans into HTML ─────────────
-  const initialContent = useCallback(() => {
+  // ── Contenu initial : injecter les spans de variables dans le HTML brut
+  const initialContent = (() => {
     const parsed = parseContent(document.content)
-    if (typeof parsed === 'string') {
-      return injectVariableSpans(parsed)
-    }
-    // For JSON content, return as-is (variables would already be stored as variableField nodes)
+    if (typeof parsed === 'string') return injectVariableSpans(parsed)
     return parsed
-  }, [document.content])
+  })()
 
   const editor = useEditor({
     extensions: [
@@ -236,7 +242,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
       Underline,
       TextStyle,
       FontFamily,
-      // FontSize doit venir APRÈS TextStyle pour enrichir ses attributs
       FontSize,
       Color,
       Highlight.configure({ multicolor: true }),
@@ -253,7 +258,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         HTMLAttributes: {},
       }),
     ],
-    content: initialContent(),
+    content: initialContent,
     editorProps: {
       attributes: {
         class: 'mylex-editor-content',
@@ -261,8 +266,13 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         lang: 'fr',
       },
     },
-    onUpdate: ({ editor }) => markAsChanged(JSON.stringify(editor.getJSON())),
+    onUpdate: ({ editor: ed }) => markAsChanged(JSON.stringify(ed.getJSON())),
   })
+
+  // Maintenir le ref à jour après chaque render
+  useEffect(() => {
+    editorRef.current = editor ?? null
+  }, [editor])
 
   useEffect(() => {
     if (!editor || !prefsLoaded.current) return
@@ -279,19 +289,21 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   }, [editor, prefsLoaded.current])
 
   const handleInsertLink = useCallback(() => {
-    if (!editor) return
-    const prev = editor.getAttributes('link').href
+    const ed = editorRef.current
+    if (!ed) return
+    const prev = ed.getAttributes('link').href
     const url = window.prompt('URL du lien :', prev ?? 'https://')
     if (url === null) return
-    if (url === '') editor.chain().focus().extendMarkRange('link').unsetLink().run()
-    else editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
-  }, [editor])
+    if (url === '') ed.chain().focus().extendMarkRange('link').unsetLink().run()
+    else ed.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
+  }, [])
 
   const handleInsertImage = useCallback(() => {
-    if (!editor) return
+    const ed = editorRef.current
+    if (!ed) return
     const url = window.prompt("URL de l'image :")
-    if (url) editor.chain().focus().setImage({ src: url }).run()
-  }, [editor])
+    if (url) ed.chain().focus().setImage({ src: url }).run()
+  }, [])
 
   const wordCount   = editor?.storage.characterCount.words()      ?? 0
   const charCount   = editor?.storage.characterCount.characters() ?? 0
@@ -324,7 +336,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           <input
             type="text"
             defaultValue={document.title || 'Sans titre'}
-            onBlur={(e) => { if (editor) saveNow(JSON.stringify(editor.getJSON()), e.target.value) }}
+            onBlur={(e) => {
+              const ed = editorRef.current
+              if (ed) saveNow(JSON.stringify(ed.getJSON()), e.target.value)
+            }}
             className="flex-1 min-w-0 text-[var(--text-sm)] font-semibold text-[var(--color-text)] bg-transparent border-none outline-none hover:bg-[var(--color-surface-offset)] focus:bg-[var(--color-surface-offset)] rounded-[var(--radius-sm)] px-2 py-1 -mx-2 transition-colors"
             placeholder="Sans titre"
             aria-label="Titre du document"
@@ -341,7 +356,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
             </span>
             <button
               type="button"
-              onClick={() => editor && saveNow(JSON.stringify(editor.getJSON()))}
+              onClick={() => {
+                const ed = editorRef.current
+                if (ed) saveNow(JSON.stringify(ed.getJSON()))
+              }}
               disabled={isSaving || isSaved}
               className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-text-inverse)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Enregistrer (Ctrl+S)"
@@ -411,7 +429,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         onCancel={() => setShowCloseDialog(false)}
       />
 
-      {/* Variable inline popup */}
       <VariablePopup
         variableName={activeVariable?.name ?? null}
         anchorEl={popupAnchor}
