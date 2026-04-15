@@ -3,6 +3,7 @@
 // Bouton Fermer avec popup 3 actions : Enregistrer sans fermer / Enregistrer et fermer / Annuler
 // Champs variables [Nom] [Ville] etc. cliquables avec pop-up de saisie
 // Bouton "Renseigner les informations" avec dialog guidé pas à pas
+// Zoom document style Google Docs
 
 'use client'
 
@@ -28,7 +29,7 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import CharacterCount from '@tiptap/extension-character-count'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Save, Check, Loader2, Wifi, WifiOff, X } from 'lucide-react'
+import { Save, Check, Loader2, Wifi, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
 
 import { WordToolbar } from './WordToolbar'
@@ -53,6 +54,10 @@ const MARGIN_MAP: Record<string, string> = {
   wide:         '30mm 25mm 25mm 30mm',
   'extra-wide': '35mm 30mm 30mm 35mm',
 }
+
+// Paliers de zoom disponibles (en %)
+const ZOOM_STEPS = [50, 75, 90, 100, 110, 125, 150, 175, 200]
+const ZOOM_DEFAULT = 100
 
 function parseContent(raw: string | undefined | null): string | object {
   if (!raw || raw.trim() === '') return ''
@@ -139,12 +144,11 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const [isOnline, setIsOnline]                       = useState(true)
   const [prefs, setPrefs]                             = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS)
   const [variableCount, setVariableCount]             = useState(0)
+  const [zoom, setZoom]                               = useState(ZOOM_DEFAULT)
   const prefsLoaded                                   = useRef(false)
 
-  // Ref stable vers l'instance editor
   const editorRef = useRef<Editor | null>(null)
 
-  // Variable popup (clic individuel)
   const [activeVariable, setActiveVariable] = useState<{ name: string; pos: number } | null>(null)
   const [popupAnchor, setPopupAnchor]       = useState<HTMLElement | null>(null)
   const activeVariableRef                   = useRef(activeVariable)
@@ -168,6 +172,45 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     window.addEventListener('offline', down)
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down) }
   }, [])
+
+  // Raccourcis clavier pour le zoom (Ctrl+= / Ctrl+-)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault()
+        const ed = editorRef.current
+        if (ed) saveNow(JSON.stringify(ed.getJSON()))
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+        e.preventDefault()
+        setZoom((z) => {
+          const idx = ZOOM_STEPS.indexOf(z)
+          return idx < ZOOM_STEPS.length - 1 ? ZOOM_STEPS[idx + 1] : z
+        })
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+        e.preventDefault()
+        setZoom((z) => {
+          const idx = ZOOM_STEPS.indexOf(z)
+          return idx > 0 ? ZOOM_STEPS[idx - 1] : z
+        })
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+        e.preventDefault()
+        setZoom(ZOOM_DEFAULT)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [saveNow])
+
+  useEffect(() => {
+    const onBefore = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) { e.preventDefault(); e.returnValue = '' }
+    }
+    window.addEventListener('beforeunload', onBefore)
+    return () => window.removeEventListener('beforeunload', onBefore)
+  }, [hasUnsavedChanges])
 
   const performClose = useCallback(() => {
     if (onClose) onClose()
@@ -197,27 +240,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     performClose()
   }, [performClose])
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault()
-        const ed = editorRef.current
-        if (ed) saveNow(JSON.stringify(ed.getJSON()))
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [saveNow])
-
-  useEffect(() => {
-    const onBefore = (e: BeforeUnloadEvent) => {
-      if (hasUnsavedChanges) { e.preventDefault(); e.returnValue = '' }
-    }
-    window.addEventListener('beforeunload', onBefore)
-    return () => window.removeEventListener('beforeunload', onBefore)
-  }, [hasUnsavedChanges])
-
-  // Variable click handler (clic sur un seul champ)
   const handleVariableClick = useCallback((name: string, pos: number) => {
     const editorDom = window.document.querySelector('.mylex-editor-content')
     const span = editorDom?.querySelector(
@@ -234,7 +256,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     ed.commands.replaceVariable(av.pos, value)
     setActiveVariable(null)
     setPopupAnchor(null)
-    // Recalcule le nombre de variables restantes
     setTimeout(() => {
       const c = editorRef.current ? countVariables(editorRef.current) : 0
       setVariableCount(c)
@@ -246,17 +267,25 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     setPopupAnchor(null)
   }, [])
 
-  // Fermeture du dialog global
   const handleFillDialogClose = useCallback(() => {
     setShowFillDialog(false)
-    // Recalcule les variables restantes après la session
     setTimeout(() => {
       const c = editorRef.current ? countVariables(editorRef.current) : 0
       setVariableCount(c)
     }, 50)
   }, [])
 
-  // Contenu initial
+  // Zoom helpers
+  const zoomIn  = useCallback(() => setZoom((z) => {
+    const idx = ZOOM_STEPS.indexOf(z)
+    return idx < ZOOM_STEPS.length - 1 ? ZOOM_STEPS[idx + 1] : z
+  }), [])
+  const zoomOut = useCallback(() => setZoom((z) => {
+    const idx = ZOOM_STEPS.indexOf(z)
+    return idx > 0 ? ZOOM_STEPS[idx - 1] : z
+  }), [])
+  const zoomReset = useCallback(() => setZoom(ZOOM_DEFAULT), [])
+
   const initialContent = (() => {
     const parsed = parseContent(document.content)
     if (typeof parsed === 'string') return injectVariableSpans(parsed)
@@ -266,11 +295,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
-      Underline,
-      TextStyle,
-      FontFamily,
-      FontSize,
-      Color,
+      Underline, TextStyle, FontFamily, FontSize, Color,
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Link.configure({ openOnClick: false, HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' } }),
@@ -295,29 +320,19 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     },
     onUpdate: ({ editor: ed }) => {
       markAsChanged(JSON.stringify(ed.getJSON()))
-      // Mettre à jour le compteur de variables en temps réel
       setVariableCount(countVariables(ed))
     },
   })
 
-  // Maintenir le ref à jour
   useEffect(() => {
     editorRef.current = editor ?? null
-    // Comptage initial
     if (editor) setVariableCount(countVariables(editor))
   }, [editor])
 
   useEffect(() => {
     if (!editor || !prefsLoaded.current) return
-    editor
-      .chain()
-      .focus()
-      .setFontFamily(prefs.fontFamily)
-      .setFontSize(`${prefs.fontSize}pt`)
-      .run()
-    if (prefs.defaultTextAlign !== 'left') {
-      editor.chain().setTextAlign(prefs.defaultTextAlign).run()
-    }
+    editor.chain().focus().setFontFamily(prefs.fontFamily).setFontSize(`${prefs.fontSize}pt`).run()
+    if (prefs.defaultTextAlign !== 'left') editor.chain().setTextAlign(prefs.defaultTextAlign).run()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, prefsLoaded.current])
 
@@ -342,6 +357,11 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const charCount   = editor?.storage.characterCount.characters() ?? 0
   const pagePadding = MARGIN_MAP[prefs.pageMargin] ?? MARGIN_MAP.normal
 
+  // Largeur réelle de la feuille A4 mise à l'échelle
+  // transform-origin: top center — on ajuste la hauteur du conteneur via scaleY
+  const A4_WIDTH_MM = 210
+  const scaleFactor = zoom / 100
+
   const SaveIndicator = () => {
     if (isSaving) return (
       <span className="flex items-center gap-1.5 text-[var(--text-xs)] text-[var(--color-text-muted)]">
@@ -365,6 +385,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   return (
     <>
       <div className="flex flex-col h-full overflow-hidden bg-[var(--color-surface-offset)]">
+        {/* Barre de titre */}
         <div className="flex items-center justify-between gap-3 px-4 py-2 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex-shrink-0">
           <input
             type="text"
@@ -389,10 +410,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
             </span>
             <button
               type="button"
-              onClick={() => {
-                const ed = editorRef.current
-                if (ed) saveNow(JSON.stringify(ed.getJSON()))
-              }}
+              onClick={() => { const ed = editorRef.current; if (ed) saveNow(JSON.stringify(ed.getJSON())) }}
               disabled={isSaving || isSaved}
               className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-text-inverse)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Enregistrer (Ctrl+S)"
@@ -422,15 +440,35 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           defaultFontSize={String(prefs.fontSize)}
         />
 
-        <div className="flex-1 overflow-y-auto bg-[#e8e8e8] dark:bg-[#2a2a2a] px-8 py-8">
+        {/* Zone de document avec zoom */}
+        <div className="flex-1 overflow-y-auto overflow-x-auto bg-[#e8e8e8] dark:bg-[#2a2a2a] px-8 py-8">
+          {/* Conteneur qui réserve la place selon l'échelle */}
           <div
-            className="mx-auto bg-white dark:bg-[#1e1e1e] shadow-[0_2px_8px_rgba(0,0,0,0.15),0_0_0_1px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.5)] min-h-[297mm]"
-            style={{ width: '210mm', maxWidth: '100%', padding: pagePadding }}
+            style={{
+              width: `${A4_WIDTH_MM * scaleFactor}mm`,
+              margin: '0 auto',
+              // La hauteur se fait naturellement via le contenu mis à l'échelle
+            }}
           >
-            <EditorContent editor={editor} />
+            <div
+              style={{
+                width: `${A4_WIDTH_MM}mm`,
+                maxWidth: '100%',
+                padding: pagePadding,
+                background: 'white',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05)',
+                minHeight: '297mm',
+                transformOrigin: 'top left',
+                transform: `scale(${scaleFactor})`,
+                transition: 'transform 0.15s ease',
+              }}
+            >
+              <EditorContent editor={editor} />
+            </div>
           </div>
         </div>
 
+        {/* Barre de statut */}
         {prefs.showStatusBar && (
           <div className="flex items-center justify-between px-4 py-1 bg-[var(--color-primary)] text-white text-[var(--text-xs)] flex-shrink-0">
             <div className="flex items-center gap-4">
@@ -441,7 +479,38 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
                 </>
               )}
             </div>
+
             <div className="flex items-center gap-3">
+              {/* Contrôles de zoom */}
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={zoomOut}
+                  disabled={zoom <= ZOOM_STEPS[0]}
+                  aria-label="Réduire le zoom"
+                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-white/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ZoomOut className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={zoomReset}
+                  title="Cliquer pour réinitialiser à 100% (Ctrl+0)"
+                  className="min-w-[38px] text-center font-mono text-[10px] tabular-nums hover:bg-white/20 rounded px-1 py-0.5 transition-colors cursor-pointer"
+                >
+                  {zoom}%
+                </button>
+                <button
+                  type="button"
+                  onClick={zoomIn}
+                  disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+                  aria-label="Augmenter le zoom"
+                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-white/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ZoomIn className="w-3 h-3" />
+                </button>
+              </div>
+
               {variableCount > 0 && (
                 <span className="opacity-80">
                   {variableCount} champ{variableCount > 1 ? 's' : ''} à renseigner
@@ -469,14 +538,12 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         onCancel={() => setShowCloseDialog(false)}
       />
 
-      {/* Pop-up guidée pour renseigner tous les champs */}
       <FillAllVariablesDialog
         open={showFillDialog}
         editor={editor}
         onClose={handleFillDialogClose}
       />
 
-      {/* Pop-up individuelle au clic sur un champ */}
       <VariablePopup
         variableName={activeVariable?.name ?? null}
         anchorEl={popupAnchor}
@@ -526,44 +593,19 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         .mylex-editor-content img { max-width: 100%; height: auto; border-radius: 4px; margin: 0.5em 0; }
         .mylex-editor-content mark { border-radius: 2px; padding: 0.1em 0; }
         .mylex-editor-content ::selection { background: rgba(1, 105, 111, 0.2); }
-
-        /* ── Champs variables ─────────────────────────────────────────── */
         .mylex-editor-content [data-variable-field] {
-          display: inline-flex;
-          align-items: center;
-          cursor: pointer;
-          user-select: none;
-          font-size: 0.82em;
-          font-weight: 500;
-          letter-spacing: 0.01em;
-          padding: 0.1em 0.55em;
-          border-radius: 4px;
-          border: 1.5px dashed #01696f;
-          color: #01696f;
+          display: inline-flex; align-items: center; cursor: pointer; user-select: none;
+          font-size: 0.82em; font-weight: 500; letter-spacing: 0.01em;
+          padding: 0.1em 0.55em; border-radius: 4px;
+          border: 1.5px dashed #01696f; color: #01696f;
           background: rgba(1, 105, 111, 0.06);
           transition: background 0.15s, border-color 0.15s, color 0.15s;
-          vertical-align: baseline;
-          line-height: 1.5;
-          margin: 0 1px;
+          vertical-align: baseline; line-height: 1.5; margin: 0 1px;
         }
-        .mylex-editor-content [data-variable-field]:hover {
-          background: rgba(1, 105, 111, 0.14);
-          border-color: #01696f;
-          color: #0c4e54;
-        }
-        .mylex-editor-content [data-variable-field].ProseMirror-selectednode {
-          outline: 2px solid #01696f;
-          outline-offset: 1px;
-        }
-        [data-theme="dark"] .mylex-editor-content [data-variable-field] {
-          border-color: #2ec4b6;
-          color: #2ec4b6;
-          background: rgba(46, 196, 182, 0.08);
-        }
-        [data-theme="dark"] .mylex-editor-content [data-variable-field]:hover {
-          background: rgba(46, 196, 182, 0.18);
-          color: #5ddfcd;
-        }
+        .mylex-editor-content [data-variable-field]:hover { background: rgba(1, 105, 111, 0.14); border-color: #01696f; color: #0c4e54; }
+        .mylex-editor-content [data-variable-field].ProseMirror-selectednode { outline: 2px solid #01696f; outline-offset: 1px; }
+        [data-theme="dark"] .mylex-editor-content [data-variable-field] { border-color: #2ec4b6; color: #2ec4b6; background: rgba(46, 196, 182, 0.08); }
+        [data-theme="dark"] .mylex-editor-content [data-variable-field]:hover { background: rgba(46, 196, 182, 0.18); color: #5ddfcd; }
       `}</style>
     </>
   )
@@ -571,7 +613,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
 
 function formatRelativeTime(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
-  if (seconds < 10) return 'à l\'instant'
+  if (seconds < 10) return "l'instant"
   if (seconds < 60) return `il y a ${seconds}s`
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `il y a ${minutes}min`
