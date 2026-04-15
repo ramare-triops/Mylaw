@@ -5,8 +5,6 @@ import { DriveClient, DriveStatus, MylawBackup } from '@/lib/drive-sync';
 import { db, getSetting, setSetting, registerDriveSyncCallback, setRestoreInProgress } from '@/lib/db';
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '';
-
-// Debounce : attend 3s d'inactivité avant d'uploader (comme Google Docs ~2s)
 const UPLOAD_DEBOUNCE_MS = 3000;
 
 let clientInstance: DriveClient | null = null;
@@ -16,13 +14,12 @@ function getClient(): DriveClient {
 }
 
 export function useDriveSync() {
-  const [status, setStatus] = useState<DriveStatus>('idle');
+  const [status, setStatus]       = useState<DriveStatus>('idle');
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // Ref pour accéder au status courant dans les callbacks sans re-créer scheduleSync
-  const statusRef = useRef<DriveStatus>('idle');
-  const uploadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const client = getClient();
+  const [error, setError]         = useState<string | null>(null);
+  const statusRef                 = useRef<DriveStatus>('idle');
+  const uploadTimer               = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const client                    = getClient();
 
   function updateStatus(s: DriveStatus) {
     statusRef.current = s;
@@ -30,15 +27,11 @@ export function useDriveSync() {
   }
 
   // ─── scheduleSync : déclenché par le middleware Dexie à chaque écriture ───
-  // On utilise statusRef (pas status) pour éviter de recréer la fonction à chaque render
   const scheduleSync = useCallback(() => {
-    // Ne sync que si connecté ou en train de syncer (pas idle/disconnected/error)
-    const currentStatus = statusRef.current;
-    if (currentStatus === 'idle' || currentStatus === 'disconnected' || currentStatus === 'loading') return;
-
+    const s = statusRef.current;
+    if (s === 'idle' || s === 'disconnected' || s === 'loading') return;
     if (uploadTimer.current) clearTimeout(uploadTimer.current);
     updateStatus('syncing');
-
     uploadTimer.current = setTimeout(async () => {
       try {
         const backup = await buildBackup();
@@ -49,9 +42,8 @@ export function useDriveSync() {
         updateStatus('error');
       }
     }, UPLOAD_DEBOUNCE_MS);
-  }, []); // deps vides intentionnellement — on lit statusRef
+  }, []);
 
-  // Enregistre le callback dans db.ts dès que le composant monte
   useEffect(() => {
     registerDriveSyncCallback(scheduleSync);
   }, [scheduleSync]);
@@ -60,7 +52,6 @@ export function useDriveSync() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // Retour du callback OAuth ?
     const params = new URLSearchParams(window.location.search);
     if (params.get('drive') === 'connected') {
       window.history.replaceState({}, '', window.location.pathname);
@@ -68,7 +59,6 @@ export function useDriveSync() {
       return;
     }
 
-    // Tentative silent refresh via cookie
     updateStatus('loading');
     client.trySilentRefresh().then(async (ok) => {
       if (ok) {
@@ -80,16 +70,34 @@ export function useDriveSync() {
     });
   }, []);
 
-  // Pull Drive : télécharge + restaure
+  // ─── Pull Drive avec comparaison de dates ───
   async function loadFromDrive() {
     updateStatus('syncing');
     try {
       const remote = await client.download();
-      if (remote && remote.exportedAt) {
+
+      if (remote === null) {
+        // 204 : pas de fichier sur Drive, on garde Dexie intact
+        await setSetting('drive_connected', true);
+        setLastSynced(new Date());
+        updateStatus('connected');
+        return;
+      }
+
+      // Comparer avec la date du dernier sync local
+      const localSyncedAt = await getSetting<string | null>('last_synced_at', null);
+      const remoteDate    = remote.exportedAt ? new Date(remote.exportedAt).getTime() : 0;
+      const localDate     = localSyncedAt     ? new Date(localSyncedAt).getTime()     : 0;
+
+      if (remoteDate > localDate) {
+        // Drive est plus récent : restaurer
         setRestoreInProgress(true);
         await restoreFromBackup(remote);
         setRestoreInProgress(false);
+        await setSetting('last_synced_at', remote.exportedAt);
       }
+      // Sinon : Dexie est à jour ou plus récent, on ne touche à rien
+
       await setSetting('drive_connected', true);
       setLastSynced(new Date());
       updateStatus('connected');
@@ -99,31 +107,30 @@ export function useDriveSync() {
     }
   }
 
-  // ─── connect() : lance le flow OAuth PKCE ───
+  // ─── connect() ───
   const connect = useCallback(async () => {
     setError(null);
     try {
-      const verifier = generateRandomString(64);
+      const verifier  = generateRandomString(64);
       const challenge = await generateCodeChallenge(verifier);
       const redirectUri = `${window.location.origin}/api/drive/callback`;
-      const state = generateRandomString(16);
+      const state     = generateRandomString(16);
 
       document.cookie = `pkce_verifier=${verifier}; path=/; max-age=300; samesite=lax`;
       document.cookie = `pkce_redirect=${encodeURIComponent(redirectUri)}; path=/; max-age=300; samesite=lax`;
       document.cookie = `pkce_state=${state}; path=/; max-age=300; samesite=lax`;
 
       const urlParams = new URLSearchParams({
-        client_id: CLIENT_ID,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: 'https://www.googleapis.com/auth/drive.appdata openid email',
-        code_challenge: challenge,
+        client_id:             CLIENT_ID,
+        redirect_uri:          redirectUri,
+        response_type:         'code',
+        scope:                 'https://www.googleapis.com/auth/drive.appdata openid email',
+        code_challenge:        challenge,
         code_challenge_method: 'S256',
-        access_type: 'offline',
-        prompt: 'consent',
+        access_type:           'offline',
+        prompt:                'consent',
         state,
       });
-
       window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${urlParams}`;
     } catch (e: any) {
       setError(e?.message ?? "Erreur d'initialisation OAuth");
@@ -133,6 +140,7 @@ export function useDriveSync() {
   const disconnect = useCallback(async () => {
     await client.signOut();
     await setSetting('drive_connected', false);
+    await setSetting('last_synced_at', null);
     updateStatus('idle');
     setLastSynced(null);
   }, []);
@@ -142,6 +150,7 @@ export function useDriveSync() {
     try {
       const backup = await buildBackup();
       await client.upload(backup);
+      await setSetting('last_synced_at', backup.exportedAt);
       setLastSynced(new Date());
       updateStatus('connected');
     } catch (e: any) {
@@ -153,7 +162,7 @@ export function useDriveSync() {
   return { status, lastSynced, error, connect, disconnect, syncNow, scheduleSync };
 }
 
-// ─── Helpers PKCE ─────────────────────────────────────────────────────────
+// ─── Helpers PKCE ───
 
 function generateRandomString(length: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -164,13 +173,13 @@ function generateRandomString(length: number): string {
 
 async function generateCodeChallenge(verifier: string): Promise<string> {
   const encoder = new TextEncoder();
-  const data = encoder.encode(verifier);
-  const digest = await crypto.subtle.digest('SHA-256', data);
+  const data    = encoder.encode(verifier);
+  const digest  = await crypto.subtle.digest('SHA-256', data);
   return btoa(String.fromCharCode(...new Uint8Array(digest)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-// ─── Backup / Restore ────────────────────────────────────────────────────────
+// ─── Backup / Restore ───
 
 export async function buildBackup(): Promise<MylawBackup> {
   const [documents, folders, snippets, deadlines, templates, tools, aiChats] = await Promise.all([
@@ -194,10 +203,10 @@ export async function buildBackup(): Promise<MylawBackup> {
 
 export async function restoreFromBackup(backup: MylawBackup): Promise<void> {
   await Promise.all([
-    db.documents.clear(), db.folders.clear(),
-    db.table('snippets').clear(), db.table('deadlines').clear(),
+    db.documents.clear(),          db.folders.clear(),
+    db.table('snippets').clear(),  db.table('deadlines').clear(),
     db.table('templates').clear(), db.table('tools').clear(),
-    db.table('aiChats').clear(), db.settings.clear(),
+    db.table('aiChats').clear(),   db.settings.clear(),
   ]);
   await Promise.all([
     backup.documents?.length  ? db.documents.bulkAdd(backup.documents)           : Promise.resolve(),

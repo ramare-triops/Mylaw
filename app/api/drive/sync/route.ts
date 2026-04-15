@@ -1,9 +1,6 @@
 /**
- * GET  /api/drive/sync  — Télécharge le backup depuis Drive (via le refresh token cookie)
+ * GET  /api/drive/sync  — Télécharge le backup depuis Drive
  * POST /api/drive/sync  — Uploade le backup vers Drive
- *
- * Ces routes proxy les appels Drive côté serveur afin que l'access_token
- * ne soit jamais nécessaire côté client une fois authentifié.
  */
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -47,8 +44,9 @@ async function resolveFileId(accessToken: string): Promise<string | null> {
 
 async function createFile(accessToken: string): Promise<string> {
   const boundary = 'mylaw_boundary_314159';
+  // Fichier initial sans exportedAt — sera écrasé au premier vrai upload
   const emptyBackup = JSON.stringify({
-    version: 2, exportedAt: new Date().toISOString(),
+    version: 2,
     documents: [], folders: [], snippets: [], deadlines: [],
     settings: {}, templates: [], tools: [], aiChats: [],
   });
@@ -77,6 +75,8 @@ async function createFile(accessToken: string): Promise<string> {
 }
 
 // GET — Télécharger le backup
+// Retourne null (204) si le fichier n'existe pas encore sur Drive,
+// pour éviter d'écraser Dexie avec un backup vide.
 export async function GET(req: NextRequest) {
   const accessToken = await getAccessToken(req);
   if (!accessToken) return NextResponse.json({ error: 'non_authentifie' }, { status: 401 });
@@ -84,12 +84,8 @@ export async function GET(req: NextRequest) {
   try {
     const fileId = await resolveFileId(accessToken);
     if (!fileId) {
-      // Pas encore de fichier — retourner un backup vide
-      return NextResponse.json({
-        version: 2, exportedAt: new Date().toISOString(),
-        documents: [], folders: [], snippets: [], deadlines: [],
-        settings: {}, templates: [], tools: [], aiChats: [],
-      });
+      // Pas de fichier sur Drive : signaler explicitement l'absence
+      return new NextResponse(null, { status: 204 });
     }
 
     const res = await fetch(
