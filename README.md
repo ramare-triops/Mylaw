@@ -1,6 +1,6 @@
-# Mylex
+# Mylaw
 
-**Mylex** est un atelier personnel d'outils juridiques pour avocat. Application web offline-first, modulaire, pilotée par l'IA.
+**Mylaw** est un atelier personnel d'outils juridiques pour avocat. Application web offline-first, modulaire, pilotée par l'IA.
 
 ## Stack technique
 
