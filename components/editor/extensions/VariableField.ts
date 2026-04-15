@@ -1,6 +1,5 @@
 // components/editor/extensions/VariableField.ts
 // Extension TipTap : transforme [Variable] en nœuds inline cliquables
-// data-variable-pos est injecté à chaque rendu pour permettre un ciblage DOM précis
 
 import { Node, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -91,26 +90,6 @@ export const VariableField = Node.create<VariableFieldOptions>({
       new Plugin({
         key: new PluginKey('variableFieldClick'),
         props: {
-          // Après chaque rendu, injecter data-variable-pos sur chaque span
-          // pour que FillAllVariablesDialog puisse retrouver le bon élément DOM
-          update(view) {
-            const dom = view.dom
-            const spans = dom.querySelectorAll('[data-variable-field]')
-            spans.forEach((span) => {
-              const el = span as HTMLElement
-              try {
-                const domPos = view.posAtDOM(el, 0)
-                const nodePos = domPos - 1
-                const node = view.state.doc.nodeAt(nodePos)
-                if (node && node.type.name === 'variableField') {
-                  el.dataset.variablePos = String(nodePos)
-                }
-              } catch {
-                // ignore les spans hors-doc pendant les transitions
-              }
-            })
-          },
-
           handleClick(view, pos, event) {
             const target = event.target as HTMLElement
             const span = target.closest('[data-variable-field]') as HTMLElement | null
