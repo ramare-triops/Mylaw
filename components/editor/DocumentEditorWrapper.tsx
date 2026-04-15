@@ -38,6 +38,41 @@ interface DocumentEditorWrapperProps {
   onClose?: () => void
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Détection automatique du format de contenu stocké en base
+// Les documents créés depuis un modèle peuvent être en HTML pur.
+// Les documents créés depuis l'éditeur sont en JSON TipTap.
+// Les anciens documents peuvent être en texte brut.
+// ─────────────────────────────────────────────────────────────────────────────
+function parseContent(raw: string | undefined | null): string | object {
+  if (!raw || raw.trim() === '') return ''
+
+  const trimmed = raw.trim()
+
+  // 1. Tenter le parsing JSON (format TipTap natif)
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return JSON.parse(trimmed)
+    } catch {
+      // Pas du JSON valide — continuer
+    }
+  }
+
+  // 2. HTML : TipTap accepte directement les chaînes HTML
+  if (
+    trimmed.startsWith('<') ||
+    trimmed.includes('</') ||
+    trimmed.includes('<p') ||
+    trimmed.includes('<br') ||
+    trimmed.includes('<div')
+  ) {
+    return trimmed // TipTap parse le HTML nativement via son option `content`
+  }
+
+  // 3. Texte brut : l'envelopper dans un paragraphe pour que TipTap l'accepte
+  return `<p>${trimmed}</p>`
+}
+
 export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapperProps) {
   const router = useRouter()
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
@@ -108,7 +143,8 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
       CharacterCount,
       Placeholder.configure({ placeholder: 'Commencez à rédiger votre document…' }),
     ],
-    content: document.content ? JSON.parse(document.content) : '',
+    // ← Correction : détection automatique du format (JSON / HTML / texte brut)
+    content: parseContent(document.content),
     editorProps: { attributes: { class: 'mylex-editor-content', spellcheck: 'true', lang: 'fr' } },
     onUpdate: ({ editor }) => markAsChanged(JSON.stringify(editor.getJSON())),
   })
