@@ -20,7 +20,7 @@ function formatRelativeTime(date: Date): string {
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
-  if (minutes < 1) return 'À l'instant';
+  if (minutes < 1) return "\u00C0 l'instant";
   if (minutes < 60) return `Il y a ${minutes} min`;
   if (hours < 24) return `Il y a ${hours}h`;
   return `Il y a ${days}j`;
@@ -213,7 +213,7 @@ export function NotesTool() {
             >
               <StickyNote size={32} style={{ marginBottom: '8px', opacity: 0.4 }} />
               <p style={{ fontSize: 'var(--text-sm)' }}>
-                {searchQuery ? 'Aucune note trouvée' : 'Aucune note pour l'instant'}
+                {searchQuery ? 'Aucune note trouvée' : "Aucune note pour l'instant"}
               </p>
               {!searchQuery && (
                 <button
@@ -243,7 +243,7 @@ export function NotesTool() {
                   fontWeight: 600,
                 }}
               >
-                Aujourd'hui
+                Aujourd&apos;hui
               </div>
               {todayNotes.map((note) => (
                 <NoteItem
@@ -320,7 +320,7 @@ export function NotesTool() {
             <textarea
               value={selectedNote.content}
               onChange={(e) => handleContentChange('content', e.target.value)}
-              placeholder="Commencez à écrire..."
+              placeholder="Commencez \u00e0 \u00e9crire..."
               style={{
                 flex: 1,
                 padding: '24px',
