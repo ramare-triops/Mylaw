@@ -13,16 +13,15 @@ import Color from '@tiptap/extension-color';
 import Highlight from '@tiptap/extension-highlight';
 import Link from '@tiptap/extension-link';
 import Image from '@tiptap/extension-image';
-import Table2 from '@tiptap/extension-table';
-import TableRow2 from '@tiptap/extension-table-row';
-import TableCell2 from '@tiptap/extension-table-cell';
+import TiptapTable from '@tiptap/extension-table';
+import TiptapTableRow from '@tiptap/extension-table-row';
+import TiptapTableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 
-// Extensions Tiptap pour la conversion JSON → HTML
 const EXPORT_EXTENSIONS = [
   StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
   Underline, TextStyle, FontFamily, Color,
@@ -30,114 +29,166 @@ const EXPORT_EXTENSIONS = [
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
   Link.configure({ openOnClick: false }),
   Image.configure({ inline: true, allowBase64: true }),
-  Table2.configure({ resizable: false }),
-  TableRow2, TableCell2, TableHeader,
+  TiptapTable.configure({ resizable: false }),
+  TiptapTableRow, TiptapTableCell, TableHeader,
   Subscript, Superscript,
   TaskList, TaskItem.configure({ nested: true }),
 ];
 
-// Convertit le contenu brut (JSON Tiptap ou HTML) en HTML propre
+/** Convertit JSON Tiptap ou HTML brut en HTML */
 function contentToHtml(raw: string | null | undefined): string {
   if (!raw || raw.trim() === '') return '';
   const trimmed = raw.trim();
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try {
-      return generateHTML(JSON.parse(trimmed), EXPORT_EXTENSIONS);
-    } catch { /* fallback */ }
+    try { return generateHTML(JSON.parse(trimmed), EXPORT_EXTENSIONS); } catch { /* fallback */ }
   }
   return trimmed;
 }
 
-// ─── Helpers HTML → DOCX ─────────────────────────────────────────────────────
+// ─── Helpers HTML → DOCX ─────────────────────────────────────────────────
 
-function parseInlineRuns(node: ChildNode): TextRun[] {
-  const runs: TextRun[] = [];
-
-  function walk(n: ChildNode, bold = false, italic = false, underline = false, strike = false, color?: string) {
-    if (n.nodeType === Node.TEXT_NODE) {
-      const text = n.textContent ?? '';
-      if (text) {
-        runs.push(new TextRun({
-          text,
-          bold,
-          italics: italic,
-          underline: underline ? { type: UnderlineType.SINGLE } : undefined,
-          strike,
-          color: color?.replace('#', ''),
-        }));
-      }
-      return;
-    }
-    if (n.nodeType !== Node.ELEMENT_NODE) return;
-    const el = n as Element;
-    const tag = el.tagName.toLowerCase();
-    const isBold = bold || tag === 'strong' || tag === 'b';
-    const isItalic = italic || tag === 'em' || tag === 'i';
-    const isUnderline = underline || tag === 'u';
-    const isStrike = strike || tag === 's' || tag === 'del';
-    const style = el.getAttribute('style') ?? '';
-    const colorMatch = style.match(/color:\s*([#\w]+)/);
-    const nodeColor = colorMatch ? colorMatch[1] : color;
-    for (const child of Array.from(el.childNodes)) {
-      walk(child, isBold, isItalic, isUnderline, isStrike, nodeColor);
-    }
-  }
-
-  walk(node);
-  return runs;
-}
-
-function alignmentOf(el: Element): AlignmentType {
-  const style = el.getAttribute('style') ?? '';
-  if (style.includes('text-align: center')) return AlignmentType.CENTER;
-  if (style.includes('text-align: right')) return AlignmentType.RIGHT;
-  if (style.includes('text-align: justify')) return AlignmentType.JUSTIFIED;
+/** Lit text-align depuis le style inline d'un élément */
+function getAlignment(el: Element): AlignmentType {
+  const style = (el.getAttribute('style') ?? '').replace(/\s/g, '').toLowerCase();
+  if (style.includes('text-align:center')) return AlignmentType.CENTER;
+  if (style.includes('text-align:right')) return AlignmentType.RIGHT;
+  if (style.includes('text-align:justify')) return AlignmentType.JUSTIFIED;
   return AlignmentType.LEFT;
 }
 
-function parseBlock(el: Element): Paragraph[] {
-  const tag = el.tagName.toLowerCase();
-  const align = alignmentOf(el);
+interface RunStyle {
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+  color?: string;
+  fontSize?: number; // en demi-points (1pt = 2)
+}
 
+const DEFAULT_STYLE: RunStyle = { bold: false, italic: false, underline: false, strike: false };
+
+/** Parse récursivement les noeuds inline et produit des TextRun */
+function parseInline(node: ChildNode, style: RunStyle = DEFAULT_STYLE): TextRun[] {
+  const runs: TextRun[] = [];
+
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node.textContent ?? '';
+    if (text) {
+      runs.push(new TextRun({
+        text,
+        bold: style.bold,
+        italics: style.italic,
+        underline: style.underline ? { type: UnderlineType.SINGLE } : undefined,
+        strike: style.strike,
+        color: style.color,
+        size: style.fontSize,
+      }));
+    }
+    return runs;
+  }
+
+  if (node.nodeType !== Node.ELEMENT_NODE) return runs;
+  const el = node as Element;
+  const tag = el.tagName.toLowerCase();
+  const inlineStyle = (el.getAttribute('style') ?? '').replace(/\s*/g, '').toLowerCase();
+
+  // Calcule le style hérité enrichi
+  const next: RunStyle = {
+    bold: style.bold || tag === 'strong' || tag === 'b' || inlineStyle.includes('font-weight:bold') || inlineStyle.includes('font-weight:700'),
+    italic: style.italic || tag === 'em' || tag === 'i' || inlineStyle.includes('font-style:italic'),
+    underline: style.underline || tag === 'u' || inlineStyle.includes('text-decoration:underline'),
+    strike: style.strike || tag === 's' || tag === 'del' || inlineStyle.includes('text-decoration:line-through'),
+    color: (() => {
+      const m = inlineStyle.match(/(?:^|;)color:([^;]+)/);
+      return m ? m[1].replace('#', '') : style.color;
+    })(),
+    fontSize: (() => {
+      const m = inlineStyle.match(/font-size:([\d.]+)pt/);
+      return m ? Math.round(parseFloat(m[1]) * 2) : style.fontSize;
+    })(),
+  };
+
+  // <br> = espace insécable pour ne pas perdre le saut
+  if (tag === 'br') {
+    runs.push(new TextRun({ text: '', break: 1 }));
+    return runs;
+  }
+
+  for (const child of Array.from(el.childNodes)) {
+    runs.push(...parseInline(child, next));
+  }
+  return runs;
+}
+
+/** Construit un Paragraph DOCX depuis un élément bloc HTML */
+function blockToParagraph(el: Element): Paragraph[] {
+  const tag = el.tagName.toLowerCase();
+  const align = getAlignment(el);
+
+  // Titres
   const headingMap: Record<string, HeadingLevel> = {
     h1: HeadingLevel.HEADING_1, h2: HeadingLevel.HEADING_2,
     h3: HeadingLevel.HEADING_3, h4: HeadingLevel.HEADING_4,
   };
-
   if (headingMap[tag]) {
-    return [new Paragraph({ heading: headingMap[tag], alignment: align, children: parseInlineRuns(el) })];
+    return [new Paragraph({ heading: headingMap[tag], alignment: align, children: parseInline(el) })];
   }
-  if (tag === 'p' || tag === 'div') {
-    return [new Paragraph({ alignment: align, children: parseInlineRuns(el) })];
+
+  // Paragraphe (y compris vide = ligne vide)
+  if (tag === 'p') {
+    const children = parseInline(el);
+    // Paragraphe vide -> ligne blanche
+    if (children.length === 0 || (el.textContent ?? '').trim() === '') {
+      return [new Paragraph({ alignment: align, children: [new TextRun('')] })];
+    }
+    return [new Paragraph({ alignment: align, children })];
   }
+
+  // Listes
   if (tag === 'ul' || tag === 'ol') {
-    return Array.from(el.querySelectorAll('li')).map((li) =>
+    return Array.from(el.querySelectorAll(':scope > li')).map((li) =>
       new Paragraph({
         bullet: tag === 'ul' ? { level: 0 } : undefined,
         numbering: tag === 'ol' ? { reference: 'default-numbering', level: 0 } : undefined,
-        children: [new TextRun(li.textContent ?? '')],
+        children: parseInline(li),
       })
     );
   }
+
+  // Blockquote
   if (tag === 'blockquote') {
     return [new Paragraph({
       indent: { left: 720 },
       children: [new TextRun({ text: el.textContent ?? '', italics: true, color: '6b7280' })],
     })];
   }
+
+  // Ligne horizontale
   if (tag === 'hr') return [new Paragraph({ thematicBreak: true })];
+
+  // div ou autre — fallback sur les enfants ou le texte
+  if (tag === 'div') {
+    const blockChildren = Array.from(el.children).filter(c => {
+      const t = c.tagName.toLowerCase();
+      return ['p','h1','h2','h3','h4','ul','ol','blockquote','hr','table'].includes(t);
+    });
+    if (blockChildren.length > 0) return blockChildren.flatMap(c => blockToParagraph(c));
+    return [new Paragraph({ alignment: align, children: parseInline(el) })];
+  }
+
   const text = el.textContent ?? '';
   if (text.trim()) return [new Paragraph({ children: [new TextRun(text)] })];
   return [];
 }
 
-function parseTableEl(tableEl: Element) {
+function parseTableNode(tableEl: Element): Table {
   const rows = Array.from(tableEl.querySelectorAll('tr')).map((tr) =>
     new TableRow({
       children: Array.from(tr.querySelectorAll('th, td')).map((td) =>
         new TableCell({
-          children: [new Paragraph({ children: [new TextRun(td.textContent ?? '')] })],
-          shading: td.tagName.toLowerCase() === 'th' ? { type: ShadingType.CLEAR, fill: 'f9fafb' } : undefined,
+          children: [new Paragraph({ children: parseInline(td) })],
+          shading: td.tagName.toLowerCase() === 'th'
+            ? { type: ShadingType.CLEAR, fill: 'f9fafb' } : undefined,
         })
       ),
     })
@@ -147,16 +198,20 @@ function parseTableEl(tableEl: Element) {
 
 function htmlToDocxChildren(html: string): (Paragraph | Table)[] {
   const parser = new DOMParser();
-  const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
-  const root = doc.body.firstElementChild!;
-  const children: (Paragraph | Table)[] = [];
-  for (const child of Array.from(root.children)) {
-    if (child.tagName.toLowerCase() === 'table') children.push(parseTableEl(child));
-    else children.push(...parseBlock(child));
+  const doc = parser.parseFromString(`<body>${html}</body>`, 'text/html');
+  const body = doc.body;
+  const result: (Paragraph | Table)[] = [];
+
+  for (const child of Array.from(body.children)) {
+    const tag = child.tagName.toLowerCase();
+    if (tag === 'table') result.push(parseTableNode(child));
+    else result.push(...blockToParagraph(child));
   }
-  if (children.length === 0)
-    children.push(new Paragraph({ children: [new TextRun(root.textContent ?? '')] }));
-  return children;
+
+  if (result.length === 0)
+    result.push(new Paragraph({ children: [new TextRun(body.textContent ?? '')] }));
+
+  return result;
 }
 
 // ─── Export DOCX ─────────────────────────────────────────────────────────────
@@ -200,15 +255,18 @@ export function exportPdf(title: string, rawContent: string): void {
     h2 { font-size: 18pt; font-weight: 700; margin: 0.7em 0 0.35em; }
     h3 { font-size: 14pt; font-weight: 600; margin: 0.6em 0 0.3em; }
     h4 { font-size: 12pt; font-weight: 600; margin: 0.5em 0 0.25em; }
-    p  { margin-bottom: 0.6em; }
+    p  { margin-bottom: 0.5em; }
+    p:empty { min-height: 1.8em; }
     ul, ol { padding-left: 1.5em; margin-bottom: 0.6em; }
     li { margin-bottom: 0.2em; }
     blockquote { border-left: 3px solid #01696f; padding: 0.4em 0 0.4em 1em; margin: 0.8em 0; color: #6b7280; font-style: italic; }
     table { border-collapse: collapse; width: 100%; margin: 0.8em 0; }
     th, td { border: 1px solid #d1d5db; padding: 0.4em 0.6em; }
     th { background: #f9fafb; font-weight: 600; }
-    strong { font-weight: 700; } em { font-style: italic; } u { text-decoration: underline; } s { text-decoration: line-through; }
+    strong { font-weight: 700; } em { font-style: italic; }
+    u { text-decoration: underline; } s { text-decoration: line-through; }
     a { color: #01696f; }
+    mark { background: #d9f2f3; }
     [data-variable-field] { display: inline; border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; font-size: 0.85em; }
   `;
 
