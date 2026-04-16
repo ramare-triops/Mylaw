@@ -10,6 +10,23 @@ import { cn } from '@/lib/utils';
 import { NewDocumentDialog } from './NewDocumentDialog';
 import type { Document } from '@/types';
 
+/**
+ * Convertit le contenu d'un modèle en contenu exploitable par l'éditeur TipTap.
+ * - JSON TipTap ({"type":"doc"...}) → stocké tel quel (l'éditeur le parse directement)
+ * - HTML ou texte brut → encapsulé en HTML simple
+ * - Vide → chaîne vide
+ */
+function templateToEditorContent(raw: string): string {
+  if (!raw || raw.trim() === '') return '';
+  const trimmed = raw.trim();
+  // JSON TipTap : on le passe directement, l'éditeur sait le parser
+  if (trimmed.startsWith('{"type":"doc"')) return trimmed;
+  // HTML : on le passe tel quel
+  if (trimmed.startsWith('<')) return trimmed;
+  // Texte brut : on encapsule proprement
+  return `<p>${trimmed.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+}
+
 export function DocumentList() {
   const router = useRouter();
   const [search, setSearch] = useState('');
@@ -33,15 +50,19 @@ export function DocumentList() {
   const handleCreate = async (title: string, templateContent: string) => {
     setDialogOpen(false);
     const now = new Date();
+    const content = templateToEditorContent(templateContent);
+    // wordCount : nombre de mots approximatif (sur le texte brut dépouillé de balises)
+    const textForCount = content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    const wordCount = textForCount ? textForCount.split(' ').filter(Boolean).length : 0;
     const id = await saveDocument({
       title: title || 'Nouveau document',
       type: 'draft',
-      content: templateContent ? `<p>${templateContent.replace(/\n/g, '</p><p>')}</p>` : '',
+      content,
       contentRaw: templateContent,
       tags: [],
       createdAt: now,
       updatedAt: now,
-      wordCount: templateContent ? templateContent.split(/\s+/).filter(Boolean).length : 0,
+      wordCount,
     });
     router.push(`/documents/${id}`);
   };
