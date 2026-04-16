@@ -55,8 +55,8 @@ const ICON_OPTIONS = [
 ]
 
 const COLOR_OPTIONS = [
-  '#FF8080', '#80E699', '#80B3FF', '#D4B3FF',
-  '#FFD4A3', '#E63946', '#2ECC71', '#3B82F6', '#7C3AED',
+  '#F95F5F', '#34C95A', '#4D9FFF', '#A855F7',
+  '#FF9A3C', '#E63946', '#2ECC71', '#3B82F6', '#7C3AED',
 ]
 
 // ─── Briques pré-installées (seed) ───────────────────────────────────────────
