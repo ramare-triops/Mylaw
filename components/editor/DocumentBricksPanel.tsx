@@ -120,18 +120,23 @@ const CONDITIONAL_TAGS = [
 ]
 
 // ─── Conversion brique → HTML TipTap ─────────────────────────────────────────
+// IMPORTANT : le formatage Markdown doit être appliqué EN PREMIER, avant la
+// substitution des variables en <span>. Si on faisait l'inverse, les regex
+// **...** / __...__ / _..._ ne matcheraient plus autour des balises HTML.
 
 export function brickContentToHtml(content: string): string {
   return content.split('\n').map(line => {
     let p = line
-    p = p.replace(/\[([^\]]+)\]/g, (_, name: string) => {
-      const esc = name.replace(/"/g, '&quot;')
-      return `<span data-variable-field="" data-variable-name="${esc}">${esc}</span>`
-    })
+    // 1. Formatage Markdown (opère sur du texte brut)
     p = p.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     p = p.replace(/__(.+?)__/g, '<u>$1</u>')
     p = p.replace(/(?<!_)_([^_]+)_(?!_)/g, '<em>$1</em>')
     p = p.replace(/\^\^(.+?)\^\^/g, '<span style="text-transform:uppercase;font-weight:600">$1</span>')
+    // 2. Substitution des variables en spans TipTap (opère sur du HTML)
+    p = p.replace(/\[([^\]]+)\]/g, (_, name: string) => {
+      const esc = name.replace(/"/g, '&quot;')
+      return `<span data-variable-field="" data-variable-name="${esc}">${esc}</span>`
+    })
     return `<p>${p.trim() || '<br>'}</p>`
   }).join('')
 }
