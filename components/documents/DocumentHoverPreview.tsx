@@ -16,61 +16,69 @@ const TYPE_LABELS: Record<string, string> = {
   contract: 'Contrat',
 };
 
-function contentToHtml(raw: string): string {
-  if (!raw || raw.trim() === '') return '';
-  const trimmed = raw.trim();
-  if (trimmed.startsWith('{')) {
-    try {
-      const doc = JSON.parse(trimmed);
-      function nodeToHtml(node: {
-        type?: string; text?: string;
-        attrs?: Record<string, unknown>;
-        marks?: { type: string }[];
-        content?: unknown[];
-      }): string {
-        if (node.type === 'text') {
-          let t = (node.text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          (node.marks ?? []).forEach((m) => {
-            if (m.type === 'bold') t = `<strong>${t}</strong>`;
-            if (m.type === 'italic') t = `<em>${t}</em>`;
-            if (m.type === 'underline') t = `<u>${t}</u>`;
-            if (m.type === 'strike') t = `<s>${t}</s>`;
-          });
-          return t;
-        }
-        const inner = (node.content ?? []).map((c) => nodeToHtml(c as Parameters<typeof nodeToHtml>[0])).join('');
-        const align = (node.attrs?.textAlign as string) ?? null;
-        const style = align && align !== 'null' ? ` style="text-align:${align}"` : '';
-        switch (node.type) {
-          case 'doc': return inner;
-          case 'paragraph': return `<p${style}>${inner || '&nbsp;'}</p>`;
-          case 'heading': return `<h${node.attrs?.level ?? 1}${style}>${inner}</h${node.attrs?.level ?? 1}>`;
-          case 'bulletList': return `<ul>${inner}</ul>`;
-          case 'orderedList': return `<ol>${inner}</ol>`;
-          case 'listItem': return `<li>${inner}</li>`;
-          case 'blockquote': return `<blockquote>${inner}</blockquote>`;
-          case 'hardBreak': return '<br>';
-          case 'horizontalRule': return '<hr>';
-          default: return inner;
-        }
-      }
-      return nodeToHtml(doc);
-    } catch { /* fallback */ }
+// Styles CSS A4 embarqu\u00e9s dans le srcdoc de l'iframe
+const A4_STYLES = `
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 794px;
+    min-height: 1123px;
+    padding: 72px 80px;
+    background: #fff;
+    font-family: Georgia, 'Source Serif 4', ui-serif;
+    font-size: 15px;
+    line-height: 1.8;
+    color: #1a1a1a;
+    overflow: hidden;
   }
-  if (trimmed.startsWith('<')) return trimmed;
-  return `<p>${trimmed.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
-}
+  p { margin-bottom: 0.75rem; }
+  h1 { font-size: 1.4rem; font-weight: 700; margin: 1.5rem 0 1rem; }
+  h2 { font-size: 1.2rem; font-weight: 600; margin: 1.25rem 0 0.75rem; }
+  h3 { font-size: 1rem; font-weight: 600; margin: 1rem 0 0.5rem; }
+  h4, h5, h6 { font-weight: 600; margin: 0.75rem 0 0.4rem; }
+  ul, ol { padding-left: 1.5rem; margin-bottom: 0.75rem; }
+  li { margin-bottom: 0.2rem; }
+  blockquote {
+    border-left: 3px solid #01696f;
+    padding-left: 1rem;
+    color: #6b6b6b;
+    font-style: italic;
+    margin-bottom: 0.75rem;
+  }
+  strong { font-weight: 700; }
+  em { font-style: italic; }
+  u { text-decoration: underline; }
+  s { text-decoration: line-through; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
+  td, th { border: 1px solid #ddd8ce; padding: 0.5rem; vertical-align: top; }
+  th { background: #f0ece4; font-weight: 600; }
+  hr { border: none; border-top: 1px solid #ddd8ce; margin: 1rem 0; }
+  mark { background: #d9f2f3; color: inherit; }
+  /* Variables */
+  [data-type="variable"] {
+    background: #d9f2f3;
+    color: #01696f;
+    font-family: monospace;
+    font-size: 0.85em;
+    padding: 0 0.25rem;
+    border-radius: 3px;
+  }
+`;
+
+const BUBBLE_W = 320;
+const A4_W = 794;
+// Hauteur visible de la page dans la bulle (avant fondu)
+const A4_VISIBLE_H = 400;
+const SCALE = (BUBBLE_W - 32) / A4_W; // 32 = padding h de la zone grise
 
 export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps) {
-  const html = contentToHtml(doc.content ?? '');
   const bubbleRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ top: anchor.top, left: anchor.left });
 
-  // Largeur de la bulle et hauteur visible de la page A4 mock
-  const BUBBLE_W = 320;
-  const A4_W = 794;
-  const A4_VISIBLE_H = 420; // hauteur visible de la page dans la bulle
-  const scale = (BUBBLE_W - 32) / A4_W; // 32 = padding gauche+droite de la bulle
+  // HTML du document (l'\u00e9diteur sauvegarde en HTML pur)
+  const html = doc.content ?? '';
+
+  // srcdoc de l'iframe : page A4 compl\u00e8te avec styles embarqu\u00e9s
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${A4_STYLES}</style></head><body>${html}</body></html>`;
 
   useEffect(() => {
     if (!bubbleRef.current) return;
@@ -79,9 +87,7 @@ export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps)
     const bh = bubbleRef.current.offsetHeight;
     let top = anchor.top;
     let left = anchor.left;
-    // Ajustement si d\u00e9borde en bas
     if (top + bh > vh - 16) top = Math.max(16, vh - bh - 16);
-    // Ajustement si d\u00e9borde \u00e0 droite
     if (left + BUBBLE_W > vw - 16) left = anchor.left - BUBBLE_W - 24;
     setPos({ top, left });
   }, [anchor]);
@@ -99,7 +105,6 @@ export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps)
       }}
       className="animate-fade-in"
     >
-      {/* Carte bulle */}
       <div
         style={{
           background: 'var(--color-surface)',
@@ -111,7 +116,10 @@ export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps)
       >
         {/* En-t\u00eate m\u00e9ta */}
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
-          <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text)', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <p style={{
+            fontSize: 13, fontWeight: 600, color: 'var(--color-text)',
+            marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
             {doc.title}
           </p>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
@@ -127,53 +135,43 @@ export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps)
           </div>
         </div>
 
-        {/* Page A4 simul\u00e9e */}
-        <div
-          style={{
-            background: '#e8e4dc', // couleur de fond autour de la page
-            padding: '12px 16px 0 16px',
-            overflow: 'hidden',
-          }}
-        >
-          {/* Wrapper hauteur visible */}
+        {/* Zone A4 */}
+        <div style={{ background: '#e8e4dc', padding: '12px 16px 0', position: 'relative' }}>
+          {/* Wrapper hauteur visible avec overflow:hidden */}
           <div
             style={{
-              width: (A4_W * scale),
-              height: A4_VISIBLE_H * scale,
+              width: A4_W * SCALE,
+              height: A4_VISIBLE_H * SCALE,
               position: 'relative',
               overflow: 'hidden',
               borderRadius: '4px 4px 0 0',
               boxShadow: '0 2px 12px rgba(0,0,0,0.15)',
             }}
           >
-            {/* Page A4 r\u00e9elle mise \u00e0 l'\u00e9chelle */}
-            <div
+            {/* iframe isol\u00e9e : rendu propre sans interf\u00e9rence des CSS globaux */}
+            <iframe
+              srcDoc={srcdoc}
+              scrolling="no"
               style={{
                 width: A4_W,
+                height: Math.ceil(A4_VISIBLE_H / SCALE), // hauteur r\u00e9elle avant scale
+                border: 'none',
                 transformOrigin: 'top left',
-                transform: `scale(${scale})`,
+                transform: `scale(${SCALE})`,
                 position: 'absolute',
                 top: 0,
                 left: 0,
-                backgroundColor: '#ffffff',
-                padding: '56px 64px',
-                fontFamily: "Georgia, 'Source Serif 4', ui-serif",
-                fontSize: 15,
-                lineHeight: 1.8,
-                color: '#1a1a1a',
-                boxSizing: 'border-box',
+                pointerEvents: 'none',
+                background: '#fff',
               }}
-              className="tiptap-editor"
-              dangerouslySetInnerHTML={{ __html: html }}
+              sandbox="allow-same-origin"
             />
             {/* Fondu bas */}
             <div
               style={{
                 position: 'absolute',
-                bottom: 0,
-                left: 0,
-                right: 0,
-                height: 48,
+                bottom: 0, left: 0, right: 0,
+                height: 56,
                 background: 'linear-gradient(to bottom, transparent, rgba(255,255,255,0.97))',
                 pointerEvents: 'none',
               }}
