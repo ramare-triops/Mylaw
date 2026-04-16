@@ -1,57 +1,147 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useRouter } from 'next/navigation';
-import { Plus, FileText, Trash2, Search } from 'lucide-react';
+import {
+  Plus, FileText, Trash2, Search, SortAsc, SortDesc,
+  Filter, Download, CheckSquare, Square, Pencil, Check, X,
+  ChevronDown, FileDown
+} from 'lucide-react';
 import { db, saveDocument, deleteDocument } from '@/lib/db';
 import { formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { NewDocumentDialog } from './NewDocumentDialog';
+import { DocumentPreview } from './DocumentPreview';
 import type { Document } from '@/types';
 
-/**
- * Convertit le contenu d'un modèle en contenu exploitable par l'éditeur TipTap.
- * - JSON TipTap ({"type":"doc"...}) → stocké tel quel (l'éditeur le parse directement)
- * - HTML ou texte brut → encapsulé en HTML simple
- * - Vide → chaîne vide
- */
+type SortField = 'updatedAt' | 'createdAt' | 'title' | 'wordCount';
+type SortDir = 'asc' | 'desc';
+type FilterType = 'all' | 'draft' | 'final' | 'contract';
+
 function templateToEditorContent(raw: string): string {
   if (!raw || raw.trim() === '') return '';
   const trimmed = raw.trim();
-  // JSON TipTap : on le passe directement, l'éditeur sait le parser
   if (trimmed.startsWith('{"type":"doc"')) return trimmed;
-  // HTML : on le passe tel quel
   if (trimmed.startsWith('<')) return trimmed;
-  // Texte brut : on encapsule proprement
   return `<p>${trimmed.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
 }
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadDocAsTxt(doc: Document) {
+  const text = stripHtml(doc.content ?? '');
+  const blob = new Blob([text], { type: 'text/plain' });
+  downloadBlob(blob, `${doc.title}.txt`);
+}
+
+function downloadDocAsHtml(doc: Document) {
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${doc.title}</title></head><body>${doc.content ?? ''}</body></html>`;
+  const blob = new Blob([html], { type: 'text/html' });
+  downloadBlob(blob, `${doc.title}.html`);
+}
+
+const SORT_OPTIONS: { value: SortField; label: string }[] = [
+  { value: 'updatedAt', label: 'Date de modification' },
+  { value: 'createdAt', label: 'Date de création' },
+  { value: 'title', label: 'Titre (A-Z)' },
+  { value: 'wordCount', label: 'Nombre de mots' },
+];
+
+const FILTER_OPTIONS: { value: FilterType; label: string }[] = [
+  { value: 'all', label: 'Tous les types' },
+  { value: 'draft', label: 'Brouillons' },
+  { value: 'final', label: 'Finalisés' },
+  { value: 'contract', label: 'Contrats' },
+];
 
 export function DocumentList() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [sortField, setSortField] = useState<SortField>('updatedAt');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [filterType, setFilterType] = useState<FilterType>('all');
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [hoveredId, setHoveredId] = useState<number | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
+  const [showSortDropdown, setShowSortDropdown] = useState(false);
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+  const hoverTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const docs = useLiveQuery(
-    () =>
-      search
-        ? db.documents
-            .filter(
-              (d) =>
-                d.title.toLowerCase().includes(search.toLowerCase()) ||
-                (d.contentRaw ?? '').toLowerCase().includes(search.toLowerCase())
-            )
-            .reverse()
-            .sortBy('updatedAt')
-        : db.documents.orderBy('updatedAt').reverse().toArray(),
-    [search]
+    () => db.documents.orderBy('updatedAt').reverse().toArray(),
+    []
   );
+
+  const filteredAndSorted = (() => {
+    if (!docs) return [];
+    let list = [...docs];
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (d) =>
+          d.title.toLowerCase().includes(q) ||
+          (d.contentRaw ?? '').toLowerCase().includes(q)
+      );
+    }
+    if (filterType !== 'all') {
+      list = list.filter((d) => d.type === filterType);
+    }
+    list.sort((a, b) => {
+      let va: string | number | Date = a[sortField] ?? '';
+      let vb: string | number | Date = b[sortField] ?? '';
+      if (sortField === 'title') {
+        va = (va as string).toLowerCase();
+        vb = (vb as string).toLowerCase();
+      }
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return list;
+  })();
+
+  const allSelected =
+    filteredAndSorted.length > 0 &&
+    filteredAndSorted.every((d) => selectedIds.has(d.id!));
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredAndSorted.map((d) => d.id!)));
+    }
+  };
+
+  const toggleSelect = (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const handleCreate = async (title: string, templateContent: string) => {
     setDialogOpen(false);
     const now = new Date();
     const content = templateToEditorContent(templateContent);
-    // wordCount : nombre de mots approximatif (sur le texte brut dépouillé de balises)
     const textForCount = content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     const wordCount = textForCount ? textForCount.split(' ').filter(Boolean).length : 0;
     const id = await saveDocument({
@@ -69,12 +159,61 @@ export function DocumentList() {
 
   const handleDelete = async (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
-    if (confirm('Supprimer ce document ?')) await deleteDocument(id);
+    if (confirm('Supprimer ce document ?')) {
+      await deleteDocument(id);
+      setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    }
   };
+
+  const handleDeleteSelected = async () => {
+    if (!confirm(`Supprimer ${selectedIds.size} document(s) ?`)) return;
+    for (const id of selectedIds) await deleteDocument(id);
+    setSelectedIds(new Set());
+  };
+
+  const handleDownloadSelected = (format: 'txt' | 'html') => {
+    if (!docs) return;
+    const selected = docs.filter((d) => selectedIds.has(d.id!));
+    selected.forEach((d) => {
+      if (format === 'txt') downloadDocAsTxt(d);
+      else downloadDocAsHtml(d);
+    });
+    setShowDownloadDropdown(false);
+  };
+
+  const startRename = (e: React.MouseEvent, doc: Document) => {
+    e.stopPropagation();
+    setRenamingId(doc.id!);
+    setRenameValue(doc.title);
+  };
+
+  const commitRename = async (doc: Document) => {
+    if (renameValue.trim() && renameValue !== doc.title) {
+      await saveDocument({ ...doc, title: renameValue.trim(), updatedAt: new Date() });
+    }
+    setRenamingId(null);
+  };
+
+  const handleMouseEnter = (doc: Document) => {
+    if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+    hoverTimeout.current = setTimeout(() => {
+      setHoveredId(doc.id!);
+      setPreviewDoc(doc);
+    }, 600);
+  };
+
+  const handleMouseLeave = () => {
+    if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+    setHoveredId(null);
+    setPreviewDoc(null);
+  };
+
+  const cycleSortDir = () => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
 
   return (
     <>
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 max-w-5xl">
+        {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-xl font-semibold text-[var(--color-text)]">Documents</h1>
           <button
@@ -89,55 +228,294 @@ export function DocumentList() {
           </button>
         </div>
 
-        <div className="relative mb-4">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
-          <input
-            type="text"
-            placeholder="Rechercher dans les documents…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className={cn(
-              'w-full pl-9 pr-4 py-2 text-sm rounded-md',
-              'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-              'text-[var(--color-text)] placeholder:text-[var(--color-text-subtle)]',
-              'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]'
-            )}
-          />
-        </div>
-
-        <div className="space-y-1">
-          {docs?.map((doc) => (
-            <div
-              key={doc.id}
-              onClick={() => router.push(`/documents/${doc.id}`)}
+        {/* Toolbar */}
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
+            <input
+              type="text"
+              placeholder="Rechercher…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
               className={cn(
-                'flex items-center gap-3 px-4 py-3 rounded-md cursor-pointer group',
-                'hover:bg-[var(--color-surface-raised)] transition-colors'
+                'w-full pl-9 pr-4 py-2 text-sm rounded-md',
+                'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+                'text-[var(--color-text)] placeholder:text-[var(--color-text-subtle)]',
+                'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]'
+              )}
+            />
+          </div>
+
+          {/* Sort */}
+          <div className="relative">
+            <button
+              onClick={() => { setShowSortDropdown((v) => !v); setShowFilterDropdown(false); }}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-2 text-sm rounded-md border',
+                'border-[var(--color-border)] bg-[var(--color-surface-raised)]',
+                'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors'
               )}
             >
-              <FileText className="w-4 h-4 text-[var(--color-text-muted)] flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-[var(--color-text)] truncate">
-                  {doc.title}
-                </div>
-                <div className="text-xs text-[var(--color-text-muted)]">
-                  {formatDateTime(doc.updatedAt)} • {doc.wordCount} mots
+              {sortDir === 'asc' ? <SortAsc className="w-4 h-4" /> : <SortDesc className="w-4 h-4" />}
+              Trier
+              <ChevronDown className="w-3 h-3 opacity-60" />
+            </button>
+            {showSortDropdown && (
+              <div className={cn(
+                'absolute top-full mt-1 right-0 z-20 w-52 rounded-md shadow-lg',
+                'bg-[var(--color-surface)] border border-[var(--color-border)] py-1'
+              )}>
+                {SORT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setSortField(opt.value); setShowSortDropdown(false); }}
+                    className={cn(
+                      'w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors',
+                      sortField === opt.value && 'text-[var(--color-primary)] font-medium'
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+                <div className="border-t border-[var(--color-border)] mt-1 pt-1">
+                  <button
+                    onClick={() => { cycleSortDir(); setShowSortDropdown(false); }}
+                    className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2"
+                  >
+                    {sortDir === 'asc' ? <SortAsc className="w-4 h-4" /> : <SortDesc className="w-4 h-4" />}
+                    {sortDir === 'asc' ? 'Croissant' : 'Décroissant'}
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            )}
+          </div>
+
+          {/* Filter */}
+          <div className="relative">
+            <button
+              onClick={() => { setShowFilterDropdown((v) => !v); setShowSortDropdown(false); }}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-2 text-sm rounded-md border',
+                'border-[var(--color-border)] bg-[var(--color-surface-raised)]',
+                'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors',
+                filterType !== 'all' && 'border-[var(--color-primary)] text-[var(--color-primary)]'
+              )}
+            >
+              <Filter className="w-4 h-4" />
+              Filtrer
+              <ChevronDown className="w-3 h-3 opacity-60" />
+            </button>
+            {showFilterDropdown && (
+              <div className={cn(
+                'absolute top-full mt-1 right-0 z-20 w-48 rounded-md shadow-lg',
+                'bg-[var(--color-surface)] border border-[var(--color-border)] py-1'
+              )}>
+                {FILTER_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setFilterType(opt.value); setShowFilterDropdown(false); }}
+                    className={cn(
+                      'w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors',
+                      filterType === opt.value && 'text-[var(--color-primary)] font-medium'
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Bulk actions */}
+        {selectedIds.size > 0 && (
+          <div className={cn(
+            'flex items-center gap-3 px-4 py-2.5 mb-3 rounded-md text-sm',
+            'bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20'
+          )}>
+            <span className="text-[var(--color-primary)] font-medium">
+              {selectedIds.size} sélectionné{selectedIds.size > 1 ? 's' : ''}
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              {/* Download selected */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowDownloadDropdown((v) => !v)}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md',
+                    'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+                    'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors'
+                  )}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Télécharger
+                  <ChevronDown className="w-3 h-3 opacity-60" />
+                </button>
+                {showDownloadDropdown && (
+                  <div className={cn(
+                    'absolute top-full mt-1 right-0 z-20 w-40 rounded-md shadow-lg',
+                    'bg-[var(--color-surface)] border border-[var(--color-border)] py-1'
+                  )}>
+                    <button
+                      onClick={() => handleDownloadSelected('txt')}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2"
+                    >
+                      <FileDown className="w-4 h-4" /> Texte (.txt)
+                    </button>
+                    <button
+                      onClick={() => handleDownloadSelected('html')}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2"
+                    >
+                      <FileDown className="w-4 h-4" /> HTML (.html)
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleDeleteSelected}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md',
+                  'bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 transition-colors'
+                )}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Supprimer
+              </button>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="p-1.5 rounded hover:bg-[var(--color-surface-raised)] text-[var(--color-text-muted)] transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Column header */}
+        {filteredAndSorted.length > 0 && (
+          <div className="flex items-center gap-3 px-4 py-1.5 mb-1 text-xs text-[var(--color-text-muted)] font-medium">
+            <button onClick={toggleSelectAll} className="flex-shrink-0">
+              {allSelected
+                ? <CheckSquare className="w-4 h-4 text-[var(--color-primary)]" />
+                : <Square className="w-4 h-4" />}
+            </button>
+            <span className="flex-1">Titre</span>
+            <span className="w-36 text-right hidden sm:block">Modifié le</span>
+            <span className="w-20 text-right hidden sm:block">Mots</span>
+            <span className="w-16" />
+          </div>
+        )}
+
+        {/* Document rows */}
+        <div className="space-y-0.5">
+          {filteredAndSorted.map((doc) => (
+            <div
+              key={doc.id}
+              onMouseEnter={() => handleMouseEnter(doc)}
+              onMouseLeave={handleMouseLeave}
+              className={cn(
+                'relative flex items-center gap-3 px-4 py-3 rounded-md cursor-pointer group',
+                'hover:bg-[var(--color-surface-raised)] transition-colors',
+                selectedIds.has(doc.id!) && 'bg-[var(--color-primary)]/5'
+              )}
+            >
+              {/* Checkbox */}
+              <button
+                onClick={(e) => toggleSelect(e, doc.id!)}
+                className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                style={selectedIds.has(doc.id!) ? { opacity: 1 } : undefined}
+              >
+                {selectedIds.has(doc.id!)
+                  ? <CheckSquare className="w-4 h-4 text-[var(--color-primary)]" />
+                  : <Square className="w-4 h-4 text-[var(--color-text-muted)]" />}
+              </button>
+
+              <FileText className="w-4 h-4 text-[var(--color-text-muted)] flex-shrink-0" />
+
+              {/* Title / rename */}
+              <div
+                className="flex-1 min-w-0"
+                onClick={() => renamingId !== doc.id && router.push(`/documents/${doc.id}`)}
+              >
+                {renamingId === doc.id ? (
+                  <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitRename(doc);
+                        if (e.key === 'Escape') setRenamingId(null);
+                      }}
+                      className={cn(
+                        'flex-1 text-sm px-2 py-0.5 rounded border',
+                        'border-[var(--color-primary)] bg-[var(--color-surface-raised)]',
+                        'text-[var(--color-text)] focus:outline-none'
+                      )}
+                    />
+                    <button onClick={() => commitRename(doc)} className="p-1 text-green-600 hover:bg-green-50 rounded">
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => setRenamingId(null)} className="p-1 text-red-500 hover:bg-red-50 rounded">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-sm font-medium text-[var(--color-text)] truncate">{doc.title}</div>
+                    <div className="text-xs text-[var(--color-text-muted)] sm:hidden">
+                      {formatDateTime(doc.updatedAt)} • {doc.wordCount} mots
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Meta */}
+              <div className="text-xs text-[var(--color-text-muted)] w-36 text-right hidden sm:block flex-shrink-0">
+                {formatDateTime(doc.updatedAt)}
+              </div>
+              <div className="text-xs text-[var(--color-text-muted)] w-20 text-right hidden sm:block flex-shrink-0">
+                {doc.wordCount} mots
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity w-16 justify-end flex-shrink-0">
+                <button
+                  onClick={(e) => startRename(e, doc)}
+                  className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors"
+                  title="Renommer"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); downloadDocAsTxt(doc); }}
+                  className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors"
+                  title="Télécharger"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </button>
                 <button
                   onClick={(e) => handleDelete(e, doc.id!)}
                   className="p-1.5 rounded hover:bg-red-100 hover:text-red-600 transition-colors"
-                  aria-label="Supprimer"
+                  title="Supprimer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
+
+              {/* Hover Preview */}
+              {hoveredId === doc.id && previewDoc && (
+                <DocumentPreview doc={previewDoc} />
+              )}
             </div>
           ))}
-          {docs?.length === 0 && (
+
+          {filteredAndSorted.length === 0 && (
             <div className="py-12 text-center text-[var(--color-text-muted)] text-sm">
-              Aucun document. Créez votre premier document ci-dessus.
+              {search || filterType !== 'all'
+                ? 'Aucun document ne correspond aux critères.'
+                : 'Aucun document. Créez votre premier document ci-dessus.'}
             </div>
           )}
         </div>
