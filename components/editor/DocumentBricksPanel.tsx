@@ -55,7 +55,7 @@ const ICON_OPTIONS = [
 ]
 
 const COLOR_OPTIONS = [
-  '#FFB3B3', '#B3F0C2', '#FFF4A3', '#B3D4FF', '#D4B3FF',
+  '#FF8080', '#80E699', '#80B3FF', '#D4B3FF',
   '#FFD4A3', '#E63946', '#2ECC71', '#3B82F6', '#7C3AED',
 ]
 
@@ -324,8 +324,8 @@ function ColorDot({ color, onChange }: { color: string; onChange: (c: string) =>
     if (open) { setOpen(false); return }
     if (!btnRef.current) return
     const rect      = btnRef.current.getBoundingClientRect()
-    // Hauteur estimée du popover : 10 couleurs × 24px + 16px padding ≈ 256px
-    const popH      = 256
+    // Hauteur estimée du popover : 9 couleurs × 24px + 16px padding ≈ 232px
+    const popH      = 232
     const spaceBelow = window.innerHeight - rect.bottom
     const top = spaceBelow >= popH
       ? rect.bottom + 8                    // ouvre vers le bas
@@ -707,10 +707,10 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
   onClose:        () => void
 }) {
   const [newName,    setNewName]    = useState('')
-  const [newColor,   setNewColor]   = useState(COLOR_OPTIONS[3])
+  const [newColor,   setNewColor]   = useState(COLOR_OPTIONS[2])
   const [editingId,  setEditingId]  = useState<string | null>(null)   // category.id (string)
   const [editName,   setEditName]   = useState('')
-  const [editColor,  setEditColor]  = useState(COLOR_OPTIONS[3])
+  const [editColor,  setEditColor]  = useState(COLOR_OPTIONS[2])
   const [confirmDel, setConfirmDel] = useState<string | null>(null)   // category.id
   const [saving,     setSaving]     = useState(false)
 
@@ -724,7 +724,7 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
     const name = newName.trim(); if (!name) return
     setSaving(true)
     await onAdd(name, newColor)
-    setNewName(''); setNewColor(COLOR_OPTIONS[3]); setSaving(false)
+    setNewName(''); setNewColor(COLOR_OPTIONS[2]); setSaving(false)
   }
 
   async function handleSaveEdit(cat: CategoryDef) {
@@ -940,7 +940,7 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, showCatManager])
 
-  const newTpl: Brick = { id: '__new__', label: '', content: '', category: allCategories[0]?.id ?? 'custom', icon: 'file-text', color: COLOR_OPTIONS[7] }
+  const newTpl: Brick = { id: '__new__', label: '', content: '', category: allCategories[0]?.id ?? 'custom', icon: 'file-text', color: COLOR_OPTIONS[6] }
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
