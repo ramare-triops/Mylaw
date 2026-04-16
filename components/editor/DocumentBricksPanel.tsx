@@ -298,11 +298,13 @@ function BrickPreview({ content, color }: { content: string; color: string }) {
   )
 }
 
-// ─── ColorDot — cercle seul + popover vertical au clic ───────────────────────
+// ─── ColorDot — cercle seul + popover vertical au clic (direction adaptative) ─
 
 function ColorDot({ color, onChange }: { color: string; onChange: (c: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const [open, setOpen]       = useState(false)
+  const [openUp, setOpenUp]   = useState(false)   // true = popover vers le haut
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const ref    = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -313,12 +315,43 @@ function ColorDot({ color, onChange }: { color: string; onChange: (c: string) =>
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
+  function handleToggle() {
+    if (!open && btnRef.current) {
+      const rect       = btnRef.current.getBoundingClientRect()
+      // Hauteur estimée du popover : 10 couleurs × (18+6)px + 16px padding ≈ 256px
+      const popoverH   = 256
+      const spaceAbove = rect.top
+      const spaceBelow = window.innerHeight - rect.bottom
+      setOpenUp(spaceAbove > popoverH || spaceAbove > spaceBelow)
+    }
+    setOpen(v => !v)
+  }
+
+  const popoverStyle: React.CSSProperties = {
+    position: 'absolute',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 60,
+    background: 'var(--color-surface)',
+    border: '1px solid var(--color-border)',
+    borderRadius: '12px',
+    padding: '8px 7px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    alignItems: 'center',
+    ...(openUp
+      ? { bottom: 'calc(100% + 8px)' }
+      : { top: 'calc(100% + 8px)' }),
+  }
+
   return (
     <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
-      {/* Seul le cercle est visible */}
       <button
+        ref={btnRef}
         type="button"
-        onClick={() => setOpen(v => !v)}
+        onClick={handleToggle}
         title="Changer la couleur"
         style={{
           width: '22px', height: '22px', borderRadius: '50%',
@@ -332,24 +365,8 @@ function ColorDot({ color, onChange }: { color: string; onChange: (c: string) =>
           flexShrink: 0,
         }}
       />
-      {/* Popover : colonne de cercles qui monte au-dessus */}
       {open && (
-        <div style={{
-          position: 'absolute',
-          bottom: 'calc(100% + 8px)',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 60,
-          background: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-          borderRadius: '12px',
-          padding: '8px 7px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '6px',
-          alignItems: 'center',
-        }}>
+        <div style={popoverStyle}>
           {COLOR_OPTIONS.map(c => (
             <button
               key={c}
@@ -673,12 +690,13 @@ function BrickEditorRow({ brick, allCategories, onEdit, isSelected }: { brick: B
 // ─── CategoryManagerPanel ─────────────────────────────────────────────────────
 // Toutes les catégories sont listées ensemble et peuvent être modifiées / supprimées.
 
-function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClose, onRenameSystem }: {
+function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClose, onRenameSystem, onDeleteSystem }: {
   allCategories: CategoryDef[]
   onAdd:          (name: string, color: string) => Promise<void>
   onRename:       (dbId: number, name: string, color: string) => Promise<void>
   onRenameSystem: (id: string, name: string, color: string) => void
   onDelete:       (dbId: number) => Promise<void>
+  onDeleteSystem: (id: string) => void
   onClose:        () => void
 }) {
   const [newName,    setNewName]    = useState('')
@@ -714,9 +732,12 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
   }
 
   async function handleDelete(cat: CategoryDef) {
-    if (!cat.isCustomCategory || cat.dbId == null) return
     setSaving(true)
-    await onDelete(cat.dbId)
+    if (cat.isCustomCategory && cat.dbId != null) {
+      await onDelete(cat.dbId)
+    } else {
+      onDeleteSystem(cat.id)
+    }
     setConfirmDel(null); setSaving(false)
   }
 
@@ -744,7 +765,7 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
           if (editingId === cat.id) {
             return (
               <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', borderRadius: '8px', border: `1.5px solid ${editColor}`, background: editColor + '08' }}>
-                {/* Cercle couleur */}
+                {/* Cercle couleur avec popover adaptatif */}
                 <ColorDot color={editColor} onChange={setEditColor} />
                 <input
                   autoFocus
@@ -762,7 +783,9 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
           if (confirmDel === cat.id) {
             return (
               <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', borderRadius: '8px', border: '1.5px solid var(--color-error)', background: '#fee2e220' }}>
-                <span style={{ fontSize: '11px', color: 'var(--color-error)', flex: 1, lineHeight: 1.4 }}>Supprimer « {cat.label} » ? Les briques seront déplacées vers « Mes briques ».</span>
+                <span style={{ fontSize: '11px', color: 'var(--color-error)', flex: 1, lineHeight: 1.4 }}>
+                  Supprimer « {cat.label} » ?{cat.isCustomCategory ? ' Les briques seront déplacées vers « Mes briques ».' : ' Cette catégorie système sera masquée.'}
+                </span>
                 <button onClick={() => handleDelete(cat)} disabled={saving}
                   style={{ padding: '3px 10px', borderRadius: '6px', background: 'var(--color-error)', color: '#fff', fontSize: '11px', fontWeight: 600, border: 'none', cursor: 'pointer', flexShrink: 0 }}>Oui</button>
                 <button onClick={() => setConfirmDel(null)}
@@ -775,19 +798,16 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
             <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 10px', borderRadius: '8px', border: `1.5px solid ${cat.color}30`, background: cat.color + '08' }}>
               <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: cat.color, flexShrink: 0 }} />
               <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.label}</span>
+              {/* ✏️ toujours visible */}
               <button
                 onClick={() => { setEditingId(cat.id); setEditName(cat.label); setEditColor(cat.color) }}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-faint)', display: 'flex', alignItems: 'center', padding: '2px', flexShrink: 0 }}
               ><Pencil size={12} /></button>
-              {cat.isCustomCategory
-                ? (
-                  <button
-                    onClick={() => setConfirmDel(cat.id)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-error)', display: 'flex', alignItems: 'center', padding: '2px', flexShrink: 0 }}
-                  ><Trash2 size={12} /></button>
-                )
-                : <div style={{ width: '20px', flexShrink: 0 }} /> /* placeholder pour aligner */
-              }
+              {/* 🗑️ toujours visible pour toutes les catégories */}
+              <button
+                onClick={() => setConfirmDel(cat.id)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-error)', display: 'flex', alignItems: 'center', padding: '2px', flexShrink: 0 }}
+              ><Trash2 size={12} /></button>
             </div>
           )
         })}
@@ -839,7 +859,7 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
 
 // ─── BricksEditorModal ────────────────────────────────────────────────────────
 
-function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUpdate, onDelete, onAddCategory, onRenameCategory, onDeleteCategory, onRenameSystemCategory }: {
+function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUpdate, onDelete, onAddCategory, onRenameCategory, onDeleteCategory, onRenameSystemCategory, onDeleteSystemCategory }: {
   groups: BrickGroup[]
   allCategories: CategoryDef[]
   onSave: (g: BrickGroup[]) => void
@@ -851,6 +871,7 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
   onRenameCategory:       (dbId: number, name: string, color: string) => Promise<void>
   onDeleteCategory:       (dbId: number) => Promise<void>
   onRenameSystemCategory: (id: string, name: string, color: string) => void
+  onDeleteSystemCategory: (id: string) => void
 }) {
   const [localGroups,     setLocalGroups]     = useState<BrickGroup[]>(() => JSON.parse(JSON.stringify(groups)))
   const [selectedBrickId, setSelectedBrickId] = useState<string | null>(null)
@@ -956,6 +977,7 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
                 onRename={onRenameCategory}
                 onRenameSystem={onRenameSystemCategory}
                 onDelete={onDeleteCategory}
+                onDeleteSystem={onDeleteSystemCategory}
                 onClose={() => setShowCatManager(false)}
               />
             </div>
@@ -1106,6 +1128,12 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
     setGroups(prev => prev.map(g => g.id === id ? { ...g, label: name, color } : g))
   }, [])
 
+  // Suppression des catégories système (état local uniquement — masquage)
+  const handleDeleteSystemCategory = useCallback((id: string) => {
+    setAllCategories(prev => prev.filter(c => c.id !== id))
+    setGroups(prev => prev.filter(g => g.id !== id))
+  }, [])
+
   const handleDeleteCategory = useCallback(async (dbId: number) => {
     const catId = `cat_${dbId}`
     const bricksInCat = await db.bricks.filter(b => b.tags[0] === catId).toArray() as (DBBrick & { id: number })[]
@@ -1205,6 +1233,7 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
           onRenameCategory={handleRenameCategory}
           onDeleteCategory={handleDeleteCategory}
           onRenameSystemCategory={handleRenameSystemCategory}
+          onDeleteSystemCategory={handleDeleteSystemCategory}
         />
       )}
     </>
