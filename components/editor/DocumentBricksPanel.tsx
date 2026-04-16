@@ -33,7 +33,7 @@ export interface BrickGroup {
 
 export const DRAG_BRICK_KEY = 'application/x-mylaw-brick'
 
-// Catégories système (non supprimables)
+// Catégories système (toutes éditables)
 const SYSTEM_CATEGORIES = [
   { id: 'parties',   label: 'Parties',       color: '#01696f' },
   { id: 'structure', label: 'Structure',      color: '#4f46e5' },
@@ -111,7 +111,6 @@ function bricksToGroups(
     groupMap.get(ui.category)!.bricks.push(ui)
   }
 
-  // Ordre : système d'abord (dans l'ordre SYSTEM_CATEGORIES), puis custom créées par l'utilisateur
   const systemOrder = SYSTEM_CATEGORIES.map(c => c.id)
   const customCatIds = allCategories.filter(c => c.isCustomCategory).map(c => c.id)
   return [...systemOrder, ...customCatIds]
@@ -299,7 +298,83 @@ function BrickPreview({ content, color }: { content: string; color: string }) {
   )
 }
 
-// ─── ColorPicker ──────────────────────────────────────────────────────────────
+// ─── ColorDot — cercle seul + popover vertical au clic ───────────────────────
+
+function ColorDot({ color, onChange }: { color: string; onChange: (c: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  return (
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+      {/* Seul le cercle est visible */}
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        title="Changer la couleur"
+        style={{
+          width: '22px', height: '22px', borderRadius: '50%',
+          background: color,
+          border: `2px solid ${color}88`,
+          outline: open ? `2px solid ${color}` : 'none',
+          outlineOffset: '2px',
+          cursor: 'pointer',
+          transition: 'all 0.12s',
+          display: 'block',
+          flexShrink: 0,
+        }}
+      />
+      {/* Popover : colonne de cercles qui monte au-dessus */}
+      {open && (
+        <div style={{
+          position: 'absolute',
+          bottom: 'calc(100% + 8px)',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 60,
+          background: 'var(--color-surface)',
+          border: '1px solid var(--color-border)',
+          borderRadius: '12px',
+          padding: '8px 7px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px',
+          alignItems: 'center',
+        }}>
+          {COLOR_OPTIONS.map(c => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => { onChange(c); setOpen(false) }}
+              title={c}
+              style={{
+                width: '18px', height: '18px', borderRadius: '50%',
+                background: c,
+                border: `2px solid ${color === c ? c : 'transparent'}`,
+                outline: color === c ? `2px solid ${c}` : 'none',
+                outlineOffset: '2px',
+                cursor: 'pointer',
+                transition: 'all 0.1s',
+                flexShrink: 0,
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── ColorPicker (utilisé dans BrickEditorForm) ───────────────────────────────
 
 function ColorPicker({ color, onChange }: { color: string; onChange: (c: string) => void }) {
   const [open, setOpen] = useState(false)
@@ -596,22 +671,29 @@ function BrickEditorRow({ brick, allCategories, onEdit, isSelected }: { brick: B
 }
 
 // ─── CategoryManagerPanel ─────────────────────────────────────────────────────
-// Panneau latéral gauche de gestion des catégories custom
+// Toutes les catégories sont listées ensemble et peuvent être modifiées / supprimées.
 
-function CategoryManagerPanel({ customCategories, onAdd, onRename, onDelete, onClose }: {
-  customCategories: CategoryDef[]
-  onAdd:    (name: string, color: string) => Promise<void>
-  onRename: (dbId: number, name: string, color: string) => Promise<void>
-  onDelete: (dbId: number) => Promise<void>
-  onClose:  () => void
+function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClose, onRenameSystem }: {
+  allCategories: CategoryDef[]
+  onAdd:          (name: string, color: string) => Promise<void>
+  onRename:       (dbId: number, name: string, color: string) => Promise<void>
+  onRenameSystem: (id: string, name: string, color: string) => void
+  onDelete:       (dbId: number) => Promise<void>
+  onClose:        () => void
 }) {
-  const [newName,     setNewName]     = useState('')
-  const [newColor,    setNewColor]    = useState('#2563eb')
-  const [editingId,   setEditingId]   = useState<number | null>(null)
-  const [editName,    setEditName]    = useState('')
-  const [editColor,   setEditColor]   = useState('#2563eb')
-  const [confirmDel,  setConfirmDel]  = useState<number | null>(null)
-  const [saving,      setSaving]      = useState(false)
+  const [newName,    setNewName]    = useState('')
+  const [newColor,   setNewColor]   = useState('#2563eb')
+  const [editingId,  setEditingId]  = useState<string | null>(null)   // category.id (string)
+  const [editName,   setEditName]   = useState('')
+  const [editColor,  setEditColor]  = useState('#2563eb')
+  const [confirmDel, setConfirmDel] = useState<string | null>(null)   // category.id
+  const [saving,     setSaving]     = useState(false)
+
+  const inp: React.CSSProperties = {
+    padding: '5px 9px', fontSize: '12px', borderRadius: '6px',
+    border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)',
+    color: 'var(--color-text)', outline: 'none', flex: 1, minWidth: 0,
+  }
 
   async function handleAdd() {
     const name = newName.trim(); if (!name) return
@@ -620,131 +702,136 @@ function CategoryManagerPanel({ customCategories, onAdd, onRename, onDelete, onC
     setNewName(''); setNewColor('#2563eb'); setSaving(false)
   }
 
-  async function handleRename(dbId: number) {
+  async function handleSaveEdit(cat: CategoryDef) {
     const name = editName.trim(); if (!name) return
     setSaving(true)
-    await onRename(dbId, name, editColor)
+    if (cat.isCustomCategory && cat.dbId != null) {
+      await onRename(cat.dbId, name, editColor)
+    } else {
+      onRenameSystem(cat.id, name, editColor)
+    }
     setEditingId(null); setSaving(false)
   }
 
-  async function handleDelete(dbId: number) {
+  async function handleDelete(cat: CategoryDef) {
+    if (!cat.isCustomCategory || cat.dbId == null) return
     setSaving(true)
-    await onDelete(dbId)
+    await onDelete(cat.dbId)
     setConfirmDel(null); setSaving(false)
   }
-
-  const inp: React.CSSProperties = { padding: '6px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text)', outline: 'none', flex: 1 }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{ width: '28px', height: '28px', borderRadius: '7px', background: 'var(--color-primary)18', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: '28px', height: '28px', borderRadius: '7px', background: 'var(--color-primary)18', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <FolderPlus size={14} style={{ color: 'var(--color-primary)' }} />
           </div>
           <div>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text)' }}>Catégories personnalisées</div>
-            <div style={{ fontSize: '10px', color: 'var(--color-text-muted)' }}>Organisez vos briques par thème</div>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text)' }}>Catégories</div>
+            <div style={{ fontSize: '10px', color: 'var(--color-text-muted)' }}>{allCategories.length} catégorie{allCategories.length > 1 ? 's' : ''}</div>
           </div>
         </div>
-        <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', cursor: 'pointer' }}>
+        <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', cursor: 'pointer', flexShrink: 0 }}>
           <X size={14} style={{ color: 'var(--color-text-muted)' }} />
         </button>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      {/* Liste unifiée */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {allCategories.map(cat => {
+          if (editingId === cat.id) {
+            return (
+              <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', borderRadius: '8px', border: `1.5px solid ${editColor}`, background: editColor + '08' }}>
+                {/* Cercle couleur */}
+                <ColorDot color={editColor} onChange={setEditColor} />
+                <input
+                  autoFocus
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSaveEdit(cat); if (e.key === 'Escape') setEditingId(null) }}
+                  style={inp}
+                />
+                <button onClick={() => handleSaveEdit(cat)} disabled={saving} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#01696f', display: 'flex', alignItems: 'center', flexShrink: 0 }}><Check size={14} /></button>
+                <button onClick={() => setEditingId(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-faint)', display: 'flex', alignItems: 'center', flexShrink: 0 }}><X size={13} /></button>
+              </div>
+            )
+          }
 
-        {/* Catégories système (lecture seule) */}
-        <div style={{ marginBottom: '4px' }}>
-          <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: '0 0 8px' }}>Catégories système</p>
-          {SYSTEM_CATEGORIES.map(c => (
-            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 10px', borderRadius: '8px', background: 'var(--color-surface-offset)', marginBottom: '4px', opacity: 0.7 }}>
-              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: c.color, flexShrink: 0 }} />
-              <span style={{ fontSize: '12px', color: 'var(--color-text)', flex: 1 }}>{c.label}</span>
-              <span style={{ fontSize: '9px', color: 'var(--color-text-faint)', background: 'var(--color-border)', padding: '1px 6px', borderRadius: '10px' }}>système</span>
-            </div>
-          ))}
-        </div>
+          if (confirmDel === cat.id) {
+            return (
+              <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', borderRadius: '8px', border: '1.5px solid var(--color-error)', background: '#fee2e220' }}>
+                <span style={{ fontSize: '11px', color: 'var(--color-error)', flex: 1, lineHeight: 1.4 }}>Supprimer « {cat.label} » ? Les briques seront déplacées vers « Mes briques ».</span>
+                <button onClick={() => handleDelete(cat)} disabled={saving}
+                  style={{ padding: '3px 10px', borderRadius: '6px', background: 'var(--color-error)', color: '#fff', fontSize: '11px', fontWeight: 600, border: 'none', cursor: 'pointer', flexShrink: 0 }}>Oui</button>
+                <button onClick={() => setConfirmDel(null)}
+                  style={{ padding: '3px 10px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer', flexShrink: 0 }}>Non</button>
+              </div>
+            )
+          }
 
-        {/* Catégories custom */}
-        <div>
-          <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: '0 0 8px' }}>Mes catégories ({customCategories.length})</p>
-          {customCategories.length === 0 && (
-            <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--color-text-faint)', fontSize: '12px' }}>Aucune catégorie personnalisée.<br/>Créez-en une ci-dessous.</div>
-          )}
-          {customCategories.map(cat => (
-            <div key={cat.dbId}>
-              {editingId === cat.dbId ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', borderRadius: '8px', border: `1.5px solid ${editColor}`, background: editColor + '08', marginBottom: '4px' }}>
-                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: editColor, flexShrink: 0 }} />
-                  <input autoFocus value={editName} onChange={e => setEditName(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') handleRename(cat.dbId!); if (e.key === 'Escape') setEditingId(null) }}
-                    style={{ ...inp, flex: 1, padding: '4px 8px' }} />
-                  {/* Mini color picker inline */}
-                  <div style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
-                    {COLOR_OPTIONS.slice(0, 5).map(c => (
-                      <button key={c} type="button" onClick={() => setEditColor(c)}
-                        style={{ width: '14px', height: '14px', borderRadius: '50%', background: c, border: `2px solid ${editColor === c ? c : 'transparent'}`, outline: editColor === c ? `1.5px solid ${c}` : 'none', outlineOffset: '1px', cursor: 'pointer', flexShrink: 0 }}
-                      />
-                    ))}
-                  </div>
-                  <button onClick={() => handleRename(cat.dbId!)} disabled={saving} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#01696f', display: 'flex', alignItems: 'center' }}><Check size={13} /></button>
-                  <button onClick={() => setEditingId(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-faint)', display: 'flex', alignItems: 'center' }}><X size={13} /></button>
-                </div>
-              ) : confirmDel === cat.dbId ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', borderRadius: '8px', border: '1.5px solid var(--color-error)', background: 'var(--color-error-bg, #fee2e2)', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '11px', color: 'var(--color-error)', flex: 1 }}>Supprimer « {cat.label} » ? Les briques seront déplacées vers « Mes briques ».</span>
-                  <button onClick={() => handleDelete(cat.dbId!)} disabled={saving}
-                    style={{ padding: '3px 10px', borderRadius: '6px', background: 'var(--color-error)', color: '#fff', fontSize: '11px', fontWeight: 600, border: 'none', cursor: 'pointer' }}>Oui</button>
-                  <button onClick={() => setConfirmDel(null)}
-                    style={{ padding: '3px 10px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer' }}>Non</button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 10px', borderRadius: '8px', border: `1.5px solid ${cat.color}30`, background: cat.color + '08', marginBottom: '4px' }}>
-                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: cat.color, flexShrink: 0 }} />
-                  <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text)', flex: 1 }}>{cat.label}</span>
-                  <button onClick={() => { setEditingId(cat.dbId!); setEditName(cat.label); setEditColor(cat.color) }}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-faint)', display: 'flex', alignItems: 'center', padding: '2px' }}>
-                    <Pencil size={12} />
-                  </button>
-                  <button onClick={() => setConfirmDel(cat.dbId!)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-error)', display: 'flex', alignItems: 'center', padding: '2px' }}>
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              )}
+          return (
+            <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 10px', borderRadius: '8px', border: `1.5px solid ${cat.color}30`, background: cat.color + '08' }}>
+              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: cat.color, flexShrink: 0 }} />
+              <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.label}</span>
+              <button
+                onClick={() => { setEditingId(cat.id); setEditName(cat.label); setEditColor(cat.color) }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-faint)', display: 'flex', alignItems: 'center', padding: '2px', flexShrink: 0 }}
+              ><Pencil size={12} /></button>
+              {cat.isCustomCategory
+                ? (
+                  <button
+                    onClick={() => setConfirmDel(cat.id)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-error)', display: 'flex', alignItems: 'center', padding: '2px', flexShrink: 0 }}
+                  ><Trash2 size={12} /></button>
+                )
+                : <div style={{ width: '20px', flexShrink: 0 }} /> /* placeholder pour aligner */
+              }
             </div>
-          ))}
-        </div>
+          )
+        })}
       </div>
 
-      {/* Formulaire ajout */}
-      <div style={{ flexShrink: 0, padding: '14px 20px', borderTop: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '10px', background: 'var(--color-surface)' }}>
+      {/* Formulaire ajout — layout en deux lignes pour éviter le crop du bouton Créer */}
+      <div style={{ flexShrink: 0, padding: '14px 16px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', margin: 0 }}>Nouvelle catégorie</p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {/* Color picker compact */}
-          <div style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
-            {COLOR_OPTIONS.slice(0, 5).map(c => (
-              <button key={c} type="button" onClick={() => setNewColor(c)}
-                style={{ width: '16px', height: '16px', borderRadius: '50%', background: c, border: `2px solid ${newColor === c ? c : 'transparent'}`, outline: newColor === c ? `1.5px solid ${c}` : 'none', outlineOffset: '1px', cursor: 'pointer', flexShrink: 0 }}
-              />
-            ))}
-          </div>
-          <input value={newName} onChange={e => setNewName(e.target.value)}
+
+        {/* Ligne 1 : cercle couleur (avec popover) + champ texte */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <ColorDot color={newColor} onChange={setNewColor} />
+          <input
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleAdd() }}
-            placeholder="Nom de la catégorie…" style={inp} />
-          <button onClick={handleAdd} disabled={!newName.trim() || saving}
-            style={{ padding: '6px 12px', borderRadius: '7px', border: 'none', background: newName.trim() ? 'var(--color-primary)' : 'var(--color-border)', color: newName.trim() ? '#fff' : 'var(--color-text-faint)', fontSize: '12px', fontWeight: 600, cursor: newName.trim() ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}
-          ><Plus size={13} /> Créer</button>
+            placeholder="Nom de la catégorie…"
+            style={{ ...inp, flex: 1 }}
+          />
         </div>
-        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-          {COLOR_OPTIONS.slice(5).map(c => (
-            <button key={c} type="button" onClick={() => setNewColor(c)}
-              style={{ width: '16px', height: '16px', borderRadius: '50%', background: c, border: `2px solid ${newColor === c ? c : 'transparent'}`, outline: newColor === c ? `1.5px solid ${c}` : 'none', outlineOffset: '1px', cursor: 'pointer', flexShrink: 0 }}
-            />
-          ))}
-        </div>
+
+        {/* Ligne 2 : bouton Créer seul, pleine largeur → jamais coupé */}
+        <button
+          onClick={handleAdd}
+          disabled={!newName.trim() || saving}
+          style={{
+            width: '100%',
+            padding: '7px 0',
+            borderRadius: '8px',
+            border: 'none',
+            background: newName.trim() ? 'var(--color-primary)' : 'var(--color-border)',
+            color: newName.trim() ? '#fff' : 'var(--color-text-faint)',
+            fontSize: '12px',
+            fontWeight: 600,
+            cursor: newName.trim() ? 'pointer' : 'not-allowed',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+            transition: 'all 0.15s',
+          }}
+        >
+          <Plus size={13} /> Créer
+        </button>
       </div>
     </div>
   )
@@ -752,7 +839,7 @@ function CategoryManagerPanel({ customCategories, onAdd, onRename, onDelete, onC
 
 // ─── BricksEditorModal ────────────────────────────────────────────────────────
 
-function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUpdate, onDelete, onAddCategory, onRenameCategory, onDeleteCategory }: {
+function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUpdate, onDelete, onAddCategory, onRenameCategory, onDeleteCategory, onRenameSystemCategory }: {
   groups: BrickGroup[]
   allCategories: CategoryDef[]
   onSave: (g: BrickGroup[]) => void
@@ -760,9 +847,10 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
   onAdd:    (b: Omit<Brick, 'id'>) => Promise<string>
   onUpdate: (b: Brick) => Promise<void>
   onDelete: (id: string) => Promise<void>
-  onAddCategory:    (name: string, color: string) => Promise<void>
-  onRenameCategory: (dbId: number, name: string, color: string) => Promise<void>
-  onDeleteCategory: (dbId: number) => Promise<void>
+  onAddCategory:          (name: string, color: string) => Promise<void>
+  onRenameCategory:       (dbId: number, name: string, color: string) => Promise<void>
+  onDeleteCategory:       (dbId: number) => Promise<void>
+  onRenameSystemCategory: (id: string, name: string, color: string) => void
 }) {
   const [localGroups,     setLocalGroups]     = useState<BrickGroup[]>(() => JSON.parse(JSON.stringify(groups)))
   const [selectedBrickId, setSelectedBrickId] = useState<string | null>(null)
@@ -777,8 +865,6 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
     return ms && (filterCat === 'all' || b.category === filterCat)
   })
   const selectedBrick = allBricks.find(b => b.id === selectedBrickId) ?? null
-
-  const customCategories = allCategories.filter(c => c.isCustomCategory)
 
   async function handleUpdate(updated: Brick) {
     await onUpdate(updated)
@@ -846,12 +932,11 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {/* Bouton catégories */}
             <button onClick={() => setShowCatManager(v => !v)}
               style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '8px', border: `1.5px solid ${showCatManager ? 'var(--color-primary)' : 'var(--color-border)'}`, background: showCatManager ? 'var(--color-primary)10' : 'var(--color-surface-offset)', color: showCatManager ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s' }}
             >
               <FolderPlus size={13} /> Catégories
-              {customCategories.length > 0 && <span style={{ background: showCatManager ? 'var(--color-primary)' : 'var(--color-text-faint)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 5px', fontWeight: 700 }}>{customCategories.length}</span>}
+              {allCategories.length > 0 && <span style={{ background: showCatManager ? 'var(--color-primary)' : 'var(--color-text-faint)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 5px', fontWeight: 700 }}>{allCategories.length}</span>}
             </button>
             <button onClick={onClose} style={{ width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', cursor: 'pointer' }}>
               <X size={16} style={{ color: 'var(--color-text-muted)' }} />
@@ -862,20 +947,21 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
         {/* Body */}
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-          {/* ── Panneau catégories (glisse depuis la droite) ── */}
+          {/* Panneau catégories */}
           {showCatManager && (
-            <div style={{ width: '340px', flexShrink: 0, borderRight: '1px solid var(--color-border)', background: 'var(--color-surface)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ width: '300px', flexShrink: 0, borderRight: '1px solid var(--color-border)', background: 'var(--color-surface)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <CategoryManagerPanel
-                customCategories={customCategories}
+                allCategories={allCategories}
                 onAdd={onAddCategory}
                 onRename={onRenameCategory}
+                onRenameSystem={onRenameSystemCategory}
                 onDelete={onDeleteCategory}
                 onClose={() => setShowCatManager(false)}
               />
             </div>
           )}
 
-          {/* ── Liste des briques ── */}
+          {/* Liste des briques */}
           <div style={{ width: '300px', flexShrink: 0, borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', background: 'var(--color-surface-offset)' }}>
             <div style={{ padding: '12px', borderBottom: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
               <div style={{ position: 'relative' }}>
@@ -902,7 +988,7 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
             </div>
           </div>
 
-          {/* ── Formulaire éditeur ── */}
+          {/* Formulaire éditeur */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {isCreating ? (
               <BrickEditorForm brick={newTpl} allCategories={allCategories} isNew
@@ -945,14 +1031,12 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
 
   // ── Chargement initial depuis Dexie ──────────────────────────────────────
   const loadFromDB = useCallback(async () => {
-    // Seed des briques au premier démarrage
     const seeded = await getSetting<boolean>('bricks_seeded', false)
     if (!seeded) {
       await db.bricks.bulkAdd(SEED_BRICKS as DBBrick[])
       await setSetting('bricks_seeded', true)
     }
 
-    // Charger les catégories custom depuis infoLabels
     const savedLabels = await db.infoLabels.toArray() as (InfoLabel & { id: number })[]
     const customCats: CategoryDef[] = savedLabels.map(l => ({
       id:               `cat_${l.id}`,
@@ -1005,7 +1089,6 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
     const numId = Number(dbId)
     const newCat: CategoryDef = { id: `cat_${numId}`, label: name, color, iconName: 'blocks', isCustomCategory: true, dbId: numId }
     setAllCategories(prev => [...prev, newCat])
-    // Recharger les groupes pour refléter la nouvelle catégorie
     const all = await db.bricks.toArray() as (DBBrick & { id: number })[]
     setGroups(prev => bricksToGroups(all, [...prev.map(g => ({ id: g.id, label: g.label, color: g.color, iconName: g.iconName, isCustomCategory: g.isCustomCategory })) as CategoryDef[], newCat]))
   }, [])
@@ -1014,22 +1097,27 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
     const existing = await db.infoLabels.get(dbId); if (!existing) return
     await db.infoLabels.put({ ...existing, name, color } as InfoLabel)
     setAllCategories(prev => prev.map(c => c.dbId === dbId ? { ...c, label: name, color } : c))
-    // Mettre à jour les groupes
     setGroups(prev => prev.map(g => g.id === `cat_${dbId}` ? { ...g, label: name, color } : g))
   }, [])
 
+  // Renommage des catégories système (état local uniquement — pas de DB)
+  const handleRenameSystemCategory = useCallback((id: string, name: string, color: string) => {
+    setAllCategories(prev => prev.map(c => c.id === id ? { ...c, label: name, color } : c))
+    setGroups(prev => prev.map(g => g.id === id ? { ...g, label: name, color } : g))
+  }, [])
+
   const handleDeleteCategory = useCallback(async (dbId: number) => {
-    // Réassigner les briques de cette catégorie vers 'custom'
     const catId = `cat_${dbId}`
     const bricksInCat = await db.bricks.filter(b => b.tags[0] === catId).toArray() as (DBBrick & { id: number })[]
     await Promise.all(bricksInCat.map(b => db.bricks.put({ ...b, tags: ['custom', b.tags[1] ?? 'file-text', b.tags[2] ?? '#6b7280'] } as DBBrick)))
     await db.infoLabels.delete(dbId)
-    setAllCategories(prev => prev.filter(c => c.dbId !== dbId))
-    // Recharger entièrement
-    const all = await db.bricks.toArray() as (DBBrick & { id: number })[]
     setAllCategories(prev => {
       const updated = prev.filter(c => c.dbId !== dbId)
-      setGroups(bricksToGroups(all, updated))
+      const reloadBricks = async () => {
+        const all = await db.bricks.toArray() as (DBBrick & { id: number })[]
+        setGroups(bricksToGroups(all, updated))
+      }
+      reloadBricks()
       return updated
     })
   }, [])
@@ -1116,6 +1204,7 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
           onAddCategory={handleAddCategory}
           onRenameCategory={handleRenameCategory}
           onDeleteCategory={handleDeleteCategory}
+          onRenameSystemCategory={handleRenameSystemCategory}
         />
       )}
     </>
