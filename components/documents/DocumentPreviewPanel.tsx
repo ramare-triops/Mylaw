@@ -11,38 +11,78 @@ interface DocumentPreviewPanelProps {
 
 const TYPE_LABELS: Record<string, string> = {
   draft: 'Brouillon',
-  final: 'Finalisé',
+  final: 'Finalis\u00e9',
   contract: 'Contrat',
 };
 
+/**
+ * Extrait le texte brut depuis n'importe quel format de contenu :
+ * - JSON TipTap  ({"type":"doc", ...})
+ * - HTML          (<p>...</p>)
+ * - Texte brut
+ */
+function extractPlainText(raw: string): string {
+  if (!raw || raw.trim() === '') return '';
+  const trimmed = raw.trim();
+
+  // JSON TipTap
+  if (trimmed.startsWith('{')) {
+    try {
+      const doc = JSON.parse(trimmed);
+      const parts: string[] = [];
+      function walk(node: { type?: string; text?: string; content?: unknown[] }) {
+        if (node.type === 'text' && node.text) parts.push(node.text);
+        if (Array.isArray(node.content)) {
+          node.content.forEach((child) => walk(child as { type?: string; text?: string; content?: unknown[] }));
+          // Ajoute un espace après les blocs (paragraph, heading...)
+          if (['paragraph', 'heading', 'bulletList', 'listItem'].includes(node.type ?? '')) {
+            parts.push(' ');
+          }
+        }
+      }
+      walk(doc);
+      return parts.join('').replace(/\s+/g, ' ').trim();
+    } catch {
+      // pas du JSON valide, on continue
+    }
+  }
+
+  // HTML
+  if (trimmed.startsWith('<')) {
+    return trimmed.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  return trimmed;
+}
+
 export function DocumentPreviewPanel({ doc }: DocumentPreviewPanelProps) {
-  const textContent = doc
-    ? (doc.content ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
-    : '';
+  const textContent = doc ? extractPlainText(doc.content ?? '') : '';
 
   return (
     <aside
       className={cn(
-        'hidden lg:flex flex-col flex-shrink-0 w-72 xl:w-80',
+        // Panneau fixe à droite — 40% de la largeur disponible, min 280px, max 420px
+        'hidden lg:flex flex-col flex-shrink-0',
+        'w-[38%] min-w-[280px] max-w-[420px]',
         'border-l border-[var(--color-border)] bg-[var(--color-surface)]',
-        'transition-all duration-200 overflow-hidden'
+        'overflow-hidden'
       )}
     >
       {/* Panel header */}
       <div className="px-5 py-4 border-b border-[var(--color-border)]">
         <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-          Aperçu
+          Aper\u00e7u
         </p>
       </div>
 
       {!doc ? (
         /* Empty state */
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
-          <div className="w-14 h-14 rounded-2xl bg-[var(--color-surface-raised)] flex items-center justify-center">
-            <FileText className="w-7 h-7 text-[var(--color-text-subtle)]" />
+          <div className="w-16 h-16 rounded-2xl bg-[var(--color-surface-raised)] flex items-center justify-center">
+            <FileText className="w-8 h-8 text-[var(--color-text-subtle)]" />
           </div>
           <p className="text-sm text-[var(--color-text-muted)]">
-            Survolez un document pour afficher son aperçu
+            Survolez un document pour afficher son aper\u00e7u
           </p>
         </div>
       ) : (
@@ -50,47 +90,47 @@ export function DocumentPreviewPanel({ doc }: DocumentPreviewPanelProps) {
         <div className="flex-1 overflow-y-auto">
 
           {/* Big document icon + title */}
-          <div className="flex flex-col items-center gap-3 px-5 py-6 border-b border-[var(--color-border)]">
-            <div className="w-16 h-16 rounded-2xl bg-[var(--color-primary)]/10 flex items-center justify-center">
-              <FileText className="w-8 h-8 text-[var(--color-primary)]" />
+          <div className="flex flex-col items-center gap-3 px-6 py-8 border-b border-[var(--color-border)]">
+            <div className="w-20 h-20 rounded-2xl bg-[var(--color-primary)]/10 flex items-center justify-center">
+              <FileText className="w-10 h-10 text-[var(--color-primary)]" />
             </div>
             <div className="text-center">
               <p className="text-sm font-semibold text-[var(--color-text)] leading-snug">{doc.title}</p>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
                 {TYPE_LABELS[doc.type ?? ''] ?? doc.type ?? 'Document'}
               </p>
             </div>
           </div>
 
           {/* Meta info */}
-          <div className="px-5 py-4 space-y-3 border-b border-[var(--color-border)]">
-            <div className="flex items-start gap-2.5">
-              <Clock className="w-3.5 h-3.5 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
+          <div className="px-6 py-5 space-y-4 border-b border-[var(--color-border)]">
+            <div className="flex items-start gap-3">
+              <Clock className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium">Modifié le</p>
-                <p className="text-xs text-[var(--color-text)]">{formatDateTime(doc.updatedAt)}</p>
+                <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium">Modifi\u00e9 le</p>
+                <p className="text-xs text-[var(--color-text)] mt-0.5">{formatDateTime(doc.updatedAt)}</p>
               </div>
             </div>
-            <div className="flex items-start gap-2.5">
-              <Clock className="w-3.5 h-3.5 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
+            <div className="flex items-start gap-3">
+              <Clock className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium">Créé le</p>
-                <p className="text-xs text-[var(--color-text)]">{formatDateTime(doc.createdAt)}</p>
+                <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium">Cr\u00e9\u00e9 le</p>
+                <p className="text-xs text-[var(--color-text)] mt-0.5">{formatDateTime(doc.createdAt)}</p>
               </div>
             </div>
-            <div className="flex items-start gap-2.5">
-              <AlignLeft className="w-3.5 h-3.5 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
+            <div className="flex items-start gap-3">
+              <AlignLeft className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
               <div>
                 <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium">Longueur</p>
-                <p className="text-xs text-[var(--color-text)]">{doc.wordCount ?? 0} mots</p>
+                <p className="text-xs text-[var(--color-text)] mt-0.5">{doc.wordCount ?? 0} mots</p>
               </div>
             </div>
             {doc.tags && doc.tags.length > 0 && (
-              <div className="flex items-start gap-2.5">
-                <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
-                <div className="flex flex-wrap gap-1">
+              <div className="flex items-start gap-3">
+                <Tag className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
+                <div className="flex flex-wrap gap-1.5">
                   {doc.tags.map((tag) => (
-                    <span key={tag} className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--color-surface-raised)] text-[var(--color-text-muted)]">
+                    <span key={tag} className="px-2 py-0.5 text-[10px] rounded-full bg-[var(--color-surface-raised)] text-[var(--color-text-muted)]">
                       {tag}
                     </span>
                   ))}
@@ -100,13 +140,13 @@ export function DocumentPreviewPanel({ doc }: DocumentPreviewPanelProps) {
           </div>
 
           {/* Text excerpt */}
-          <div className="px-5 py-4">
-            <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium mb-2">Contenu</p>
+          <div className="px-6 py-5">
+            <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium mb-3">Contenu</p>
             {textContent ? (
               <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
-                {textContent.slice(0, 500)}
-                {textContent.length > 500 && (
-                  <span className="text-[var(--color-text-subtle)]"> …</span>
+                {textContent.slice(0, 800)}
+                {textContent.length > 800 && (
+                  <span className="text-[var(--color-text-subtle)]"> \u2026</span>
                 )}
               </p>
             ) : (
