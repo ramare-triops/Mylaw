@@ -1,11 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { User, Bell, Palette, Shield, Database, RefreshCw, Loader2, Check, FileText, Plus, Trash2 } from 'lucide-react';
+import { User, Bell, Palette, Shield, Database, RefreshCw, Loader2, Check, FileText } from 'lucide-react';
 import { getSetting, setSetting } from '@/lib/db';
 import { DriveSyncSection } from './DriveSyncSection';
 import { useDrive } from '@/components/providers/DriveSyncProvider';
-import type { TextExpansionEntry } from '@/components/editor/extensions/TextExpansion';
 
 const SECTIONS = [
   { id: 'profile',       label: 'Profil',           icon: User },
@@ -31,7 +30,6 @@ export type EditorPrefs = {
   showWordCount:    boolean;
   showStatusBar:    boolean;
   defaultTextAlign: string;
-  textExpansions:   TextExpansionEntry[];
 };
 
 const DEFAULT_PROFILE:    Profile    = { firstName: '', lastName: '', email: '', barreau: '', cabinet: '', phone: '' };
@@ -48,7 +46,6 @@ export const DEFAULT_EDITOR_PREFS: EditorPrefs = {
   showWordCount:    true,
   showStatusBar:    true,
   defaultTextAlign: "left",
-  textExpansions:   [],
 };
 
 const FONT_FAMILIES = [
@@ -92,144 +89,6 @@ const AUTO_SAVE_DELAYS = [
 
 type SaveState = 'idle' | 'saving' | 'syncing' | 'done' | 'error';
 
-// ─── Composant Expansions de texte ───────────────────────────────────────────
-
-function TextExpansionsEditor({
-  expansions,
-  onChange,
-}: {
-  expansions: TextExpansionEntry[];
-  onChange: (expansions: TextExpansionEntry[]) => void;
-}) {
-  const [abbr,  setAbbr]  = useState('');
-  const [expand, setExpand] = useState('');
-
-  const handleAdd = () => {
-    const trimAbbr   = abbr.trim();
-    const trimExpand = expand.trim();
-    if (!trimAbbr || !trimExpand) return;
-    if (expansions.some(e => e.abbreviation === trimAbbr)) return; // doublon
-    onChange([...expansions, { abbreviation: trimAbbr, expansion: trimExpand }]);
-    setAbbr('');
-    setExpand('');
-  };
-
-  const handleRemove = (index: number) => {
-    onChange(expansions.filter((_, i) => i !== index));
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      {/* Formulaire d'ajout */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 2fr auto',
-        gap: '8px',
-        alignItems: 'flex-end',
-      }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <label style={{ fontSize: 'var(--text-xs)', fontWeight: 500, color: 'var(--color-text-muted)' }}>
-            Raccourci
-          </label>
-          <input
-            style={inputStyle}
-            value={abbr}
-            onChange={e => setAbbr(e.target.value)}
-            placeholder="ca"
-            onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
-          />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <label style={{ fontSize: 'var(--text-xs)', fontWeight: 500, color: 'var(--color-text-muted)' }}>
-            Expansion
-          </label>
-          <input
-            style={inputStyle}
-            value={expand}
-            onChange={e => setExpand(e.target.value)}
-            placeholder="Cour d'appel"
-            onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={handleAdd}
-          disabled={!abbr.trim() || !expand.trim()}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: '5px',
-            padding: '7px 12px',
-            fontSize: 'var(--text-sm)', fontWeight: 500,
-            background: 'var(--color-primary)', color: '#fff',
-            border: 'none', borderRadius: 'var(--radius-sm)',
-            cursor: 'pointer', opacity: (!abbr.trim() || !expand.trim()) ? 0.5 : 1,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <Plus size={14} /> Ajouter
-        </button>
-      </div>
-
-      {/* Liste des expansions */}
-      {expansions.length === 0 ? (
-        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-          Aucune expansion configurée. Ajoutez-en une ci-dessus.
-        </p>
-      ) : (
-        <div style={{
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-md)',
-          overflow: 'hidden',
-        }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--text-sm)' }}>
-            <thead>
-              <tr style={{ background: 'var(--color-surface-offset)', borderBottom: '1px solid var(--color-border)' }}>
-                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500, color: 'var(--color-text-muted)', fontSize: 'var(--text-xs)' }}>Raccourci</th>
-                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500, color: 'var(--color-text-muted)', fontSize: 'var(--text-xs)' }}>Expansion</th>
-                <th style={{ width: '40px' }} />
-              </tr>
-            </thead>
-            <tbody>
-              {expansions.map((entry, i) => (
-                <tr
-                  key={i}
-                  style={{
-                    borderBottom: i < expansions.length - 1 ? '1px solid var(--color-border)' : 'none',
-                    background: 'var(--color-surface)',
-                  }}
-                >
-                  <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: 'var(--color-primary)', fontWeight: 600 }}>
-                    {entry.abbreviation}
-                  </td>
-                  <td style={{ padding: '8px 12px', color: 'var(--color-text)' }}>
-                    {entry.expansion}
-                  </td>
-                  <td style={{ padding: '4px 8px', textAlign: 'center' }}>
-                    <button
-                      type="button"
-                      onClick={() => handleRemove(i)}
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                        width: '28px', height: '28px', borderRadius: 'var(--radius-sm)',
-                        border: 'none', background: 'transparent',
-                        color: 'var(--color-text-muted)', cursor: 'pointer',
-                      }}
-                      title="Supprimer"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
 export function Settings() {
   const [activeSection, setActiveSection] = useState('profile');
   const [loading, setLoading]             = useState(true);
@@ -262,9 +121,7 @@ export function Settings() {
       getSetting<Appearance>('appearance', DEFAULT_APPEARANCE),
       getSetting<EditorPrefs>('editorPrefs', DEFAULT_EDITOR_PREFS),
     ]);
-    setProfile(p); setNotifs(n); setAppearance(a);
-    // Assure la rétrocompatibilité si textExpansions absent de la DB
-    setEditorPrefs({ ...DEFAULT_EDITOR_PREFS, ...e, textExpansions: e.textExpansions ?? [] });
+    setProfile(p); setNotifs(n); setAppearance(a); setEditorPrefs(e);
     setLoading(false);
   }
 
@@ -469,19 +326,6 @@ export function Settings() {
                 description="Barre d'informations en bas de l'éditeur"
                 checked={editorPrefs.showStatusBar}
                 onChange={v => setEp({ showStatusBar: v })}
-              />
-            </Section>
-
-            <div style={{ height: '24px' }} />
-
-            {/* Expansions de texte */}
-            <Section
-              title="Expansions de texte"
-              description="Définissez des raccourcis qui se remplacent automatiquement par leur expansion quand vous tapez Espace ou Entrée."
-            >
-              <TextExpansionsEditor
-                expansions={editorPrefs.textExpansions ?? []}
-                onChange={expansions => setEp({ textExpansions: expansions })}
               />
             </Section>
 

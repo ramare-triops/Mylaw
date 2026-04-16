@@ -4,7 +4,7 @@
 // Champs variables [Nom] [Ville] etc. cliquables avec pop-up de saisie
 // Bouton "Renseigner les informations" avec dialog guidé pas à pas
 // Zoom document style Google Docs
-// Expansions de texte : remplacement automatique à la frappe (Espace / Entrée)
+// Expansions de texte : remplacement automatique à la frappe depuis db.snippets
 
 'use client'
 
@@ -40,10 +40,11 @@ import { TextExpansion } from './extensions/TextExpansion'
 import { VariablePopup } from './VariablePopup'
 import { FillAllVariablesDialog } from './FillAllVariablesDialog'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
-import { getSetting } from '@/lib/db'
+import { getSetting, db } from '@/lib/db'
 import type { Document } from '@/lib/db'
 import type { EditorPrefs } from '@/components/settings/Settings'
 import { DEFAULT_EDITOR_PREFS } from '@/components/settings/Settings'
+import type { TextExpansionEntry } from './extensions/TextExpansion'
 
 interface DocumentEditorWrapperProps {
   document: Document
@@ -149,6 +150,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const [zoom, setZoom]                               = useState(ZOOM_DEFAULT)
   const prefsLoaded                                   = useRef(false)
 
+  // Expansions de texte chargées depuis db.snippets
+  const [expansions, setExpansions]   = useState<TextExpansionEntry[]>([])
+  const expansionsRef                 = useRef<TextExpansionEntry[]>([])
+
   const editorRef = useRef<Editor | null>(null)
 
   const [activeVariable, setActiveVariable] = useState<{ name: string; pos: number } | null>(null)
@@ -159,13 +164,39 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged } =
     useDocumentSave(document.id, prefs.autoSave ? Number(prefs.autoSaveDelay) * 1000 : 0)
 
+  // Charge les préférences éditeur
   useEffect(() => {
     getSetting<EditorPrefs>('editorPrefs', DEFAULT_EDITOR_PREFS).then((p) => {
-      // Rétrocompatibilité : textExpansions peut être absent des anciennes données
-      setPrefs({ ...DEFAULT_EDITOR_PREFS, ...p, textExpansions: p.textExpansions ?? [] })
+      setPrefs(p)
       prefsLoaded.current = true
     })
   }, [])
+
+  // Charge les snippets depuis Dexie (table snippets = source de vérité)
+  useEffect(() => {
+    async function loadExpansions() {
+      try {
+        const rows = await db.table('snippets').toArray()
+        const mapped: TextExpansionEntry[] = rows.map((r: any) => ({
+          abbreviation: r.trigger,
+          expansion: r.expansion,
+        }))
+        setExpansions(mapped)
+        expansionsRef.current = mapped
+      } catch {}
+    }
+    loadExpansions()
+  }, [])
+
+  // Synchronise les expansions dans l'extension TipTap dès que la liste change
+  useEffect(() => {
+    const ed = editorRef.current
+    if (!ed) return
+    const ext = ed.extensionManager.extensions.find(e => e.name === 'textExpansion')
+    if (ext) {
+      ext.options.expansions = expansions
+    }
+  }, [expansions])
 
   useEffect(() => {
     const up   = () => setIsOnline(true)
@@ -312,9 +343,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         onVariableClick: handleVariableClick,
         HTMLAttributes: {},
       }),
-      // Extension Expansions de texte — les expansions sont injectées depuis les prefs
+      // Extension expansions de texte — lit expansionsRef pour toujours avoir la version à jour
+      // sans avoir à recréer l'éditeur.
       TextExpansion.configure({
-        expansions: prefs.textExpansions ?? [],
+        expansions: expansionsRef.current,
         triggers: [' ', 'Enter'],
       }),
     ],
@@ -331,14 +363,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
       setVariableCount(countVariables(ed))
     },
   })
-
-  // Met à jour les expansions dans l'extension quand les prefs changent
-  useEffect(() => {
-    if (!editor) return
-    editor.extensionManager.extensions
-      .find(ext => ext.name === 'textExpansion')
-      ?.configure({ expansions: prefs.textExpansions ?? [] })
-  }, [editor, prefs.textExpansions])
 
   useEffect(() => {
     editorRef.current = editor ?? null
