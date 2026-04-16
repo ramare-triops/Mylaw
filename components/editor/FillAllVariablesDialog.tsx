@@ -149,16 +149,11 @@ interface DateInputProps {
 }
 
 function DateInput({ value, onChange, onConfirm, onEscape, inputRef }: DateInputProps) {
-  // Découpe la valeur en segments (jj, mm, aaaa)
   const digits = extractDigits(value)
-  const dd   = digits.slice(0, 2).padEnd(2, ' ')
-  const mm   = digits.slice(2, 4).padEnd(2, ' ')
-  const yyyy = digits.slice(4, 8).padEnd(4, ' ')
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter')  { e.preventDefault(); onConfirm() }
     if (e.key === 'Escape') { e.preventDefault(); onEscape() }
-    // Backspace : retirer le dernier chiffre
     if (e.key === 'Backspace') {
       e.preventDefault()
       const d = extractDigits(value)
@@ -167,13 +162,10 @@ function DateInput({ value, onChange, onConfirm, onEscape, inputRef }: DateInput
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // On récupère uniquement les nouveaux chiffres saisis
     const raw = e.target.value
     const newDigits = extractDigits(raw).slice(0, 8)
     onChange(formatDateInput(newDigits))
   }
-
-  const isFull = digits.length === 8
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, position: 'relative' }}>
@@ -197,7 +189,7 @@ function DateInput({ value, onChange, onConfirm, onEscape, inputRef }: DateInput
         }}
         aria-label="Saisir une date JJ/MM/AAAA"
       />
-      {/* Affichage visuel du masque */}
+      {/* Affichage visuel du masque — pas de curseur, le placeholder suffit */}
       <span style={{
         display: 'flex',
         alignItems: 'center',
@@ -219,17 +211,6 @@ function DateInput({ value, onChange, onConfirm, onEscape, inputRef }: DateInput
         <span style={{ color: digits.length >= 7 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[6] ?? 'A'}</span>
         <span style={{ color: digits.length >= 8 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[7] ?? 'A'}</span>
       </span>
-      {/* Curseur clignotant */}
-      {!isFull && (
-        <span style={{
-          display: 'inline-block',
-          width: 1,
-          height: 13,
-          background: '#01696f',
-          marginLeft: 1,
-          animation: 'blink 1s step-end infinite',
-        }} />
-      )}
     </div>
   )
 }
@@ -241,13 +222,11 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
   const [remaining, setRemaining]   = useState(0)
   const [value, setValue]           = useState('')
   const [currentVarName, setCurrentVarName] = useState<string | null>(null)
-  // bubblePos = null uniquement avant le 1er positionnement
-  // Après, on met toujours à jour sans remettre à null → transition CSS glisse
   const [bubblePos, setBubblePos]   = useState<BubblePosition | null>(null)
   const [targetSpan, setTargetSpan] = useState<HTMLElement | null>(null)
   const inputRef  = useRef<HTMLInputElement>(null)
   const activeRef = useRef(false)
-  const isFirstRef = useRef(true)  // 1er positionnement : on attend le scroll
+  const isFirstRef = useRef(true)
 
   const isDate = isDateVariable(currentVarName)
 
@@ -256,28 +235,23 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     const span = getFirstRemainingSpan()
     if (!span || !isActive()) return
 
-    // Retirer l'ancien highlight
     window.document.querySelectorAll('[data-fill-active]')
       .forEach((el) => delete (el as HTMLElement).dataset.fillActive)
     span.dataset.fillActive = 'true'
     setTargetSpan(span)
 
-    // Récupérer le nom de la variable pour adapter le type d'input
     const varName = span.getAttribute('data-variable-name')
     setCurrentVarName(varName)
 
     if (waitScroll) {
-      // Première fois ou saut éloigné : scroll puis mesure
       await scrollToSpanAndWait(span)
       if (!isActive()) return
     }
-    // Mesurer et glisser immédiatement (la transition CSS fait le reste)
     setBubblePos(computePosition(span))
     setValue('')
     setTimeout(() => inputRef.current?.focus(), 30)
   }, [editor])
 
-  // Initialisation à l'ouverture
   useEffect(() => {
     if (!open || !editor) return
     activeRef.current = true
@@ -299,7 +273,6 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     }
   }, [open, editor, pointToFirstSpan])
 
-  // Repositionnement sur scroll / resize
   useEffect(() => {
     if (!open || !targetSpan) return
     const reposition = () => { if (activeRef.current) setBubblePos(computePosition(targetSpan)) }
@@ -312,7 +285,6 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     }
   }, [open, targetSpan])
 
-  // Nettoyage à la fermeture
   useEffect(() => {
     if (open) return
     activeRef.current = false
@@ -326,11 +298,10 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
   const handleConfirm = useCallback(async () => {
     if (!editor || !targetSpan) return
 
-    // Pour les champs date : n'accepter que si la date est complète (8 chiffres)
     let finalValue: string
     if (isDate) {
       const digits = extractDigits(value)
-      if (digits.length < 8) return  // date incomplète, on ne valide pas
+      if (digits.length < 8) return
       const formatted = formatDateInput(digits)
       finalValue = dateToText(formatted)
     } else {
@@ -347,11 +318,8 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
 
     if (newRemaining <= 0) { onClose(); return }
 
-    // Passer au suivant sans remettre bubblePos à null
-    // → la bulle glisse via transition CSS
     activeRef.current = true
     let cancelled = false
-    // Scroll uniquement si le prochain span est hors de la zone visible
     const nextSpan = getFirstRemainingSpan()
     const needsScroll = nextSpan ? (() => {
       const r = nextSpan.getBoundingClientRect()
@@ -371,10 +339,6 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
   return (
     <>
       <style>{`
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0; }
-        }
         [data-fill-active="true"] {
           outline: 2.5px solid #01696f !important;
           outline-offset: 2px !important;
@@ -399,7 +363,6 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
             pointerEvents: 'auto',
           }}
         >
-          {/* Flèche vers le haut */}
           {bubblePos.arrowSide === 'top' && (
             <svg width={ARROW_H * 2} height={ARROW_H} viewBox={`0 0 ${ARROW_H * 2} ${ARROW_H}`}
               style={{ position: 'absolute', top: -ARROW_H, left: bubblePos.arrowLeft - ARROW_H, display: 'block', overflow: 'visible', transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1)' }}
@@ -409,7 +372,6 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
             </svg>
           )}
 
-          {/* Corps */}
           <div style={{
             background: 'var(--color-surface, #fff)',
             border: '2px solid #01696f',
@@ -463,7 +425,6 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
             </button>
           </div>
 
-          {/* Flèche vers le bas */}
           {bubblePos.arrowSide === 'bottom' && (
             <svg width={ARROW_H * 2} height={ARROW_H} viewBox={`0 0 ${ARROW_H * 2} ${ARROW_H}`}
               style={{ position: 'absolute', bottom: -ARROW_H, left: bubblePos.arrowLeft - ARROW_H, display: 'block', overflow: 'visible', transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1)' }}
