@@ -122,9 +122,10 @@ const A4_STYLES = `
   [data-variable-type="default"]   { color: #6b7280; background: rgba(107,114,128,0.07); }
 `;
 
-const BUBBLE_W = 320;
+// +15% : 320 → 368, 400 → 460
+const BUBBLE_W = 368;
 const A4_W = 794;
-const A4_VISIBLE_H = 400;
+const A4_VISIBLE_H = 460;
 const SCALE = (BUBBLE_W - 32) / A4_W;
 
 export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps) {
