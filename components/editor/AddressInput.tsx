@@ -10,6 +10,7 @@
 //                       auto-sélection si 1 seul résultat filtré
 //                       tolère numéro en tête ("12 Rue...") → skip phase numéro
 //   - Phase numero     : saisie libre, confirmée par Entrée
+//   - Commune injectée en CAPITALES dans le texte final
 
 'use client'
 
@@ -57,39 +58,22 @@ const STOP_WORDS = /^(rue|avenue|allée|impasse|chemin|route|boulevard|place|dom
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Extrait le mot significatif (après le type de voie) pour la comparaison */
 function rueSignificantPart(s: string): string {
   return s.toLowerCase().replace(STOP_WORDS, '').trim()
 }
 
-/**
- * Filtre les rues dont le nom commence strictement par la requête,
- * en ignorant le type de voie (Rue, Avenue…) et les articles.
- *
- * Ex : query="paix" filtre "Rue de la Paix" et "Impasse de la Paix"
- *      query="rue de la p" filtre "Rue de la Paix" mais pas "Rue du Parvis"
- */
 function filterRues(results: Suggestion[], query: string): Suggestion[] {
   if (!query.trim()) return results
   const q = query.toLowerCase().trim()
   return results.filter(s => {
     const full = s.value.toLowerCase()
-    // Test 1 : préfixe exact sur la valeur complète ("rue de la p")
     if (full.startsWith(q)) return true
-    // Test 2 : préfixe sur la partie significative ("p" matche "paix" dans "Rue de la Paix")
     const sig = rueSignificantPart(full)
     if (sig.startsWith(q)) return true
     return false
   })
 }
 
-/**
- * Détecte si la saisie commence par un numéro.
- * Ex : "12 Rue de la Paix" → { numero: "12", rueQuery: "Rue de la Paix" }
- *      "12bis Rue"         → { numero: "12bis", rueQuery: "Rue" }
- *      "Rue de la Paix"    → { numero: "", rueQuery: "Rue de la Paix" }
- *      "12"               → { numero: "12", rueQuery: "" }
- */
 function parseRueInput(input: string): { numero: string; rueQuery: string } {
   const match = input.match(/^(\d+\s*(?:bis|ter|quater|quinquies|[a-zA-Z])?)[\s,]+(.+)$/i)
   if (match) return { numero: match[1].trim(), rueQuery: match[2].trim() }
@@ -166,13 +150,11 @@ export function AddressInput({
   const addressRef                        = useRef(address)
   useEffect(() => { addressRef.current = address }, [address])
 
-  // Notifie la hauteur du dropdown au parent
   useEffect(() => {
     if (!onDropdownHeightChange) return
     onDropdownHeightChange(suggestions.length > 0 ? suggestions.length * 32 + 8 : 0)
   }, [suggestions, onDropdownHeightChange])
 
-  // Reset quand le composant est remonté (nouveau champ)
   useEffect(() => {
     setPhase('codePostal')
     setInputValue('')
@@ -182,12 +164,16 @@ export function AddressInput({
     setSelectedIndex(-1)
   }, [])
 
-  // ── Confirmation finale ────────────────────────────────────────────────────
+  // ── Confirmation finale — commune injectée en CAPITALES ─────────────────
 
   const confirmAddress = useCallback((overrides: Partial<AddressState> = {}) => {
     const cur = { ...addressRef.current, ...overrides }
-    const finalAddress = [cur.numero, cur.rue, cur.codePostal, cur.commune]
-      .filter(Boolean).join(' ')
+    const finalAddress = [
+      cur.numero,
+      cur.rue,
+      cur.codePostal,
+      cur.commune ? cur.commune.toUpperCase() : '',
+    ].filter(Boolean).join(' ')
     onConfirm(finalAddress)
   }, [onConfirm])
 
@@ -290,18 +276,11 @@ export function AddressInput({
         addressRef.current.codePostal,
         rueQuery,
       )
-
-      // ─ Filtre strict par préfixe côté client ───────────────────────────
-      // Priorité : on affiche les résultats filtrés strictement ;
-      // si le filtre est trop restrictif (0 résultat), on affiche tout (fallback).
-      const filtered = filterRues(raw, rueQuery)
+      const filtered  = filterRues(raw, rueQuery)
       const displayed = filtered.length > 0 ? filtered : raw
-
       setSuggestions(displayed)
       setSelectedIndex(-1)
       setLoading(false)
-
-      // Auto-sélection si un seul résultat filtré strict
       if (filtered.length === 1) {
         setTimeout(() => selectSuggestion(filtered[0], 'rue', detectedNumero), 150)
       }
@@ -310,7 +289,7 @@ export function AddressInput({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inputValue, phase])
 
-  // ── advancePhase (Entrée manuelle) ─────────────────────────────────────
+  // ── advancePhase ───────────────────────────────────────────────────────────
 
   const advancePhase = useCallback(() => {
     if (phase === 'codePostal') return
@@ -390,6 +369,7 @@ export function AddressInput({
   const buildSummary = () => {
     const parts: string[] = []
     if (address.codePostal) parts.push(address.codePostal)
+    // Dans le résumé interne (non injecté), on garde la casse d'origine pour la lisibilité
     if (address.commune)    parts.push(address.commune)
     if (address.rue)        parts.push(address.rue)
     return parts.join(' · ')
