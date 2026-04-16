@@ -2,6 +2,7 @@
 // Extension TipTap : transforme [Variable] en nœuds inline cliquables
 // Supporte les attributs bold / underline / italic pour restituer le
 // formatage Markdown d'une brique (ex : **[Nom de la société]**).
+// replaceVariable conserve ces marks lors de la substitution par du texte.
 
 import { Node, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -53,9 +54,6 @@ export const VariableField = Node.create<VariableFieldOptions>({
         parseHTML: (el) => el.getAttribute('data-variable-name'),
         renderHTML: (attrs) => ({ 'data-variable-name': attrs.name }),
       },
-      // ── Attributs de formatage ──────────────────────────────────────────
-      // Stockés sur le nœud car les marks ProseMirror ne s'appliquent pas
-      // aux nœuds atom. Parsés depuis data-bold / data-underline / data-italic.
       bold: {
         default: false,
         parseHTML: (el) => el.getAttribute('data-bold') === 'true',
@@ -81,7 +79,6 @@ export const VariableField = Node.create<VariableFieldOptions>({
   renderHTML({ node, HTMLAttributes }) {
     const varType = getVariableType(node.attrs.name ?? '')
 
-    // Construit le style inline à partir des attributs de formatage
     const styleParts: string[] = []
     if (node.attrs.bold)      styleParts.push('font-weight:700')
     if (node.attrs.underline) styleParts.push('text-decoration:underline')
@@ -117,11 +114,35 @@ export const VariableField = Node.create<VariableFieldOptions>({
 
       replaceVariable:
         (pos: number, value: string) =>
-        ({ tr, dispatch }) => {
+        ({ tr, dispatch, state }) => {
           const node = tr.doc.nodeAt(pos)
           if (!node || node.type.name !== this.name) return false
           if (dispatch) {
-            tr.replaceWith(pos, pos + node.nodeSize, tr.doc.type.schema.text(value))
+            // ── Lire les attributs de formatage du nœud variable ─────────────
+            // et appliquer les marks ProseMirror correspondants sur le
+            // texte de remplacement, pour que gras/souligné/italique
+            // soient conservés après saisie.
+            const schema = state.schema
+            const marks: import('@tiptap/pm/model').Mark[] = []
+
+            if (node.attrs.bold) {
+              const m = schema.marks['bold']
+              if (m) marks.push(m.create())
+            }
+            if (node.attrs.underline) {
+              const m = schema.marks['underline']
+              if (m) marks.push(m.create())
+            }
+            if (node.attrs.italic) {
+              const m = schema.marks['italic']
+              if (m) marks.push(m.create())
+            }
+
+            const textNode = marks.length > 0
+              ? schema.text(value, marks)
+              : schema.text(value)
+
+            tr.replaceWith(pos, pos + node.nodeSize, textNode)
             dispatch(tr)
           }
           return true
