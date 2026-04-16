@@ -14,19 +14,19 @@ function getClient(): DriveClient {
 }
 
 export function useDriveSync() {
-  const [status, setStatus]       = useState<DriveStatus>('idle');
+  const [status,     setStatus]     = useState<DriveStatus>('idle');
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
-  const [error, setError]         = useState<string | null>(null);
-  const statusRef                 = useRef<DriveStatus>('idle');
-  const uploadTimer               = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const client                    = getClient();
+  const [error,      setError]      = useState<string | null>(null);
+  const statusRef    = useRef<DriveStatus>('idle');
+  const uploadTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const client       = getClient();
 
   function updateStatus(s: DriveStatus) {
     statusRef.current = s;
     setStatus(s);
   }
 
-  // ─── scheduleSync : déclenché par le middleware Dexie à chaque écriture ───
+  // ─── scheduleSync : déclenché par le middleware Dexie à chaque écriture ────
   const scheduleSync = useCallback(() => {
     const s = statusRef.current;
     if (s === 'idle' || s === 'disconnected' || s === 'loading') return;
@@ -36,6 +36,9 @@ export function useDriveSync() {
       try {
         const backup = await buildBackup();
         await client.upload(backup);
+        // ✔ Persister la date d'upload pour que l'appareil B sache
+        //   que Drive est plus récent et déclenche bien le restore.
+        await setSetting('last_synced_at', backup.exportedAt);
         setLastSynced(new Date());
         updateStatus('connected');
       } catch {
@@ -48,7 +51,7 @@ export function useDriveSync() {
     registerDriveSyncCallback(scheduleSync);
   }, [scheduleSync]);
 
-  // ─── Au démarrage : silent refresh + pull Drive ───
+  // ─── Au démarrage : silent refresh + pull Drive ────────────────────────
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -70,33 +73,37 @@ export function useDriveSync() {
     });
   }, []);
 
-  // ─── Pull Drive avec comparaison de dates ───
+  // ─── Pull Drive ────────────────────────────────────────────────────
   async function loadFromDrive() {
     updateStatus('syncing');
     try {
       const remote = await client.download();
 
       if (remote === null) {
-        // 204 : pas de fichier sur Drive, on garde Dexie intact
+        // 204 : pas de fichier sur Drive — on garde Dexie intact
         await setSetting('drive_connected', true);
         setLastSynced(new Date());
         updateStatus('connected');
         return;
       }
 
-      // Comparer avec la date du dernier sync local
       const localSyncedAt = await getSetting<string | null>('last_synced_at', null);
       const remoteDate    = remote.exportedAt ? new Date(remote.exportedAt).getTime() : 0;
       const localDate     = localSyncedAt     ? new Date(localSyncedAt).getTime()     : 0;
 
-      if (remoteDate > localDate) {
-        // Drive est plus récent : restaurer
+      // Drive prime si :
+      //  - il est plus récent que le dernier sync local (cas normal), OU
+      //  - il n'y a aucune date locale enregistrée (premier chargement sur un nouvel appareil).
+      //    Dans ce cas on restaure systématiquement depuis Drive plutôt que de rester
+      //    sur les données locales potentiellement vides ou désynchronisées.
+      const shouldRestore = !localSyncedAt || remoteDate > localDate;
+
+      if (shouldRestore) {
         setRestoreInProgress(true);
         await restoreFromBackup(remote);
         setRestoreInProgress(false);
         await setSetting('last_synced_at', remote.exportedAt);
       }
-      // Sinon : Dexie est à jour ou plus récent, on ne touche à rien
 
       await setSetting('drive_connected', true);
       setLastSynced(new Date());
@@ -107,14 +114,14 @@ export function useDriveSync() {
     }
   }
 
-  // ─── connect() ───
+  // ─── connect() ────────────────────────────────────────────────────
   const connect = useCallback(async () => {
     setError(null);
     try {
-      const verifier  = generateRandomString(64);
-      const challenge = await generateCodeChallenge(verifier);
+      const verifier    = generateRandomString(64);
+      const challenge   = await generateCodeChallenge(verifier);
       const redirectUri = `${window.location.origin}/api/drive/callback`;
-      const state     = generateRandomString(16);
+      const state       = generateRandomString(16);
 
       document.cookie = `pkce_verifier=${verifier}; path=/; max-age=300; samesite=lax`;
       document.cookie = `pkce_redirect=${encodeURIComponent(redirectUri)}; path=/; max-age=300; samesite=lax`;
@@ -162,7 +169,7 @@ export function useDriveSync() {
   return { status, lastSynced, error, connect, disconnect, syncNow, scheduleSync };
 }
 
-// ─── Helpers PKCE ───
+// ─── Helpers PKCE ──────────────────────────────────────────────────
 
 function generateRandomString(length: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -179,7 +186,7 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-// ─── Backup / Restore ───
+// ─── Backup / Restore ────────────────────────────────────────────────
 
 export async function buildBackup(): Promise<MylawBackup> {
   const [documents, folders, snippets, deadlines, templates, tools, aiChats] = await Promise.all([
