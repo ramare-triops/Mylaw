@@ -2,6 +2,8 @@
 // Bulle minimaliste : champ texte + croix uniquement.
 // La bulle se déplace via transition CSS sur top/left — elle ne disparaît jamais
 // entre deux champs, elle glisse directement vers le suivant.
+// Pour les champs de type [Date] : masque JJ/MM/AAAA avec slashes permanents,
+// auto-avancement et conversion en texte lors de la confirmation.
 
 'use client'
 
@@ -22,11 +24,53 @@ interface FillAllVariablesDialogProps {
   onClose: () => void
 }
 
-const BUBBLE_WIDTH  = 220
+const BUBBLE_WIDTH  = 240
 const BUBBLE_HEIGHT = 44
 const ARROW_H       = 8
 const GAP           = 6
 const VIEWPORT_PAD  = 12
+
+// Noms de mois en français
+const MOIS_FR = [
+  'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+  'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre',
+]
+
+/** Détermine si la variable courante est un champ de type date */
+function isDateVariable(name: string | null | undefined): boolean {
+  if (!name) return false
+  return /date/i.test(name)
+}
+
+/**
+ * Formate une chaîne de chiffres bruts (max 8 chiffres) en JJ/MM/AAAA.
+ * Ex : "0204" → "02/04", "02042026" → "02/04/2026"
+ */
+function formatDateInput(digits: string): string {
+  const d = digits.slice(0, 8)
+  if (d.length <= 2) return d
+  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`
+  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`
+}
+
+/**
+ * Convertit une date formatée JJ/MM/AAAA en texte lisible.
+ * Ex : "02/04/2026" → "02 avril 2026"
+ */
+function dateToText(formatted: string): string {
+  const match = formatted.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (!match) return formatted
+  const day   = match[1]
+  const month = parseInt(match[2], 10)
+  const year  = match[3]
+  if (month < 1 || month > 12) return formatted
+  return `${day} ${MOIS_FR[month - 1]} ${year}`
+}
+
+/** Extrait uniquement les chiffres d'une valeur formatée JJ/MM/AAAA */
+function extractDigits(value: string): string {
+  return value.replace(/\D/g, '')
+}
 
 function countVariables(editor: Editor): number {
   let count = 0
@@ -94,10 +138,109 @@ function scrollToSpanAndWait(span: HTMLElement): Promise<void> {
   })
 }
 
+// ─── Composant input date masqué ──────────────────────────────────────────────
+
+interface DateInputProps {
+  value: string            // valeur formatée : "02/04/2026" ou partielle
+  onChange: (formatted: string) => void
+  onConfirm: () => void
+  onEscape: () => void
+  inputRef: React.RefObject<HTMLInputElement | null>
+}
+
+function DateInput({ value, onChange, onConfirm, onEscape, inputRef }: DateInputProps) {
+  // Découpe la valeur en segments (jj, mm, aaaa)
+  const digits = extractDigits(value)
+  const dd   = digits.slice(0, 2).padEnd(2, ' ')
+  const mm   = digits.slice(2, 4).padEnd(2, ' ')
+  const yyyy = digits.slice(4, 8).padEnd(4, ' ')
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter')  { e.preventDefault(); onConfirm() }
+    if (e.key === 'Escape') { e.preventDefault(); onEscape() }
+    // Backspace : retirer le dernier chiffre
+    if (e.key === 'Backspace') {
+      e.preventDefault()
+      const d = extractDigits(value)
+      onChange(formatDateInput(d.slice(0, -1)))
+    }
+  }
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // On récupère uniquement les nouveaux chiffres saisis
+    const raw = e.target.value
+    const newDigits = extractDigits(raw).slice(0, 8)
+    onChange(formatDateInput(newDigits))
+  }
+
+  const isFull = digits.length === 8
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, position: 'relative' }}>
+      {/* Input caché pour capter la saisie */}
+      <input
+        ref={inputRef as React.RefObject<HTMLInputElement>}
+        type="text"
+        inputMode="numeric"
+        value={formatDateInput(extractDigits(value))}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        autoComplete="off" autoCorrect="off" spellCheck={false}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          opacity: 0,
+          width: '100%',
+          height: '100%',
+          cursor: 'text',
+          zIndex: 1,
+        }}
+        aria-label="Saisir une date JJ/MM/AAAA"
+      />
+      {/* Affichage visuel du masque */}
+      <span style={{
+        display: 'flex',
+        alignItems: 'center',
+        fontVariantNumeric: 'tabular-nums',
+        fontSize: 13,
+        letterSpacing: '0.02em',
+        userSelect: 'none',
+        pointerEvents: 'none',
+        color: 'var(--color-text, #28251d)',
+      }}>
+        <span style={{ color: digits.length >= 1 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[0] ?? 'J'}</span>
+        <span style={{ color: digits.length >= 2 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[1] ?? 'J'}</span>
+        <span style={{ color: '#28251d', fontWeight: 600 }}>/</span>
+        <span style={{ color: digits.length >= 3 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[2] ?? 'M'}</span>
+        <span style={{ color: digits.length >= 4 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[3] ?? 'M'}</span>
+        <span style={{ color: '#28251d', fontWeight: 600 }}>/</span>
+        <span style={{ color: digits.length >= 5 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[4] ?? 'A'}</span>
+        <span style={{ color: digits.length >= 6 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[5] ?? 'A'}</span>
+        <span style={{ color: digits.length >= 7 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[6] ?? 'A'}</span>
+        <span style={{ color: digits.length >= 8 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[7] ?? 'A'}</span>
+      </span>
+      {/* Curseur clignotant */}
+      {!isFull && (
+        <span style={{
+          display: 'inline-block',
+          width: 1,
+          height: 13,
+          background: '#01696f',
+          marginLeft: 1,
+          animation: 'blink 1s step-end infinite',
+        }} />
+      )}
+    </div>
+  )
+}
+
+// ─── Composant principal ──────────────────────────────────────────────────────
+
 export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariablesDialogProps) {
   const [total, setTotal]           = useState(0)
   const [remaining, setRemaining]   = useState(0)
   const [value, setValue]           = useState('')
+  const [currentVarName, setCurrentVarName] = useState<string | null>(null)
   // bubblePos = null uniquement avant le 1er positionnement
   // Après, on met toujours à jour sans remettre à null → transition CSS glisse
   const [bubblePos, setBubblePos]   = useState<BubblePosition | null>(null)
@@ -105,6 +248,8 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
   const inputRef  = useRef<HTMLInputElement>(null)
   const activeRef = useRef(false)
   const isFirstRef = useRef(true)  // 1er positionnement : on attend le scroll
+
+  const isDate = isDateVariable(currentVarName)
 
   const pointToFirstSpan = useCallback(async (isActive: () => boolean, waitScroll: boolean) => {
     if (!editor) return
@@ -116,6 +261,10 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
       .forEach((el) => delete (el as HTMLElement).dataset.fillActive)
     span.dataset.fillActive = 'true'
     setTargetSpan(span)
+
+    // Récupérer le nom de la variable pour adapter le type d'input
+    const varName = span.getAttribute('data-variable-name')
+    setCurrentVarName(varName)
 
     if (waitScroll) {
       // Première fois ou saut éloigné : scroll puis mesure
@@ -137,6 +286,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     setTotal(t)
     setRemaining(t)
     setValue('')
+    setCurrentVarName(null)
     setBubblePos(null)
     setTargetSpan(null)
     let cancelled = false
@@ -170,14 +320,27 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
       .forEach((el) => delete (el as HTMLElement).dataset.fillActive)
     setBubblePos(null)
     setTargetSpan(null)
+    setCurrentVarName(null)
   }, [open])
 
   const handleConfirm = useCallback(async () => {
-    if (!editor || !value.trim() || !targetSpan) return
+    if (!editor || !targetSpan) return
+
+    // Pour les champs date : n'accepter que si la date est complète (8 chiffres)
+    let finalValue: string
+    if (isDate) {
+      const digits = extractDigits(value)
+      if (digits.length < 8) return  // date incomplète, on ne valide pas
+      const formatted = formatDateInput(digits)
+      finalValue = dateToText(formatted)
+    } else {
+      if (!value.trim()) return
+      finalValue = value.trim()
+    }
 
     delete targetSpan.dataset.fillActive
     const pos = getPosFromSpan(editor, targetSpan)
-    if (pos !== null) editor.commands.replaceVariable(pos, value.trim())
+    if (pos !== null) editor.commands.replaceVariable(pos, finalValue)
 
     const newRemaining = remaining - 1
     setRemaining(newRemaining)
@@ -196,18 +359,22 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     })() : false
     await pointToFirstSpan(() => !cancelled && activeRef.current, needsScroll)
     return () => { cancelled = true }
-  }, [editor, value, targetSpan, remaining, onClose, pointToFirstSpan])
+  }, [editor, value, targetSpan, remaining, isDate, onClose, pointToFirstSpan])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter')  { e.preventDefault(); void handleConfirm() }
     if (e.key === 'Escape') { e.preventDefault(); onClose() }
   }
 
-    if (!open || total === 0) return null
+  if (!open || total === 0) return null
 
   return (
     <>
       <style>{`
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
         [data-fill-active="true"] {
           outline: 2.5px solid #01696f !important;
           outline-offset: 2px !important;
@@ -255,25 +422,35 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
             height: BUBBLE_HEIGHT,
             boxSizing: 'border-box',
           }}>
-            <input
-              ref={inputRef}
-              type="text"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Saisir…"
-              autoComplete="off" autoCorrect="off" spellCheck={false}
-              style={{
-                flex: 1,
-                minWidth: 0,
-                border: 'none',
-                outline: 'none',
-                background: 'transparent',
-                fontSize: 13,
-                color: 'var(--color-text, #28251d)',
-                caretColor: '#01696f',
-              }}
-            />
+            {isDate ? (
+              <DateInput
+                value={value}
+                onChange={setValue}
+                onConfirm={() => void handleConfirm()}
+                onEscape={onClose}
+                inputRef={inputRef}
+              />
+            ) : (
+              <input
+                ref={inputRef}
+                type="text"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Saisir…"
+                autoComplete="off" autoCorrect="off" spellCheck={false}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  border: 'none',
+                  outline: 'none',
+                  background: 'transparent',
+                  fontSize: 13,
+                  color: 'var(--color-text, #28251d)',
+                  caretColor: '#01696f',
+                }}
+              />
+            )}
             <span style={{ fontSize: 10, color: 'var(--color-text-muted, #9ca3af)', whiteSpace: 'nowrap', flexShrink: 0 }}>
               {total - remaining + 1}/{total}
             </span>
