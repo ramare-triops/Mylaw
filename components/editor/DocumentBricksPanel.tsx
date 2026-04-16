@@ -50,18 +50,9 @@ const ICON_OPTIONS = [
   { name: 'blocks',     label: 'Brique'     },
 ]
 
-// 10 couleurs — une seule par teinte, toutes bien contrastées
 const COLOR_OPTIONS = [
-  '#01696f', // teal
-  '#2563eb', // bleu
-  '#4f46e5', // indigo
-  '#7c3aed', // violet
-  '#be185d', // rose
-  '#dc2626', // rouge
-  '#c2410c', // orange
-  '#b45309', // ambre
-  '#15803d', // vert
-  '#374151', // gris ardoise
+  '#01696f', '#2563eb', '#4f46e5', '#7c3aed', '#be185d',
+  '#dc2626', '#c2410c', '#b45309', '#15803d', '#374151',
 ]
 
 // ─── Données par défaut ───────────────────────────────────────────────────────
@@ -120,23 +111,54 @@ const CONDITIONAL_TAGS = [
 ]
 
 // ─── Conversion brique → HTML TipTap ─────────────────────────────────────────
-// IMPORTANT : le formatage Markdown doit être appliqué EN PREMIER, avant la
-// substitution des variables en <span>. Si on faisait l'inverse, les regex
-// **...** / __...__ / _..._ ne matcheraient plus autour des balises HTML.
-
+//
+// Stratégie :
+// 1. Repérer les contextes de formatage (**bold**, __underline__, _italic_,
+//    ^^caps^^) AVANT de substituer les variables.
+// 2. Pour chaque variable trouvée dans un contexte formaté, passer les
+//    attributs data-bold / data-underline / data-italic sur le <span> afin
+//    que VariableField (atom ProseMirror) puisse les stocker et les restituer
+//    via style inline — les marks ProseMirror ne s'appliquant pas aux atoms.
+// 3. Ajouter une espace fine insécable (\u202F) avant et après chaque span
+//    variable pour éviter que deux étiquettes consécutives se collent.
+//
 export function brickContentToHtml(content: string): string {
   return content.split('\n').map(line => {
     let p = line
-    // 1. Formatage Markdown (opère sur du texte brut)
-    p = p.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    p = p.replace(/__(.+?)__/g, '<u>$1</u>')
-    p = p.replace(/(?<!_)_([^_]+)_(?!_)/g, '<em>$1</em>')
+
+    // ── 1. Majuscules ^^...^^ (pas de variable dedans en général) ──────────
     p = p.replace(/\^\^(.+?)\^\^/g, '<span style="text-transform:uppercase;font-weight:600">$1</span>')
-    // 2. Substitution des variables en spans TipTap (opère sur du HTML)
-    p = p.replace(/\[([^\]]+)\]/g, (_, name: string) => {
+
+    // ── 2. Traitement des contextes formatés contenant des variables ───────
+    // On traite chaque marqueur dans l'ordre : bold > underline > italic.
+    // Pour chaque match, on convertit les [Variables] internes en spans avec
+    // les attributs de formatage appropriés, puis on entoure le reste de
+    // texte brut du tag HTML correspondant.
+
+    type FormatSpec = { re: RegExp; tag: string; attr: string }
+    const formats: FormatSpec[] = [
+      { re: /\*\*(.+?)\*\*/gs, tag: 'strong', attr: 'data-bold="true"'      },
+      { re: /__(.+?)__/gs,      tag: 'u',      attr: 'data-underline="true"' },
+      { re: /(?<!_)_([^_]+)_(?!_)/gs, tag: 'em', attr: 'data-italic="true"'  },
+    ]
+
+    for (const { re, tag, attr } of formats) {
+      p = p.replace(re, (_match, inner: string) => {
+        // Convertit les [Variables] internes en spans avec l'attribut de format
+        const innerConverted = inner.replace(/\[([^\]]+)\]/g, (_m, name: string) => {
+          const esc = name.replace(/"/g, '&quot;')
+          return `\u202F<span data-variable-field="" data-variable-name="${esc}" ${attr}>${esc}</span>\u202F`
+        })
+        return `<${tag}>${innerConverted}</${tag}>`
+      })
+    }
+
+    // ── 3. Variables restantes (hors contexte formaté) ────────────────────
+    p = p.replace(/\[([^\]]+)\]/g, (_m, name: string) => {
       const esc = name.replace(/"/g, '&quot;')
-      return `<span data-variable-field="" data-variable-name="${esc}">${esc}</span>`
+      return `\u202F<span data-variable-field="" data-variable-name="${esc}">${esc}</span>\u202F`
     })
+
     return `<p>${p.trim() || '<br>'}</p>`
   }).join('')
 }
@@ -214,8 +236,6 @@ function BrickGroupSection({ group, onInsert, defaultOpen }: { group: BrickGroup
 // ─── SOUS-COMPOSANTS ÉDITEUR ──────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ─── Barre de formatage ───────────────────────────────────────────────────────
-
 function FormatToolbar({ onFormat }: { onFormat: (wrap: [string, string]) => void }) {
   const tools = [
     { icon: <Bold size={13} />,          title: 'Gras',       wrap: ['**', '**'] as [string,string] },
@@ -239,8 +259,6 @@ function FormatToolbar({ onFormat }: { onFormat: (wrap: [string, string]) => voi
   )
 }
 
-// ─── Aperçu rendu ─────────────────────────────────────────────────────────────
-
 function BrickPreview({ content, color }: { content: string; color: string }) {
   return (
     <div style={{ padding: '8px 12px', borderRadius: '6px', background: color + '08', border: `1px solid ${color}30`, fontSize: '11px', lineHeight: 1.6, color: 'var(--color-text)', marginTop: '8px' }}>
@@ -260,8 +278,6 @@ function BrickPreview({ content, color }: { content: string; color: string }) {
     </div>
   )
 }
-
-// ─── Color Picker compact : petit cercle + popover colonne verticale ──────────
 
 function ColorPicker({ color, onChange }: { color: string; onChange: (c: string) => void }) {
   const [open, setOpen] = useState(false)
@@ -284,32 +300,14 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
           type="button"
           onClick={() => setOpen(v => !v)}
           title="Changer la couleur"
-          style={{
-            width: '22px', height: '22px', borderRadius: '50%', background: color,
-            border: `2px solid ${color}88`,
-            outline: open ? `2px solid ${color}` : 'none',
-            outlineOffset: '2px', cursor: 'pointer', transition: 'all 0.12s', flexShrink: 0,
-          }}
+          style={{ width: '22px', height: '22px', borderRadius: '50%', background: color, border: `2px solid ${color}88`, outline: open ? `2px solid ${color}` : 'none', outlineOffset: '2px', cursor: 'pointer', transition: 'all 0.12s', flexShrink: 0 }}
         />
       </div>
       {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)',
-          zIndex: 50, background: 'var(--color-surface)', border: '1px solid var(--color-border)',
-          borderRadius: '10px', padding: '6px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-          display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center',
-        }}>
+        <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)', zIndex: 50, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '10px', padding: '6px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center' }}>
           {COLOR_OPTIONS.map(c => (
-            <button
-              key={c} type="button"
-              onClick={() => { onChange(c); setOpen(false) }}
-              title={c}
-              style={{
-                width: '18px', height: '18px', borderRadius: '50%', background: c,
-                border: `2px solid ${color === c ? c : 'transparent'}`,
-                outline: color === c ? `2px solid ${c}` : 'none', outlineOffset: '2px',
-                cursor: 'pointer', transition: 'all 0.1s', flexShrink: 0,
-              }}
+            <button key={c} type="button" onClick={() => { onChange(c); setOpen(false) }} title={c}
+              style={{ width: '18px', height: '18px', borderRadius: '50%', background: c, border: `2px solid ${color === c ? c : 'transparent'}`, outline: color === c ? `2px solid ${c}` : 'none', outlineOffset: '2px', cursor: 'pointer', transition: 'all 0.1s', flexShrink: 0 }}
             />
           ))}
         </div>
@@ -317,8 +315,6 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
     </div>
   )
 }
-
-// ─── Formulaire d'édition ─────────────────────────────────────────────────────
 
 function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
   brick: Brick
@@ -376,11 +372,8 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-
-      {/* Zone scrollable */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
 
-        {/* Icône + Nom */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{ width: '36px', height: '36px', borderRadius: 'var(--radius-md)', flexShrink: 0, background: color + '18', border: `2px solid ${color}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <BrickIcon name={icon} size={16} color={color} />
@@ -389,7 +382,6 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
             style={{ ...inp, flex: 1, fontSize: '14px', fontWeight: 600 }} />
         </div>
 
-        {/* Catégorie + Icône + Couleur sur la même ligne */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
           <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
             Catégorie
@@ -406,7 +398,6 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
           <ColorPicker color={color} onChange={setColor} />
         </div>
 
-        {/* Zone contenu */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
             <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0 }}>Contenu</p>
@@ -424,7 +415,6 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
           {showPreview && <BrickPreview content={content} color={color} />}
         </div>
 
-        {/* Variables texte */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>Variables texte</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
@@ -438,7 +428,6 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
           </div>
         </div>
 
-        {/* Variables conditionnelles */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>
             Variables conditionnelles <span style={{ textTransform: 'none', fontWeight: 400 }}>(liste déroulante)</span>
@@ -454,9 +443,8 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
           </div>
         </div>
 
-      </div>{/* fin zone scrollable */}
+      </div>
 
-      {/* Actions */}
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
         <div>
           {onDelete && (confirmDelete ? (
@@ -474,20 +462,15 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
         <div style={{ display: 'flex', gap: '8px' }}>
           <button onClick={onCancel} style={{ padding: '7px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>Annuler</button>
           <button
-            onClick={() => {
-              if (canSave) onSave({ ...brick, label: label.trim(), content: content.trim(), category, icon, color })
-            }}
+            onClick={() => { if (canSave) onSave({ ...brick, label: label.trim(), content: content.trim(), category, icon, color }) }}
             disabled={!canSave}
             style={{ padding: '7px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: canSave ? 'pointer' : 'not-allowed', opacity: canSave ? 1 : 0.5, border: 'none' }}
           >{isNew ? 'Créer' : 'Enregistrer'}</button>
         </div>
       </div>
-
     </div>
   )
 }
-
-// ─── Ligne brique dans la liste ───────────────────────────────────────────────
 
 function BrickEditorRow({ brick, onEdit, isSelected }: { brick: Brick; onEdit: () => void; isSelected: boolean }) {
   const [h, setH] = useState(false)
@@ -585,7 +568,6 @@ function BricksEditorModal({ groups, onSave, onClose }: {
 
       <div style={{ position: 'relative', zIndex: 10, width: '920px', maxWidth: 'calc(100vw - 32px)', height: '680px', maxHeight: 'calc(100vh - 48px)', borderRadius: '16px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: '0 24px 80px rgba(0,0,0,0.35)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-        {/* En-tête */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--color-primary)18', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -601,10 +583,7 @@ function BricksEditorModal({ groups, onSave, onClose }: {
           </button>
         </div>
 
-        {/* Corps */}
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-
-          {/* Colonne gauche */}
           <div style={{ width: '300px', flexShrink: 0, borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', background: 'var(--color-surface-offset)' }}>
             <div style={{ padding: '12px', borderBottom: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
               <div style={{ position: 'relative' }}>
@@ -631,7 +610,6 @@ function BricksEditorModal({ groups, onSave, onClose }: {
             </div>
           </div>
 
-          {/* Colonne droite */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {isCreating ? (
               <BrickEditorForm brick={newTpl} isNew
@@ -660,7 +638,7 @@ function BricksEditorModal({ groups, onSave, onClose }: {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ─── COMPOSANT PRINCIPAL ─────────────────────────────────────────────────────
+// ─── COMPOSANT PRINCIPAL ──────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface DocumentBricksPanelProps {

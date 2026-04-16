@@ -1,5 +1,7 @@
 // components/editor/extensions/VariableField.ts
 // Extension TipTap : transforme [Variable] en nœuds inline cliquables
+// Supporte les attributs bold / underline / italic pour restituer le
+// formatage Markdown d'une brique (ex : **[Nom de la société]**).
 
 import { Node, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -18,10 +20,6 @@ declare module '@tiptap/core' {
   }
 }
 
-/**
- * Détermine la catégorie d'une variable à partir de son nom.
- * Utilisé pour appliquer une couleur CSS via data-variable-type.
- */
 function getVariableType(name: string): string {
   const n = name.toLowerCase()
   if (/date|jour|mois|ann[eé]e|naissance|signature/.test(n)) return 'date'
@@ -55,6 +53,24 @@ export const VariableField = Node.create<VariableFieldOptions>({
         parseHTML: (el) => el.getAttribute('data-variable-name'),
         renderHTML: (attrs) => ({ 'data-variable-name': attrs.name }),
       },
+      // ── Attributs de formatage ──────────────────────────────────────────
+      // Stockés sur le nœud car les marks ProseMirror ne s'appliquent pas
+      // aux nœuds atom. Parsés depuis data-bold / data-underline / data-italic.
+      bold: {
+        default: false,
+        parseHTML: (el) => el.getAttribute('data-bold') === 'true',
+        renderHTML: (attrs) => attrs.bold ? { 'data-bold': 'true' } : {},
+      },
+      underline: {
+        default: false,
+        parseHTML: (el) => el.getAttribute('data-underline') === 'true',
+        renderHTML: (attrs) => attrs.underline ? { 'data-underline': 'true' } : {},
+      },
+      italic: {
+        default: false,
+        parseHTML: (el) => el.getAttribute('data-italic') === 'true',
+        renderHTML: (attrs) => attrs.italic ? { 'data-italic': 'true' } : {},
+      },
     }
   },
 
@@ -64,6 +80,14 @@ export const VariableField = Node.create<VariableFieldOptions>({
 
   renderHTML({ node, HTMLAttributes }) {
     const varType = getVariableType(node.attrs.name ?? '')
+
+    // Construit le style inline à partir des attributs de formatage
+    const styleParts: string[] = []
+    if (node.attrs.bold)      styleParts.push('font-weight:700')
+    if (node.attrs.underline) styleParts.push('text-decoration:underline')
+    if (node.attrs.italic)    styleParts.push('font-style:italic')
+    const style = styleParts.length ? styleParts.join(';') : undefined
+
     return [
       'span',
       mergeAttributes(
@@ -71,6 +95,7 @@ export const VariableField = Node.create<VariableFieldOptions>({
           'data-variable-field': '',
           'data-variable-name': node.attrs.name,
           'data-variable-type': varType,
+          ...(style ? { style } : {}),
         },
         this.options.HTMLAttributes,
         HTMLAttributes,
