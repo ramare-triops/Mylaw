@@ -40,7 +40,7 @@ import { VariableField } from './extensions/VariableField'
 import { TextExpansion } from './extensions/TextExpansion'
 import { VariablePopup } from './VariablePopup'
 import { FillAllVariablesDialog } from './FillAllVariablesDialog'
-import { DocumentBricksPanel, DRAG_BRICK_KEY } from './DocumentBricksPanel'
+import { DocumentBricksPanel, DRAG_BRICK_KEY, brickContentToHtml } from './DocumentBricksPanel'
 import type { Brick } from './DocumentBricksPanel'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
 import { getSetting, db } from '@/lib/db'
@@ -91,20 +91,6 @@ function countVariables(editor: Editor): number {
     if (node.type.name === 'variableField') count++
   })
   return count
-}
-
-/** Convertit le contenu d'une brique (avec [Variables]) en HTML insérable */
-function brickContentToHtml(content: string): string {
-  // Chaque variable [Nom] devient un span data-variable-field
-  const withVars = content.replace(/\[([^\]]+)\]/g, (_, name: string) => {
-    const escaped = name.replace(/"/g, '&quot;')
-    return `<span data-variable-field="" data-variable-name="${escaped}">${escaped}</span>`
-  })
-  // Retours à la ligne => paragraphes
-  return withVars
-    .split('\n')
-    .map((line) => `<p>${line.trim() || '<br>'}</p>`)
-    .join('')
 }
 
 function CloseDialog({
@@ -319,11 +305,11 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   }, [])
 
   // ── Insertion d'une brique au curseur ─────────────────────────────────────
-  const handleInsertBrick = useCallback((brickContent: string) => {
+  // brickContentToHtml est importé depuis DocumentBricksPanel (gère Markdown + variables)
+  const handleInsertBrick = useCallback((brickHtml: string) => {
     const ed = editorRef.current
     if (!ed) return
-    const html = brickContentToHtml(brickContent)
-    ed.chain().focus().insertContent(html).run()
+    ed.chain().focus().insertContent(brickHtml).run()
     setTimeout(() => {
       const c = editorRef.current ? countVariables(editorRef.current) : 0
       setVariableCount(c)
