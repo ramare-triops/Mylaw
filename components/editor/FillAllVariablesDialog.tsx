@@ -4,6 +4,8 @@
 // entre deux champs, elle glisse directement vers le suivant.
 // Pour les champs de type [Date] : masque JJ/MM/AAAA avec slashes permanents,
 // auto-avancement et conversion en texte lors de la confirmation.
+// Pour les champs de type [Adresse] : autocomplétion BAN en 4 phases
+// (code postal → commune → rue → numéro)
 //
 // Navigation clavier :
 //   Entrée        → confirme la saisie et passe à la suivante
@@ -17,6 +19,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { X } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
+import { AddressInput } from './AddressInput'
 
 interface BubblePosition {
   top: number
@@ -31,11 +34,13 @@ interface FillAllVariablesDialogProps {
   onClose: () => void
 }
 
-const BUBBLE_WIDTH  = 240
-const BUBBLE_HEIGHT = 44
-const ARROW_H       = 8
-const GAP           = 6
-const VIEWPORT_PAD  = 12
+const BUBBLE_WIDTH         = 240
+const BUBBLE_WIDTH_ADDRESS = 320
+const BUBBLE_HEIGHT        = 60  // légèrement plus haut pour accueillir les phases adresse
+const BUBBLE_HEIGHT_BASE   = 44
+const ARROW_H              = 8
+const GAP                  = 6
+const VIEWPORT_PAD         = 12
 
 // Noms de mois en français
 const MOIS_FR = [
@@ -49,9 +54,14 @@ function isDateVariable(name: string | null | undefined): boolean {
   return /date/i.test(name)
 }
 
+/** Détermine si la variable courante est un champ d'adresse postale */
+function isAddressVariable(name: string | null | undefined): boolean {
+  if (!name) return false
+  return /adresse|address/i.test(name)
+}
+
 /**
  * Formate une chaîne de chiffres bruts (max 8 chiffres) en JJ/MM/AAAA.
- * Ex : "0204" → "02/04", "02042026" → "02/04/2026"
  */
 function formatDateInput(digits: string): string {
   const d = digits.slice(0, 8)
@@ -62,7 +72,6 @@ function formatDateInput(digits: string): string {
 
 /**
  * Convertit une date formatée JJ/MM/AAAA en texte lisible.
- * Ex : "02/04/2026" → "02 avril 2026"
  */
 function dateToText(formatted: string): string {
   const match = formatted.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
@@ -115,16 +124,22 @@ function getPosFromSpan(editor: Editor, span: HTMLElement): number | null {
   } catch { return null }
 }
 
-function computePosition(span: HTMLElement): BubblePosition {
+function computePosition(
+  span: HTMLElement,
+  bubbleWidth: number,
+  bubbleHeight: number,
+  dropdownHeight = 0,
+): BubblePosition {
   const rect = span.getBoundingClientRect()
   const vw   = window.innerWidth
   const vh   = window.innerHeight
-  const idealLeft = rect.left + rect.width / 2 - BUBBLE_WIDTH / 2
-  const left      = Math.max(VIEWPORT_PAD, Math.min(idealLeft, vw - BUBBLE_WIDTH - VIEWPORT_PAD))
-  const arrowLeft = Math.max(12, Math.min(rect.left + rect.width / 2 - left, BUBBLE_WIDTH - 12))
-  const canGoBelow = vh - rect.bottom - GAP >= BUBBLE_HEIGHT + ARROW_H + 4
+  const totalHeight = bubbleHeight + ARROW_H + dropdownHeight
+  const idealLeft = rect.left + rect.width / 2 - bubbleWidth / 2
+  const left      = Math.max(VIEWPORT_PAD, Math.min(idealLeft, vw - bubbleWidth - VIEWPORT_PAD))
+  const arrowLeft = Math.max(12, Math.min(rect.left + rect.width / 2 - left, bubbleWidth - 12))
+  const canGoBelow = vh - rect.bottom - GAP >= totalHeight + 4
   if (canGoBelow) return { top: rect.bottom + GAP, left, arrowLeft, arrowSide: 'top' }
-  return { top: rect.top - GAP - ARROW_H - BUBBLE_HEIGHT, left, arrowLeft, arrowSide: 'bottom' }
+  return { top: rect.top - GAP - ARROW_H - bubbleHeight, left, arrowLeft, arrowSide: 'bottom' }
 }
 
 function scrollToSpanAndWait(span: HTMLElement): Promise<void> {
@@ -153,7 +168,7 @@ function scrollToSpanAndWait(span: HTMLElement): Promise<void> {
 // ─── Composant input date masqué ──────────────────────────────────────────────
 
 interface DateInputProps {
-  value: string            // valeur formatée : "02/04/2026" ou partielle
+  value: string
   onChange: (formatted: string) => void
   onConfirm: () => void
   onEscape: () => void
@@ -190,7 +205,6 @@ function DateInput({ value, onChange, onConfirm, onEscape, onSkipNext, onSkipPre
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, position: 'relative' }}>
-      {/* Input caché pour capter la saisie */}
       <input
         ref={inputRef as React.RefObject<HTMLInputElement>}
         type="text"
@@ -210,7 +224,6 @@ function DateInput({ value, onChange, onConfirm, onEscape, onSkipNext, onSkipPre
         }}
         aria-label="Saisir une date JJ/MM/AAAA"
       />
-      {/* Affichage visuel du masque — pas de curseur, le placeholder suffit */}
       <span style={{
         display: 'flex',
         alignItems: 'center',
@@ -245,13 +258,19 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
   const [currentVarName, setCurrentVarName] = useState<string | null>(null)
   const [bubblePos, setBubblePos]   = useState<BubblePosition | null>(null)
   const [targetSpan, setTargetSpan] = useState<HTMLElement | null>(null)
+  const [dropdownHeight, setDropdownHeight] = useState(0)
   const inputRef    = useRef<HTMLInputElement>(null)
   const activeRef   = useRef(false)
   const isFirstRef  = useRef(true)
-  // Index de navigation dans la liste des spans restantes (pour flèches / TAB)
   const navIndexRef = useRef(0)
+  // Clé pour forcer le remontage de AddressInput entre deux champs adresse
+  const [addressKey, setAddressKey] = useState(0)
 
-  const isDate = isDateVariable(currentVarName)
+  const isDate    = isDateVariable(currentVarName)
+  const isAddress = isAddressVariable(currentVarName)
+
+  const currentBubbleWidth  = isAddress ? BUBBLE_WIDTH_ADDRESS : BUBBLE_WIDTH
+  const currentBubbleHeight = isAddress ? BUBBLE_HEIGHT : BUBBLE_HEIGHT_BASE
 
   /** Pointe vers la span à l'index donné parmi les spans restantes */
   const pointToSpanAtIndex = useCallback(async (
@@ -271,15 +290,18 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
       .forEach((el) => delete (el as HTMLElement).dataset.fillActive)
     span.dataset.fillActive = 'true'
     setTargetSpan(span)
+    setDropdownHeight(0)
 
     const varName = span.getAttribute('data-variable-name')
     setCurrentVarName(varName)
+    // Incrémenter la clé pour forcer le remontage de AddressInput
+    setAddressKey(k => k + 1)
 
     if (waitScroll) {
       await scrollToSpanAndWait(span)
       if (!isActive()) return
     }
-    setBubblePos(computePosition(span))
+    setBubblePos(computePosition(span, isAddressVariable(varName) ? BUBBLE_WIDTH_ADDRESS : BUBBLE_WIDTH, isAddressVariable(varName) ? BUBBLE_HEIGHT : BUBBLE_HEIGHT_BASE, 0))
     setValue('')
     setTimeout(() => inputRef.current?.focus(), 30)
   }, [editor])
@@ -288,6 +310,13 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     navIndexRef.current = 0
     await pointToSpanAtIndex(0, isActive, waitScroll)
   }, [pointToSpanAtIndex])
+
+  // Recompute position when dropdown opens/closes for address fields
+  useEffect(() => {
+    if (!targetSpan || !isAddress) return
+    setBubblePos(computePosition(targetSpan, currentBubbleWidth, currentBubbleHeight, dropdownHeight))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dropdownHeight, isAddress])
 
   useEffect(() => {
     if (!open || !editor) return
@@ -301,6 +330,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     setCurrentVarName(null)
     setBubblePos(null)
     setTargetSpan(null)
+    setDropdownHeight(0)
     let cancelled = false
     void pointToFirstSpan(() => !cancelled && activeRef.current, true)
     return () => {
@@ -313,7 +343,10 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
 
   useEffect(() => {
     if (!open || !targetSpan) return
-    const reposition = () => { if (activeRef.current) setBubblePos(computePosition(targetSpan)) }
+    const reposition = () => {
+      if (activeRef.current)
+        setBubblePos(computePosition(targetSpan, currentBubbleWidth, currentBubbleHeight, dropdownHeight))
+    }
     const container = targetSpan.closest('.overflow-y-auto')
     container?.addEventListener('scroll', reposition, { passive: true })
     window.addEventListener('resize', reposition, { passive: true })
@@ -321,7 +354,8 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
       container?.removeEventListener('scroll', reposition)
       window.removeEventListener('resize', reposition)
     }
-  }, [open, targetSpan])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, targetSpan, currentBubbleWidth, currentBubbleHeight])
 
   useEffect(() => {
     if (open) return
@@ -331,6 +365,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     setBubblePos(null)
     setTargetSpan(null)
     setCurrentVarName(null)
+    setDropdownHeight(0)
   }, [open])
 
   const handleConfirm = useCallback(async () => {
@@ -358,7 +393,6 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
 
     activeRef.current = true
     let cancelled = false
-    // Après confirmation, on repositionne l'index à 0 (première restante)
     navIndexRef.current = 0
     const nextSpan = getFirstRemainingSpan()
     const needsScroll = nextSpan ? (() => {
@@ -369,7 +403,30 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     return () => { cancelled = true }
   }, [editor, value, targetSpan, remaining, isDate, onClose, pointToFirstSpan])
 
-  /** Skip vers l'étiquette suivante sans renseigner */
+  /** Confirme depuis AddressInput (reçoit la valeur finale construite) */
+  const handleAddressConfirm = useCallback(async (address: string) => {
+    if (!editor || !targetSpan) return
+    delete targetSpan.dataset.fillActive
+    const pos = getPosFromSpan(editor, targetSpan)
+    if (pos !== null) editor.commands.replaceVariable(pos, address)
+
+    const newRemaining = remaining - 1
+    setRemaining(newRemaining)
+
+    if (newRemaining <= 0) { onClose(); return }
+
+    activeRef.current = true
+    let cancelled = false
+    navIndexRef.current = 0
+    const nextSpan = getFirstRemainingSpan()
+    const needsScroll = nextSpan ? (() => {
+      const r = nextSpan.getBoundingClientRect()
+      return r.top < 80 || r.bottom > window.innerHeight - 80
+    })() : false
+    await pointToFirstSpan(() => !cancelled && activeRef.current, needsScroll)
+    return () => { cancelled = true }
+  }, [editor, targetSpan, remaining, onClose, pointToFirstSpan])
+
   const handleSkipNext = useCallback(async () => {
     if (!editor) return
     const spans = getAllRemainingSpans()
@@ -385,7 +442,6 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     return () => { cancelled = true }
   }, [editor, pointToSpanAtIndex])
 
-  /** Revient à l'étiquette précédente sans renseigner */
   const handleSkipPrev = useCallback(async () => {
     if (!editor) return
     const spans = getAllRemainingSpans()
@@ -425,7 +481,8 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
         }
         .fill-bubble {
           transition: top 0.22s cubic-bezier(0.4,0,0.2,1),
-                      left 0.22s cubic-bezier(0.4,0,0.2,1);
+                      left 0.22s cubic-bezier(0.4,0,0.2,1),
+                      width 0.18s cubic-bezier(0.4,0,0.2,1);
         }
       `}</style>
 
@@ -437,7 +494,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
             position: 'fixed',
             top:    bubblePos.top,
             left:   bubblePos.left,
-            width:  BUBBLE_WIDTH,
+            width:  currentBubbleWidth,
             zIndex: 9999,
             pointerEvents: 'auto',
           }}
@@ -456,11 +513,11 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
             border: '2px solid #01696f',
             borderRadius: 10,
             boxShadow: '0 4px 20px rgba(1,105,111,0.20), 0 1px 6px rgba(0,0,0,0.10)',
-            padding: '6px 10px',
+            padding: isAddress ? '8px 10px' : '6px 10px',
             display: 'flex',
-            alignItems: 'center',
+            alignItems: isAddress ? 'flex-start' : 'center',
             gap: 6,
-            height: BUBBLE_HEIGHT,
+            minHeight: currentBubbleHeight,
             boxSizing: 'border-box',
           }}>
             {isDate ? (
@@ -472,6 +529,16 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
                 onSkipNext={() => void handleSkipNext()}
                 onSkipPrev={() => void handleSkipPrev()}
                 inputRef={inputRef}
+              />
+            ) : isAddress ? (
+              <AddressInput
+                key={addressKey}
+                onConfirm={(addr) => void handleAddressConfirm(addr)}
+                onEscape={onClose}
+                onSkipNext={() => void handleSkipNext()}
+                onSkipPrev={() => void handleSkipPrev()}
+                inputRef={inputRef}
+                onDropdownHeightChange={setDropdownHeight}
               />
             ) : (
               <input
@@ -494,11 +561,11 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
                 }}
               />
             )}
-            <span style={{ fontSize: 10, color: 'var(--color-text-muted, #9ca3af)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            <span style={{ fontSize: 10, color: 'var(--color-text-muted, #9ca3af)', whiteSpace: 'nowrap', flexShrink: 0, marginTop: isAddress ? 4 : 0 }}>
               {total - remaining + 1}/{total}
             </span>
             <button type="button" onClick={onClose} aria-label="Fermer"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-text-muted, #9ca3af)', flexShrink: 0, padding: 0 }}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 4, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-text-muted, #9ca3af)', flexShrink: 0, padding: 0, marginTop: isAddress ? 2 : 0 }}
               onMouseEnter={(e) => (e.currentTarget.style.color = '#01696f')}
               onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-text-muted, #9ca3af)')}
             >
