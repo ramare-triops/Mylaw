@@ -6,20 +6,18 @@ import {
   Blocks, Plus, Trash2, Tag, User, Building2,
   Scale, ChevronDown, ChevronRight, Gavel, AlignLeft, FileText,
   Users, Briefcase, X, Check, Pencil, Settings2, Search,
-  Bold, Underline, Italic, CaseSensitive, ListFilter,
+  Bold, Underline, Italic, CaseSensitive, ListFilter, FolderPlus,
 } from 'lucide-react'
 import { db, getSetting, setSetting } from '@/lib/db'
-import type { Brick as DBBrick } from '@/types'
+import type { Brick as DBBrick, InfoLabel } from '@/types'
 
-// ─── Types locaux (UI) ────────────────────────────────────────────────────────
-// On conserve la forme exacte de l’UI existante (id string, icon, color…)
-// mais on s’appuie sur Dexie comme source de vérité.
+// ─── Types UI ────────────────────────────────────────────────────────────────
 
 export interface Brick {
   id: string
   label: string
   content: string
-  category: string
+  category: string   // id de la catégorie (système ou custom)
   icon: string
   color: string
 }
@@ -30,11 +28,13 @@ export interface BrickGroup {
   color: string
   iconName: string
   bricks: Brick[]
+  isCustomCategory?: boolean   // true = catégorie créée par l'utilisateur
 }
 
 export const DRAG_BRICK_KEY = 'application/x-mylaw-brick'
 
-const ALL_CATEGORIES = [
+// Catégories système (non supprimables)
+const SYSTEM_CATEGORIES = [
   { id: 'parties',   label: 'Parties',       color: '#01696f' },
   { id: 'structure', label: 'Structure',      color: '#4f46e5' },
   { id: 'formules',  label: 'Formules types', color: '#15803d' },
@@ -59,104 +59,78 @@ const COLOR_OPTIONS = [
   '#dc2626', '#c2410c', '#b45309', '#15803d', '#374151',
 ]
 
-// ─── Briques pré-installées (seed) ──────────────────────────────────────────
-// Injectées une seule fois en base au premier démarrage.
+// ─── Briques pré-installées (seed) ───────────────────────────────────────────
 
 const SEED_BRICKS: Omit<DBBrick, 'id'>[] = [
-  // Parties
-  { title: 'Personne physique', content: '[M/Mme] **[Nom] [Prénom]**, [né/née] le [Date de naissance] à [Lieu de naissance], de nationalité [Nationalité], demeurant au [Adresse]', category: 'clause', tags: ['parties', 'personne', 'physique'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Personne morale', content: 'La société **[Nom de la société]**, [Forme juridique] au capital de [Capital social] euros, immatriculée au RCS de [Ville RCS] sous le numéro [Numéro RCS], dont le siège social est sis [Adresse du siège], représentée par [Représentant légal], en sa qualité de [Qualité du représentant]', category: 'clause', tags: ['parties', 'personne', 'morale', 'société'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Ayant pour avocat', content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]", category: 'clause', tags: ['parties', 'avocat', 'barreau'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Représentant / mandataire', content: "Représenté(e) par **[Nom du mandataire]**, [Qualité], en vertu d'un pouvoir en date du [Date du pouvoir]", category: 'clause', tags: ['parties', 'mandataire', 'représentant'], createdAt: new Date(), updatedAt: new Date() },
-  // Structure
-  { title: 'Faits et procédure', content: '^^FAITS ET PROCÉDURE^^', category: 'introduction', tags: ['structure', 'faits'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Plaise au Tribunal', content: '^^PLAISE AU TRIBUNAL DE [Nom du tribunal]^^', category: 'introduction', tags: ['structure', 'tribunal'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Par ces motifs', content: '^^PAR CES MOTIFS^^', category: 'dispositif', tags: ['structure', 'motifs'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Discussion', content: '^^DISCUSSION^^', category: 'motivation', tags: ['structure', 'discussion'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'En droit', content: '^^EN DROIT^^', category: 'motivation', tags: ['structure', 'droit'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'En fait', content: '^^EN FAIT^^', category: 'motivation', tags: ['structure', 'fait'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Demandes', content: '^^DEMANDES^^', category: 'dispositif', tags: ['structure', 'demandes'], createdAt: new Date(), updatedAt: new Date() },
-  // Formules
-  { title: 'Entre les soussignés', content: '^^ENTRE LES SOUSSIGNÉS :^^', category: 'formule', tags: ['formules', 'soussignés'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Il a été convenu', content: '^^IL A ÉTÉ CONVENU ET ARRÊTÉ CE QUI SUIT :^^', category: 'formule', tags: ['formules', 'convenu'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Fait à…', content: 'Fait à [Lieu], le [Date], en [Nombre] exemplaire(s) originaux.', category: 'formule', tags: ['formules', 'signature', 'lieu'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Bloc signature', content: 'Pour [Partie 1]\n[Nom et signature]\n\nPour [Partie 2]\n[Nom et signature]', category: 'formule', tags: ['formules', 'signature'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Personne physique', content: '[M/Mme] **[Nom] [Prénom]**, [né/née] le [Date de naissance] à [Lieu de naissance], de nationalité [Nationalité], demeurant au [Adresse]', category: 'clause', tags: ['parties', 'user', '#01696f'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Personne morale', content: 'La société **[Nom de la société]**, [Forme juridique] au capital de [Capital social] euros, immatriculée au RCS de [Ville RCS] sous le numéro [Numéro RCS], dont le siège social est sis [Adresse du siège], représentée par [Représentant légal], en sa qualité de [Qualité du représentant]', category: 'clause', tags: ['parties', 'building', '#7c3aed'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Ayant pour avocat', content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]", category: 'clause', tags: ['parties', 'scale', '#be185d'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Représentant / mandataire', content: "Représenté(e) par **[Nom du mandataire]**, [Qualité], en vertu d'un pouvoir en date du [Date du pouvoir]", category: 'clause', tags: ['parties', 'briefcase', '#c2410c'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Faits et procédure', content: '^^FAITS ET PROCÉDURE^^', category: 'introduction', tags: ['structure', 'file-text', '#4f46e5'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Plaise au Tribunal', content: '^^PLAISE AU TRIBUNAL DE [Nom du tribunal]^^', category: 'introduction', tags: ['structure', 'gavel', '#4f46e5'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Par ces motifs', content: '^^PAR CES MOTIFS^^', category: 'dispositif', tags: ['structure', 'gavel', '#4f46e5'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Discussion', content: '^^DISCUSSION^^', category: 'motivation', tags: ['structure', 'align-left', '#4f46e5'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'En droit', content: '^^EN DROIT^^', category: 'motivation', tags: ['structure', 'scale', '#4f46e5'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'En fait', content: '^^EN FAIT^^', category: 'motivation', tags: ['structure', 'file-text', '#4f46e5'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Demandes', content: '^^DEMANDES^^', category: 'dispositif', tags: ['structure', 'gavel', '#4f46e5'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Entre les soussignés', content: '^^ENTRE LES SOUSSIGNÉS :^^', category: 'formule', tags: ['formules', 'users', '#15803d'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Il a été convenu', content: '^^IL A ÉTÉ CONVENU ET ARRÊTÉ CE QUI SUIT :^^', category: 'formule', tags: ['formules', 'check', '#15803d'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Fait à…', content: 'Fait à [Lieu], le [Date], en [Nombre] exemplaire(s) originaux.', category: 'formule', tags: ['formules', 'file-text', '#15803d'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Bloc signature', content: 'Pour [Partie 1]\n[Nom et signature]\n\nPour [Partie 2]\n[Nom et signature]', category: 'formule', tags: ['formules', 'check', '#15803d'], createdAt: new Date(), updatedAt: new Date() },
 ]
 
-// ─── Mappage DBBrick → UI Brick ─────────────────────────────────────────────
-// La DB stocke une catégorie typologique (clause, introduction…) et des tags.
-// L’UI les répartit en groupes visuels (parties, structure, formules, custom).
-// On retrouve le groupe via un tag spécial stocké dans tags[0].
-
-const DB_CAT_TO_UI_GROUP: Record<string, string> = {
-  clause: 'parties',
-  introduction: 'structure',
-  motivation: 'structure',
-  dispositif: 'structure',
-  conclusion: 'structure',
-  formule: 'formules',
-  other: 'custom',
-}
+// ─── Helpers de conversion DB ↔ UI ───────────────────────────────────────────
 
 function dbBrickToUI(b: DBBrick & { id: number }): Brick {
-  // Le groupe UI est encodé dans tags[0] si présent et correspond à un groupe connu,
-  // sinon on le déduit de la catégorie DB.
-  const tagGroup = ALL_CATEGORIES.find(c => b.tags[0] === c.id)?.id
-  const uiCategory = tagGroup ?? DB_CAT_TO_UI_GROUP[b.category] ?? 'custom'
-  // L’icône et la couleur sont stockées en tags[1] et tags[2] si éditées par l’UI.
-  const icon  = b.tags[1] ?? 'file-text'
-  const color = b.tags[2] ?? ALL_CATEGORIES.find(c => c.id === uiCategory)?.color ?? '#6b7280'
-  return {
-    id: String(b.id),
-    label: b.title,
-    content: b.content,
-    category: uiCategory,
-    icon,
-    color,
-  }
+  const uiCategory = b.tags[0] ?? 'custom'
+  const icon       = b.tags[1] ?? 'file-text'
+  const color      = b.tags[2] ?? SYSTEM_CATEGORIES.find(c => c.id === uiCategory)?.color ?? '#6b7280'
+  return { id: String(b.id), label: b.title, content: b.content, category: uiCategory, icon, color }
 }
 
-function uiBrickToDB(b: Brick, existing?: DBBrick): DBBrick {
-  const now = new Date()
-  // On encode le groupe UI en tags[0], l’icône en tags[1], la couleur en tags[2]
-  const tags = [b.category, b.icon, b.color]
-  const dbCat = (['clause','introduction','motivation','dispositif','conclusion','formule','other'] as const).includes(
-    existing?.category as any
-  ) ? existing!.category : 'other'
-  return {
-    ...(existing ?? {}),
-    title: b.label,
-    content: b.content,
-    category: dbCat as DBBrick['category'],
-    tags,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  }
-}
-
-// Convertit les briques DB en groupes UI
-function bricksToGroups(bricks: (DBBrick & { id: number })[]): BrickGroup[] {
+function bricksToGroups(
+  bricks: (DBBrick & { id: number })[],
+  allCategories: CategoryDef[],
+): BrickGroup[] {
+  const catMap = new Map(allCategories.map(c => [c.id, c]))
   const groupMap = new Map<string, BrickGroup>()
+
   for (const b of bricks) {
-    const ui = dbBrickToUI(b)
+    const ui  = dbBrickToUI(b)
+    const cat = catMap.get(ui.category)
     if (!groupMap.has(ui.category)) {
-      const cat = ALL_CATEGORIES.find(c => c.id === ui.category)
       groupMap.set(ui.category, {
-        id: ui.category,
-        label: cat?.label ?? 'Mes briques',
-        color: cat?.color ?? '#6b7280',
-        iconName: ui.category === 'parties' ? 'users' : ui.category === 'structure' ? 'align-left' : ui.category === 'formules' ? 'file-text' : 'blocks',
-        bricks: [],
+        id:       ui.category,
+        label:    cat?.label ?? ui.category,
+        color:    cat?.color ?? '#6b7280',
+        iconName: cat?.iconName ?? 'blocks',
+        bricks:   [],
+        isCustomCategory: cat?.isCustomCategory,
       })
     }
     groupMap.get(ui.category)!.bricks.push(ui)
   }
-  // Ordre fixe des groupes
-  const order = ['parties', 'structure', 'formules', 'custom']
-  return order.map(id => groupMap.get(id)).filter(Boolean) as BrickGroup[]
+
+  // Ordre : système d'abord (dans l'ordre SYSTEM_CATEGORIES), puis custom créées par l'utilisateur
+  const systemOrder = SYSTEM_CATEGORIES.map(c => c.id)
+  const customCatIds = allCategories.filter(c => c.isCustomCategory).map(c => c.id)
+  return [...systemOrder, ...customCatIds]
+    .map(id => groupMap.get(id))
+    .filter(Boolean) as BrickGroup[]
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Types internes ───────────────────────────────────────────────────────────
+
+interface CategoryDef {
+  id: string
+  label: string
+  color: string
+  iconName: string
+  isCustomCategory?: boolean
+  dbId?: number   // id dans infoLabels (uniquement pour les catégories custom)
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function generateId() { return Math.random().toString(36).slice(2, 9) }
 
@@ -209,7 +183,7 @@ export function brickContentToHtml(content: string): string {
   }).join('')
 }
 
-// ─── Icône ────────────────────────────────────────────────────────────────────
+// ─── BrickIcon ────────────────────────────────────────────────────────────────
 
 function BrickIcon({ name, size = 11, color }: { name: string; size?: number; color?: string }) {
   const s = { color: color ?? 'currentColor', flexShrink: 0 as const }
@@ -227,7 +201,7 @@ function BrickIcon({ name, size = 11, color }: { name: string; size?: number; co
   }
 }
 
-// ─── Chip brique ─────────────────────────────────────────────────────────────
+// ─── BrickChip ────────────────────────────────────────────────────────────────
 
 function BrickChip({ brick, onInsert }: { brick: Brick; onInsert: () => void }) {
   const [hovered, setHovered] = useState(false)
@@ -255,7 +229,7 @@ function BrickChip({ brick, onInsert }: { brick: Brick; onInsert: () => void }) 
   )
 }
 
-// ─── Groupe accordéon ─────────────────────────────────────────────────────────
+// ─── BrickGroupSection ────────────────────────────────────────────────────────
 
 function BrickGroupSection({ group, onInsert, defaultOpen }: { group: BrickGroup; onInsert: (b: Brick) => void; defaultOpen: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -278,9 +252,7 @@ function BrickGroupSection({ group, onInsert, defaultOpen }: { group: BrickGroup
   )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ─── SOUS-COMPOSANTS ÉDITEUR ──────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── FormatToolbar ────────────────────────────────────────────────────────────
 
 function FormatToolbar({ onFormat }: { onFormat: (wrap: [string, string]) => void }) {
   const tools = [
@@ -305,6 +277,8 @@ function FormatToolbar({ onFormat }: { onFormat: (wrap: [string, string]) => voi
   )
 }
 
+// ─── BrickPreview ─────────────────────────────────────────────────────────────
+
 function BrickPreview({ content, color }: { content: string; color: string }) {
   return (
     <div style={{ padding: '8px 12px', borderRadius: '6px', background: color + '08', border: `1px solid ${color}30`, fontSize: '11px', lineHeight: 1.6, color: 'var(--color-text)', marginTop: '8px' }}>
@@ -325,10 +299,11 @@ function BrickPreview({ content, color }: { content: string; color: string }) {
   )
 }
 
+// ─── ColorPicker ──────────────────────────────────────────────────────────────
+
 function ColorPicker({ color, onChange }: { color: string; onChange: (c: string) => void }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-
   useEffect(() => {
     if (!open) return
     function onDown(e: MouseEvent) {
@@ -337,15 +312,11 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
-
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', gap: '4px' }}>
       <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Couleur</span>
       <div style={{ display: 'flex', alignItems: 'center', height: '31px' }}>
-        <button
-          type="button"
-          onClick={() => setOpen(v => !v)}
-          title="Changer la couleur"
+        <button type="button" onClick={() => setOpen(v => !v)} title="Changer la couleur"
           style={{ width: '22px', height: '22px', borderRadius: '50%', background: color, border: `2px solid ${color}88`, outline: open ? `2px solid ${color}` : 'none', outlineOffset: '2px', cursor: 'pointer', transition: 'all 0.12s', flexShrink: 0 }}
         />
       </div>
@@ -362,14 +333,12 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
   )
 }
 
-// ─── Gestionnaire de variables ────────────────────────────────────────────────
+// ─── VariableManager ─────────────────────────────────────────────────────────
 
 interface TextVar { id: string; name: string }
 interface CondVar { id: string; label: string; value: string }
 
-function VariableManager({
-  textVars, condVars, onChangeTextVars, onChangeCondVars, onInsertTag,
-}: {
+function VariableManager({ textVars, condVars, onChangeTextVars, onChangeCondVars, onInsertTag }: {
   textVars: TextVar[]
   condVars: CondVar[]
   onChangeTextVars: (v: TextVar[]) => void
@@ -387,38 +356,15 @@ function VariableManager({
   const [newCondLabel, setNewCondLabel] = useState('')
   const [newCondValue, setNewCondValue] = useState('')
 
-  function switchMode(m: Mode) {
-    setMode(prev => prev === m ? null : m)
-    setEditingTextId(null)
-    setEditingCondId(null)
-  }
-
-  function addTextVar() {
-    const name = newTextName.trim(); if (!name) return
-    onChangeTextVars([...textVars, { id: generateId(), name }])
-    setNewTextName('')
-  }
+  function switchMode(m: Mode) { setMode(prev => prev === m ? null : m); setEditingTextId(null); setEditingCondId(null) }
+  function addTextVar() { const name = newTextName.trim(); if (!name) return; onChangeTextVars([...textVars, { id: generateId(), name }]); setNewTextName('') }
   function deleteTextVar(id: string) { onChangeTextVars(textVars.filter(v => v.id !== id)) }
   function startEditText(v: TextVar) { setEditingTextId(v.id); setEditingTextValue(v.name) }
-  function saveEditText(id: string) {
-    const name = editingTextValue.trim(); if (!name) return
-    onChangeTextVars(textVars.map(v => v.id === id ? { ...v, name } : v))
-    setEditingTextId(null)
-  }
-  function addCondVar() {
-    const label = newCondLabel.trim(), value = newCondValue.trim()
-    if (!label || !value) return
-    onChangeCondVars([...condVars, { id: generateId(), label, value }])
-    setNewCondLabel(''); setNewCondValue('')
-  }
+  function saveEditText(id: string) { const name = editingTextValue.trim(); if (!name) return; onChangeTextVars(textVars.map(v => v.id === id ? { ...v, name } : v)); setEditingTextId(null) }
+  function addCondVar() { const label = newCondLabel.trim(), value = newCondValue.trim(); if (!label || !value) return; onChangeCondVars([...condVars, { id: generateId(), label, value }]); setNewCondLabel(''); setNewCondValue('') }
   function deleteCondVar(id: string) { onChangeCondVars(condVars.filter(v => v.id !== id)) }
   function startEditCond(v: CondVar) { setEditingCondId(v.id); setEditingCondLabel(v.label); setEditingCondValue(v.value) }
-  function saveEditCond(id: string) {
-    const label = editingCondLabel.trim(), value = editingCondValue.trim()
-    if (!label || !value) return
-    onChangeCondVars(condVars.map(v => v.id === id ? { ...v, label, value } : v))
-    setEditingCondId(null)
-  }
+  function saveEditCond(id: string) { const label = editingCondLabel.trim(), value = editingCondValue.trim(); if (!label || !value) return; onChangeCondVars(condVars.map(v => v.id === id ? { ...v, label, value } : v)); setEditingCondId(null) }
 
   const chipBase: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '2px 7px', borderRadius: '20px', fontSize: '10px', fontWeight: 500, fontFamily: 'monospace', transition: 'all 0.1s' }
   const smallInput: React.CSSProperties = { padding: '4px 8px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text)', outline: 'none', fontFamily: 'monospace' }
@@ -435,7 +381,6 @@ function VariableManager({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      {/* Variables texte */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>Variables texte</p>
@@ -445,21 +390,19 @@ function VariableManager({
           </div>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-          {textVars.map(v => (
-            editingTextId === v.id ? (
-              <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                <input autoFocus value={editingTextValue} onChange={e => setEditingTextValue(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') saveEditText(v.id); if (e.key === 'Escape') setEditingTextId(null) }}
-                  style={{ ...smallInput, width: '110px' }} />
-                <button type="button" onClick={() => saveEditText(v.id)} style={{ ...miniBtn, color: '#01696f' }}><Check size={11} /></button>
-                <button type="button" onClick={() => setEditingTextId(null)} style={miniBtn}><X size={11} /></button>
-              </span>
-            ) : (
-              <button key={v.id} type="button"
-                onClick={() => { if (mode === 'edit') startEditText(v); else if (mode === 'delete') deleteTextVar(v.id); else onInsertTag(v.name) }}
-                style={{ ...chipBase, border: `1.5px solid ${mode === 'delete' ? '#dc262660' : '#01696f60'}`, background: mode === 'delete' ? '#dc26260c' : '#01696f0c', color: mode === 'delete' ? '#dc2626' : '#01696f', cursor: 'pointer', outline: mode === 'edit' ? '1.5px dashed #01696f80' : mode === 'delete' ? '1.5px dashed #dc262680' : 'none', outlineOffset: '1px' }}
-              >[{v.name}]</button>
-            )
+          {textVars.map(v => editingTextId === v.id ? (
+            <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+              <input autoFocus value={editingTextValue} onChange={e => setEditingTextValue(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveEditText(v.id); if (e.key === 'Escape') setEditingTextId(null) }}
+                style={{ ...smallInput, width: '110px' }} />
+              <button type="button" onClick={() => saveEditText(v.id)} style={{ ...miniBtn, color: '#01696f' }}><Check size={11} /></button>
+              <button type="button" onClick={() => setEditingTextId(null)} style={miniBtn}><X size={11} /></button>
+            </span>
+          ) : (
+            <button key={v.id} type="button"
+              onClick={() => { if (mode === 'edit') startEditText(v); else if (mode === 'delete') deleteTextVar(v.id); else onInsertTag(v.name) }}
+              style={{ ...chipBase, border: `1.5px solid ${mode === 'delete' ? '#dc262660' : '#01696f60'}`, background: mode === 'delete' ? '#dc26260c' : '#01696f0c', color: mode === 'delete' ? '#dc2626' : '#01696f', cursor: 'pointer', outline: mode === 'edit' ? '1.5px dashed #01696f80' : mode === 'delete' ? '1.5px dashed #dc262680' : 'none', outlineOffset: '1px' }}
+            >[{v.name}]</button>
           ))}
         </div>
         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
@@ -472,7 +415,6 @@ function VariableManager({
         </div>
       </div>
 
-      {/* Variables conditionnelles */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
           <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0, flexShrink: 0 }}>Cond. <span style={{ textTransform: 'none', fontWeight: 400, fontSize: '9px' }}>(liste déroulante)</span></p>
@@ -482,22 +424,20 @@ function VariableManager({
           </div>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-          {condVars.map(v => (
-            editingCondId === v.id ? (
-              <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                <input autoFocus value={editingCondLabel} onChange={e => setEditingCondLabel(e.target.value)} placeholder="Libellé" style={{ ...smallInput, width: '110px' }} />
-                <input value={editingCondValue} onChange={e => setEditingCondValue(e.target.value)} placeholder="Valeur"
-                  onKeyDown={e => { if (e.key === 'Enter') saveEditCond(v.id); if (e.key === 'Escape') setEditingCondId(null) }}
-                  style={{ ...smallInput, width: '90px' }} />
-                <button type="button" onClick={() => saveEditCond(v.id)} style={{ ...miniBtn, color: '#7c3aed' }}><Check size={11} /></button>
-                <button type="button" onClick={() => setEditingCondId(null)} style={miniBtn}><X size={11} /></button>
-              </span>
-            ) : (
-              <button key={v.id} type="button"
-                onClick={() => { if (mode === 'edit') startEditCond(v); else if (mode === 'delete') deleteCondVar(v.id); else onInsertTag(v.value) }}
-                style={{ ...chipBase, border: `1.5px solid ${mode === 'delete' ? '#dc262660' : '#7c3aed60'}`, background: mode === 'delete' ? '#dc26260c' : '#7c3aed0c', color: mode === 'delete' ? '#dc2626' : '#7c3aed', cursor: 'pointer', outline: mode === 'edit' ? '1.5px dashed #7c3aed80' : mode === 'delete' ? '1.5px dashed #dc262680' : 'none', outlineOffset: '1px' }}
-              ><ListFilter size={9} />[{v.label}]</button>
-            )
+          {condVars.map(v => editingCondId === v.id ? (
+            <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+              <input autoFocus value={editingCondLabel} onChange={e => setEditingCondLabel(e.target.value)} placeholder="Libellé" style={{ ...smallInput, width: '110px' }} />
+              <input value={editingCondValue} onChange={e => setEditingCondValue(e.target.value)} placeholder="Valeur"
+                onKeyDown={e => { if (e.key === 'Enter') saveEditCond(v.id); if (e.key === 'Escape') setEditingCondId(null) }}
+                style={{ ...smallInput, width: '90px' }} />
+              <button type="button" onClick={() => saveEditCond(v.id)} style={{ ...miniBtn, color: '#7c3aed' }}><Check size={11} /></button>
+              <button type="button" onClick={() => setEditingCondId(null)} style={miniBtn}><X size={11} /></button>
+            </span>
+          ) : (
+            <button key={v.id} type="button"
+              onClick={() => { if (mode === 'edit') startEditCond(v); else if (mode === 'delete') deleteCondVar(v.id); else onInsertTag(v.value) }}
+              style={{ ...chipBase, border: `1.5px solid ${mode === 'delete' ? '#dc262660' : '#7c3aed60'}`, background: mode === 'delete' ? '#dc26260c' : '#7c3aed0c', color: mode === 'delete' ? '#dc2626' : '#7c3aed', cursor: 'pointer', outline: mode === 'edit' ? '1.5px dashed #7c3aed80' : mode === 'delete' ? '1.5px dashed #dc262680' : 'none', outlineOffset: '1px' }}
+            ><ListFilter size={9} />[{v.label}]</button>
           ))}
         </div>
         <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -514,10 +454,11 @@ function VariableManager({
   )
 }
 
-// ─── Formulaire d'édition d'une brique ───────────────────────────────────────
+// ─── BrickEditorForm ──────────────────────────────────────────────────────────
 
-function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
+function BrickEditorForm({ brick, allCategories, onSave, onCancel, onDelete, isNew }: {
   brick: Brick
+  allCategories: CategoryDef[]
   onSave: (b: Brick) => void
   onCancel: () => void
   onDelete?: () => void
@@ -531,12 +472,8 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
   const [showPreview,   setShowPreview]   = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const [textVars, setTextVars] = useState<TextVar[]>(
-    DEFAULT_SUGGESTED_TAGS.map(name => ({ id: generateId(), name }))
-  )
-  const [condVars, setCondVars] = useState<CondVar[]>(
-    DEFAULT_CONDITIONAL_TAGS.map(t => ({ id: generateId(), label: t.label, value: t.value }))
-  )
+  const [textVars, setTextVars] = useState<TextVar[]>(DEFAULT_SUGGESTED_TAGS.map(name => ({ id: generateId(), name })))
+  const [condVars, setCondVars] = useState<CondVar[]>(DEFAULT_CONDITIONAL_TAGS.map(t => ({ id: generateId(), label: t.label, value: t.value })))
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -552,20 +489,15 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
     const ta = textareaRef.current; if (!ta) return
     const s = ta.selectionStart, e = ta.selectionEnd
     if (s === e) {
-      const ins = open + close
-      setContent(content.slice(0, s) + ins + content.slice(e))
-      setTimeout(() => { ta.focus(); ta.setSelectionRange(s + open.length, s + open.length) }, 0)
-      return
+      const ins = open + close; setContent(content.slice(0, s) + ins + content.slice(e))
+      setTimeout(() => { ta.focus(); ta.setSelectionRange(s + open.length, s + open.length) }, 0); return
     }
-    const sel = content.slice(s, e)
-    const before = content.slice(s - open.length, s)
-    const after  = content.slice(e, e + close.length)
+    const sel = content.slice(s, e), before = content.slice(s - open.length, s), after = content.slice(e, e + close.length)
     if (before === open && after === close) {
       setContent(content.slice(0, s - open.length) + sel + content.slice(e + close.length))
       setTimeout(() => { ta.focus(); ta.setSelectionRange(s - open.length, e - open.length) }, 0)
     } else {
-      const ins = open + sel + close
-      setContent(content.slice(0, s) + ins + content.slice(e))
+      const ins = open + sel + close; setContent(content.slice(0, s) + ins + content.slice(e))
       setTimeout(() => { ta.focus(); ta.setSelectionRange(s, s + ins.length) }, 0)
     }
   }
@@ -587,7 +519,7 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
           <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
             Catégorie
             <select value={category} onChange={e => setCategory(e.target.value)} style={inp}>
-              {ALL_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              {allCategories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
           </label>
           <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -606,19 +538,14 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
             >{showPreview ? "Masquer l'aperçu" : 'Aperçu'}</button>
           </div>
           <FormatToolbar onFormat={applyFormat} />
-          <textarea
-            ref={textareaRef} value={content} onChange={e => setContent(e.target.value)}
+          <textarea ref={textareaRef} value={content} onChange={e => setContent(e.target.value)}
             placeholder={`Rédigez le contenu…\n**Gras** __Souligné__ _Italique_ ^^MAJUSCULES^^\n[Variable] [M/Mme] [né/née]`}
             rows={5}
             style={{ ...inp, resize: 'vertical', lineHeight: 1.6, fontFamily: 'monospace', fontSize: '12px', borderRadius: '0 0 6px 6px', borderTop: 'none' }}
           />
           {showPreview && <BrickPreview content={content} color={color} />}
         </div>
-        <VariableManager
-          textVars={textVars} condVars={condVars}
-          onChangeTextVars={setTextVars} onChangeCondVars={setCondVars}
-          onInsertTag={insertTag}
-        />
+        <VariableManager textVars={textVars} condVars={condVars} onChangeTextVars={setTextVars} onChangeCondVars={setCondVars} onInsertTag={insertTag} />
       </div>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
         <div>
@@ -636,8 +563,7 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <button onClick={onCancel} style={{ padding: '7px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>Annuler</button>
-          <button
-            onClick={() => { if (canSave) onSave({ ...brick, label: label.trim(), content: content.trim(), category, icon, color }) }}
+          <button onClick={() => { if (canSave) onSave({ ...brick, label: label.trim(), content: content.trim(), category, icon, color }) }}
             disabled={!canSave}
             style={{ padding: '7px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: canSave ? 'pointer' : 'not-allowed', opacity: canSave ? 1 : 0.5, border: 'none' }}
           >{isNew ? 'Créer' : 'Enregistrer'}</button>
@@ -647,9 +573,12 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
   )
 }
 
-function BrickEditorRow({ brick, onEdit, isSelected }: { brick: Brick; onEdit: () => void; isSelected: boolean }) {
+// ─── BrickEditorRow ───────────────────────────────────────────────────────────
+
+function BrickEditorRow({ brick, allCategories, onEdit, isSelected }: { brick: Brick; allCategories: CategoryDef[]; onEdit: () => void; isSelected: boolean }) {
   const [h, setH] = useState(false)
-  const catColor = ALL_CATEGORIES.find(c => c.id === brick.category)?.color ?? '#6b7280'
+  const cat = allCategories.find(c => c.id === brick.category)
+  const catColor = cat?.color ?? '#6b7280'
   return (
     <div onClick={onEdit} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 12px', cursor: 'pointer', background: isSelected ? 'var(--color-primary)0f' : h ? 'var(--color-surface-offset)' : 'transparent', borderLeft: `3px solid ${isSelected ? 'var(--color-primary)' : 'transparent'}`, transition: 'all 0.1s' }}
@@ -659,30 +588,188 @@ function BrickEditorRow({ brick, onEdit, isSelected }: { brick: Brick; onEdit: (
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{brick.label}</div>
-        <div style={{ fontSize: '10px', color: catColor, marginTop: '1px', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600 }}>{ALL_CATEGORIES.find(c => c.id === brick.category)?.label ?? brick.category}</div>
+        <div style={{ fontSize: '10px', color: catColor, marginTop: '1px', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600 }}>{cat?.label ?? brick.category}</div>
       </div>
       <Pencil size={12} style={{ color: h || isSelected ? 'var(--color-primary)' : 'var(--color-text-faint)', flexShrink: 0, transition: 'color 0.1s' }} />
     </div>
   )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ─── MODALE ÉDITEUR DE BRIQUES ────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── CategoryManagerPanel ─────────────────────────────────────────────────────
+// Panneau latéral gauche de gestion des catégories custom
 
-function BricksEditorModal({ groups, onSave, onClose, onAdd, onUpdate, onDelete }: {
+function CategoryManagerPanel({ customCategories, onAdd, onRename, onDelete, onClose }: {
+  customCategories: CategoryDef[]
+  onAdd:    (name: string, color: string) => Promise<void>
+  onRename: (dbId: number, name: string, color: string) => Promise<void>
+  onDelete: (dbId: number) => Promise<void>
+  onClose:  () => void
+}) {
+  const [newName,     setNewName]     = useState('')
+  const [newColor,    setNewColor]    = useState('#2563eb')
+  const [editingId,   setEditingId]   = useState<number | null>(null)
+  const [editName,    setEditName]    = useState('')
+  const [editColor,   setEditColor]   = useState('#2563eb')
+  const [confirmDel,  setConfirmDel]  = useState<number | null>(null)
+  const [saving,      setSaving]      = useState(false)
+
+  async function handleAdd() {
+    const name = newName.trim(); if (!name) return
+    setSaving(true)
+    await onAdd(name, newColor)
+    setNewName(''); setNewColor('#2563eb'); setSaving(false)
+  }
+
+  async function handleRename(dbId: number) {
+    const name = editName.trim(); if (!name) return
+    setSaving(true)
+    await onRename(dbId, name, editColor)
+    setEditingId(null); setSaving(false)
+  }
+
+  async function handleDelete(dbId: number) {
+    setSaving(true)
+    await onDelete(dbId)
+    setConfirmDel(null); setSaving(false)
+  }
+
+  const inp: React.CSSProperties = { padding: '6px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text)', outline: 'none', flex: 1 }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ width: '28px', height: '28px', borderRadius: '7px', background: 'var(--color-primary)18', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <FolderPlus size={14} style={{ color: 'var(--color-primary)' }} />
+          </div>
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text)' }}>Catégories personnalisées</div>
+            <div style={{ fontSize: '10px', color: 'var(--color-text-muted)' }}>Organisez vos briques par thème</div>
+          </div>
+        </div>
+        <button onClick={onClose} style={{ width: '28px', height: '28px', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', cursor: 'pointer' }}>
+          <X size={14} style={{ color: 'var(--color-text-muted)' }} />
+        </button>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+
+        {/* Catégories système (lecture seule) */}
+        <div style={{ marginBottom: '4px' }}>
+          <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: '0 0 8px' }}>Catégories système</p>
+          {SYSTEM_CATEGORIES.map(c => (
+            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 10px', borderRadius: '8px', background: 'var(--color-surface-offset)', marginBottom: '4px', opacity: 0.7 }}>
+              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: c.color, flexShrink: 0 }} />
+              <span style={{ fontSize: '12px', color: 'var(--color-text)', flex: 1 }}>{c.label}</span>
+              <span style={{ fontSize: '9px', color: 'var(--color-text-faint)', background: 'var(--color-border)', padding: '1px 6px', borderRadius: '10px' }}>système</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Catégories custom */}
+        <div>
+          <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: '0 0 8px' }}>Mes catégories ({customCategories.length})</p>
+          {customCategories.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--color-text-faint)', fontSize: '12px' }}>Aucune catégorie personnalisée.<br/>Créez-en une ci-dessous.</div>
+          )}
+          {customCategories.map(cat => (
+            <div key={cat.dbId}>
+              {editingId === cat.dbId ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', borderRadius: '8px', border: `1.5px solid ${editColor}`, background: editColor + '08', marginBottom: '4px' }}>
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: editColor, flexShrink: 0 }} />
+                  <input autoFocus value={editName} onChange={e => setEditName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleRename(cat.dbId!); if (e.key === 'Escape') setEditingId(null) }}
+                    style={{ ...inp, flex: 1, padding: '4px 8px' }} />
+                  {/* Mini color picker inline */}
+                  <div style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
+                    {COLOR_OPTIONS.slice(0, 5).map(c => (
+                      <button key={c} type="button" onClick={() => setEditColor(c)}
+                        style={{ width: '14px', height: '14px', borderRadius: '50%', background: c, border: `2px solid ${editColor === c ? c : 'transparent'}`, outline: editColor === c ? `1.5px solid ${c}` : 'none', outlineOffset: '1px', cursor: 'pointer', flexShrink: 0 }}
+                      />
+                    ))}
+                  </div>
+                  <button onClick={() => handleRename(cat.dbId!)} disabled={saving} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#01696f', display: 'flex', alignItems: 'center' }}><Check size={13} /></button>
+                  <button onClick={() => setEditingId(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-faint)', display: 'flex', alignItems: 'center' }}><X size={13} /></button>
+                </div>
+              ) : confirmDel === cat.dbId ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', borderRadius: '8px', border: '1.5px solid var(--color-error)', background: 'var(--color-error-bg, #fee2e2)', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--color-error)', flex: 1 }}>Supprimer « {cat.label} » ? Les briques seront déplacées vers « Mes briques ».</span>
+                  <button onClick={() => handleDelete(cat.dbId!)} disabled={saving}
+                    style={{ padding: '3px 10px', borderRadius: '6px', background: 'var(--color-error)', color: '#fff', fontSize: '11px', fontWeight: 600, border: 'none', cursor: 'pointer' }}>Oui</button>
+                  <button onClick={() => setConfirmDel(null)}
+                    style={{ padding: '3px 10px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer' }}>Non</button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 10px', borderRadius: '8px', border: `1.5px solid ${cat.color}30`, background: cat.color + '08', marginBottom: '4px' }}>
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: cat.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text)', flex: 1 }}>{cat.label}</span>
+                  <button onClick={() => { setEditingId(cat.dbId!); setEditName(cat.label); setEditColor(cat.color) }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-faint)', display: 'flex', alignItems: 'center', padding: '2px' }}>
+                    <Pencil size={12} />
+                  </button>
+                  <button onClick={() => setConfirmDel(cat.dbId!)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-error)', display: 'flex', alignItems: 'center', padding: '2px' }}>
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Formulaire ajout */}
+      <div style={{ flexShrink: 0, padding: '14px 20px', borderTop: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '10px', background: 'var(--color-surface)' }}>
+        <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', margin: 0 }}>Nouvelle catégorie</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* Color picker compact */}
+          <div style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
+            {COLOR_OPTIONS.slice(0, 5).map(c => (
+              <button key={c} type="button" onClick={() => setNewColor(c)}
+                style={{ width: '16px', height: '16px', borderRadius: '50%', background: c, border: `2px solid ${newColor === c ? c : 'transparent'}`, outline: newColor === c ? `1.5px solid ${c}` : 'none', outlineOffset: '1px', cursor: 'pointer', flexShrink: 0 }}
+              />
+            ))}
+          </div>
+          <input value={newName} onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleAdd() }}
+            placeholder="Nom de la catégorie…" style={inp} />
+          <button onClick={handleAdd} disabled={!newName.trim() || saving}
+            style={{ padding: '6px 12px', borderRadius: '7px', border: 'none', background: newName.trim() ? 'var(--color-primary)' : 'var(--color-border)', color: newName.trim() ? '#fff' : 'var(--color-text-faint)', fontSize: '12px', fontWeight: 600, cursor: newName.trim() ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}
+          ><Plus size={13} /> Créer</button>
+        </div>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+          {COLOR_OPTIONS.slice(5).map(c => (
+            <button key={c} type="button" onClick={() => setNewColor(c)}
+              style={{ width: '16px', height: '16px', borderRadius: '50%', background: c, border: `2px solid ${newColor === c ? c : 'transparent'}`, outline: newColor === c ? `1.5px solid ${c}` : 'none', outlineOffset: '1px', cursor: 'pointer', flexShrink: 0 }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── BricksEditorModal ────────────────────────────────────────────────────────
+
+function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUpdate, onDelete, onAddCategory, onRenameCategory, onDeleteCategory }: {
   groups: BrickGroup[]
-  onSave: (g: BrickGroup[]) => void   // mis à jour du state local
+  allCategories: CategoryDef[]
+  onSave: (g: BrickGroup[]) => void
   onClose: () => void
-  onAdd: (b: Omit<Brick, 'id'>) => Promise<string>       // écrit en DB
-  onUpdate: (b: Brick) => Promise<void>                  // écrit en DB
-  onDelete: (id: string) => Promise<void>                // supprime en DB
+  onAdd:    (b: Omit<Brick, 'id'>) => Promise<string>
+  onUpdate: (b: Brick) => Promise<void>
+  onDelete: (id: string) => Promise<void>
+  onAddCategory:    (name: string, color: string) => Promise<void>
+  onRenameCategory: (dbId: number, name: string, color: string) => Promise<void>
+  onDeleteCategory: (dbId: number) => Promise<void>
 }) {
   const [localGroups,     setLocalGroups]     = useState<BrickGroup[]>(() => JSON.parse(JSON.stringify(groups)))
   const [selectedBrickId, setSelectedBrickId] = useState<string | null>(null)
   const [isCreating,      setIsCreating]      = useState(false)
   const [search,          setSearch]          = useState('')
   const [filterCat,       setFilterCat]       = useState('all')
+  const [showCatManager,  setShowCatManager]  = useState(false)
 
   const allBricks      = localGroups.flatMap(g => g.bricks)
   const filteredBricks = allBricks.filter(b => {
@@ -691,17 +778,19 @@ function BricksEditorModal({ groups, onSave, onClose, onAdd, onUpdate, onDelete 
   })
   const selectedBrick = allBricks.find(b => b.id === selectedBrickId) ?? null
 
+  const customCategories = allCategories.filter(c => c.isCustomCategory)
+
   async function handleUpdate(updated: Brick) {
     await onUpdate(updated)
     setLocalGroups(prev => {
       const cleaned = prev.map(g => ({ ...g, bricks: g.bricks.filter(b => b.id !== updated.id) }))
       const tg = cleaned.find(g => g.id === updated.category)
+      const cat = allCategories.find(c => c.id === updated.category)
       const next = tg
         ? cleaned.map(g => g.id === updated.category ? { ...g, bricks: [...g.bricks, updated] } : g)
-        : [...cleaned, { id: 'custom', label: 'Mes briques', color: '#6b7280', iconName: 'blocks', bricks: [updated] }]
+        : [...cleaned, { id: updated.category, label: cat?.label ?? 'Mes briques', color: cat?.color ?? '#6b7280', iconName: cat?.iconName ?? 'blocks', bricks: [updated] }]
       const filtered = next.filter(g => g.bricks.length > 0)
-      onSave(filtered)
-      return filtered
+      onSave(filtered); return filtered
     })
     setSelectedBrickId(updated.id)
   }
@@ -711,44 +800,41 @@ function BricksEditorModal({ groups, onSave, onClose, onAdd, onUpdate, onDelete 
     const brick: Brick = { ...partial, id: newId }
     setLocalGroups(prev => {
       const tg = prev.find(g => g.id === brick.category)
+      const cat = allCategories.find(c => c.id === brick.category)
       const next = tg
         ? prev.map(g => g.id === brick.category ? { ...g, bricks: [...g.bricks, brick] } : g)
-        : [...prev, { id: 'custom', label: 'Mes briques', color: '#6b7280', iconName: 'blocks', bricks: [brick] }]
+        : [...prev, { id: brick.category, label: cat?.label ?? 'Mes briques', color: cat?.color ?? '#6b7280', iconName: cat?.iconName ?? 'blocks', bricks: [brick] }]
       const filtered = next.filter(g => g.bricks.length > 0)
-      onSave(filtered)
-      return filtered
+      onSave(filtered); return filtered
     })
-    setSelectedBrickId(newId)
-    setIsCreating(false)
+    setSelectedBrickId(newId); setIsCreating(false)
   }
 
   async function handleDelete(id: string) {
     await onDelete(id)
     setLocalGroups(prev => {
       const next = prev.map(g => ({ ...g, bricks: g.bricks.filter(b => b.id !== id) })).filter(g => g.bricks.length > 0)
-      onSave(next)
-      return next
+      onSave(next); return next
     })
     setSelectedBrickId(null)
   }
 
+  useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = '' } }, [])
   useEffect(() => {
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = '' }
-  }, [])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { if (showCatManager) setShowCatManager(false); else onClose() } }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, showCatManager])
 
-  const newTpl: Brick = { id: '__new__', label: '', content: '', category: 'custom', icon: 'file-text', color: '#01696f' }
+  const newTpl: Brick = { id: '__new__', label: '', content: '', category: allCategories[0]?.id ?? 'custom', icon: 'file-text', color: '#01696f' }
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }} />
-      <div style={{ position: 'relative', zIndex: 10, width: '920px', maxWidth: 'calc(100vw - 32px)', height: '680px', maxHeight: 'calc(100vh - 48px)', borderRadius: '16px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: '0 24px 80px rgba(0,0,0,0.35)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+      <div style={{ position: 'relative', zIndex: 10, width: '980px', maxWidth: 'calc(100vw - 32px)', height: '700px', maxHeight: 'calc(100vh - 48px)', borderRadius: '16px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: '0 24px 80px rgba(0,0,0,0.35)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--color-primary)18', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -756,14 +842,40 @@ function BricksEditorModal({ groups, onSave, onClose, onAdd, onUpdate, onDelete 
             </div>
             <div>
               <h2 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-text)', margin: 0 }}>Éditeur de briques</h2>
-              <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0 }}>{allBricks.length} brique{allBricks.length > 1 ? 's' : ''} · Formatage riche + variables conditionnelles</p>
+              <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0 }}>{allBricks.length} brique{allBricks.length > 1 ? 's' : ''} · {allCategories.length} catégorie{allCategories.length > 1 ? 's' : ''}</p>
             </div>
           </div>
-          <button onClick={onClose} style={{ width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', cursor: 'pointer' }}>
-            <X size={16} style={{ color: 'var(--color-text-muted)' }} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {/* Bouton catégories */}
+            <button onClick={() => setShowCatManager(v => !v)}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '8px', border: `1.5px solid ${showCatManager ? 'var(--color-primary)' : 'var(--color-border)'}`, background: showCatManager ? 'var(--color-primary)10' : 'var(--color-surface-offset)', color: showCatManager ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s' }}
+            >
+              <FolderPlus size={13} /> Catégories
+              {customCategories.length > 0 && <span style={{ background: showCatManager ? 'var(--color-primary)' : 'var(--color-text-faint)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 5px', fontWeight: 700 }}>{customCategories.length}</span>}
+            </button>
+            <button onClick={onClose} style={{ width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', cursor: 'pointer' }}>
+              <X size={16} style={{ color: 'var(--color-text-muted)' }} />
+            </button>
+          </div>
         </div>
+
+        {/* Body */}
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+
+          {/* ── Panneau catégories (glisse depuis la droite) ── */}
+          {showCatManager && (
+            <div style={{ width: '340px', flexShrink: 0, borderRight: '1px solid var(--color-border)', background: 'var(--color-surface)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <CategoryManagerPanel
+                customCategories={customCategories}
+                onAdd={onAddCategory}
+                onRename={onRenameCategory}
+                onDelete={onDeleteCategory}
+                onClose={() => setShowCatManager(false)}
+              />
+            </div>
+          )}
+
+          {/* ── Liste des briques ── */}
           <div style={{ width: '300px', flexShrink: 0, borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', background: 'var(--color-surface-offset)' }}>
             <div style={{ padding: '12px', borderBottom: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
               <div style={{ position: 'relative' }}>
@@ -774,13 +886,13 @@ function BricksEditorModal({ groups, onSave, onClose, onAdd, onUpdate, onDelete 
               <select value={filterCat} onChange={e => setFilterCat(e.target.value)}
                 style={{ width: '100%', padding: '5px 8px', fontSize: '11px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '6px', color: 'var(--color-text-muted)', outline: 'none' }}>
                 <option value="all">Toutes ({allBricks.length})</option>
-                {ALL_CATEGORIES.map(c => { const n = allBricks.filter(b => b.category === c.id).length; return n ? <option key={c.id} value={c.id}>{c.label} ({n})</option> : null })}
+                {allCategories.map(c => { const n = allBricks.filter(b => b.category === c.id).length; return n ? <option key={c.id} value={c.id}>{c.label} ({n})</option> : null })}
               </select>
             </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               {filteredBricks.length === 0
                 ? <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--color-text-faint)', fontSize: '12px' }}><Blocks size={24} style={{ opacity: 0.15, margin: '0 auto 8px', display: 'block' }} />Aucune brique</div>
-                : filteredBricks.map(b => <BrickEditorRow key={b.id} brick={b} onEdit={() => { setSelectedBrickId(b.id); setIsCreating(false) }} isSelected={!isCreating && selectedBrickId === b.id} />)
+                : filteredBricks.map(b => <BrickEditorRow key={b.id} brick={b} allCategories={allCategories} onEdit={() => { setSelectedBrickId(b.id); setIsCreating(false) }} isSelected={!isCreating && selectedBrickId === b.id} />)
               }
             </div>
             <div style={{ padding: '10px 12px', borderTop: '1px solid var(--color-border)', flexShrink: 0 }}>
@@ -789,13 +901,15 @@ function BricksEditorModal({ groups, onSave, onClose, onAdd, onUpdate, onDelete 
               ><Plus size={13} /> Nouvelle brique</button>
             </div>
           </div>
+
+          {/* ── Formulaire éditeur ── */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {isCreating ? (
-              <BrickEditorForm brick={newTpl} isNew
+              <BrickEditorForm brick={newTpl} allCategories={allCategories} isNew
                 onSave={b => handleAdd({ label: b.label, content: b.content, category: b.category, icon: b.icon, color: b.color })}
                 onCancel={() => setIsCreating(false)} />
             ) : selectedBrick ? (
-              <BrickEditorForm key={selectedBrick.id} brick={selectedBrick}
+              <BrickEditorForm key={selectedBrick.id} brick={selectedBrick} allCategories={allCategories}
                 onSave={handleUpdate}
                 onCancel={() => setSelectedBrickId(null)}
                 onDelete={() => handleDelete(selectedBrick.id)} />
@@ -815,9 +929,7 @@ function BricksEditorModal({ groups, onSave, onClose, onAdd, onUpdate, onDelete 
   )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ─── COMPOSANT PRINCIPAL ─────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── COMPOSANT PRINCIPAL ──────────────────────────────────────────────────────
 
 interface DocumentBricksPanelProps {
   onInsertBrick: (content: string) => void
@@ -825,59 +937,101 @@ interface DocumentBricksPanelProps {
 }
 
 export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps) {
-  const [groups,     setGroups]     = useState<BrickGroup[]>([])
-  const [tab,        setTab]        = useState<'library' | 'custom'>('library')
-  const [showEditor, setShowEditor] = useState(false)
-  const [loaded,     setLoaded]     = useState(false)
+  const [groups,         setGroups]         = useState<BrickGroup[]>([])
+  const [allCategories,  setAllCategories]  = useState<CategoryDef[]>([...SYSTEM_CATEGORIES.map(c => ({ ...c, iconName: c.id === 'parties' ? 'users' : c.id === 'structure' ? 'align-left' : c.id === 'formules' ? 'file-text' : 'blocks' }))])
+  const [tab,            setTab]            = useState<'library' | 'custom'>('library')
+  const [showEditor,     setShowEditor]     = useState(false)
+  const [loaded,         setLoaded]         = useState(false)
 
-  // ── Chargement initial depuis Dexie ─────────────────────────────────────
+  // ── Chargement initial depuis Dexie ──────────────────────────────────────
   const loadFromDB = useCallback(async () => {
-    // Seed au premier démarrage
+    // Seed des briques au premier démarrage
     const seeded = await getSetting<boolean>('bricks_seeded', false)
     if (!seeded) {
       await db.bricks.bulkAdd(SEED_BRICKS as DBBrick[])
       await setSetting('bricks_seeded', true)
     }
+
+    // Charger les catégories custom depuis infoLabels
+    const savedLabels = await db.infoLabels.toArray() as (InfoLabel & { id: number })[]
+    const customCats: CategoryDef[] = savedLabels.map(l => ({
+      id:               `cat_${l.id}`,
+      label:            l.name,
+      color:            l.color ?? '#6b7280',
+      iconName:         'blocks',
+      isCustomCategory: true,
+      dbId:             l.id,
+    }))
+
+    const cats: CategoryDef[] = [
+      ...SYSTEM_CATEGORIES.map(c => ({ ...c, iconName: c.id === 'parties' ? 'users' : c.id === 'structure' ? 'align-left' : c.id === 'formules' ? 'file-text' : 'blocks' })),
+      ...customCats,
+    ]
+    setAllCategories(cats)
+
     const all = await db.bricks.toArray() as (DBBrick & { id: number })[]
-    setGroups(bricksToGroups(all))
+    setGroups(bricksToGroups(all, cats))
     setLoaded(true)
   }, [])
 
   useEffect(() => { loadFromDB() }, [loadFromDB])
 
-  // ── Opérations Dexie ────────────────────────────────────────────────────
+  // ── Opérations briques ───────────────────────────────────────────────────
   const handleAdd = useCallback(async (partial: Omit<Brick, 'id'>): Promise<string> => {
     const now = new Date()
-    const dbBrick: Omit<DBBrick, 'id'> = {
-      title: partial.label,
-      content: partial.content,
-      category: 'other',          // catégorie DB générique pour les briques perso
+    const id = await db.bricks.add({
+      title: partial.label, content: partial.content, category: 'other',
       tags: [partial.category, partial.icon, partial.color],
-      createdAt: now,
-      updatedAt: now,
-    }
-    const id = await db.bricks.add(dbBrick as DBBrick)
+      createdAt: now, updatedAt: now,
+    } as DBBrick)
     return String(id)
   }, [])
 
   const handleUpdate = useCallback(async (updated: Brick) => {
-    const numId = Number(updated.id)
-    if (!numId) return
-    const existing = await db.bricks.get(numId)
-    if (!existing) return
-    await db.bricks.put({
-      ...existing,
-      title: updated.label,
-      content: updated.content,
-      tags: [updated.category, updated.icon, updated.color],
-      updatedAt: new Date(),
-    } as DBBrick)
+    const numId = Number(updated.id); if (!numId) return
+    const existing = await db.bricks.get(numId); if (!existing) return
+    await db.bricks.put({ ...existing, title: updated.label, content: updated.content, tags: [updated.category, updated.icon, updated.color], updatedAt: new Date() } as DBBrick)
   }, [])
 
   const handleDelete = useCallback(async (id: string) => {
-    const numId = Number(id)
-    if (!numId) return
+    const numId = Number(id); if (!numId) return
     await db.bricks.delete(numId)
+  }, [])
+
+  // ── Opérations catégories ────────────────────────────────────────────────
+  const handleAddCategory = useCallback(async (name: string, color: string) => {
+    const now = new Date()
+    const dbId = await db.infoLabels.add({ name, color, createdAt: now } as InfoLabel)
+    const numId = Number(dbId)
+    const newCat: CategoryDef = { id: `cat_${numId}`, label: name, color, iconName: 'blocks', isCustomCategory: true, dbId: numId }
+    setAllCategories(prev => [...prev, newCat])
+    // Recharger les groupes pour refléter la nouvelle catégorie
+    const all = await db.bricks.toArray() as (DBBrick & { id: number })[]
+    setGroups(prev => bricksToGroups(all, [...prev.map(g => ({ id: g.id, label: g.label, color: g.color, iconName: g.iconName, isCustomCategory: g.isCustomCategory })) as CategoryDef[], newCat]))
+  }, [])
+
+  const handleRenameCategory = useCallback(async (dbId: number, name: string, color: string) => {
+    const existing = await db.infoLabels.get(dbId); if (!existing) return
+    await db.infoLabels.put({ ...existing, name, color } as InfoLabel)
+    setAllCategories(prev => prev.map(c => c.dbId === dbId ? { ...c, label: name, color } : c))
+    // Mettre à jour les groupes
+    setGroups(prev => prev.map(g => g.id === `cat_${dbId}` ? { ...g, label: name, color } : g))
+  }, [])
+
+  const handleDeleteCategory = useCallback(async (dbId: number) => {
+    // Réassigner les briques de cette catégorie vers 'custom'
+    const catId = `cat_${dbId}`
+    const bricksInCat = await db.bricks.filter(b => b.tags[0] === catId).toArray() as (DBBrick & { id: number })[]
+    await Promise.all(bricksInCat.map(b => db.bricks.put({ ...b, tags: ['custom', b.tags[1] ?? 'file-text', b.tags[2] ?? '#6b7280'] } as DBBrick)))
+    await db.infoLabels.delete(dbId)
+    setAllCategories(prev => prev.filter(c => c.dbId !== dbId))
+    // Recharger entièrement
+    const all = await db.bricks.toArray() as (DBBrick & { id: number })[]
+    setAllCategories(prev => {
+      const updated = prev.filter(c => c.dbId !== dbId)
+      setGroups(bricksToGroups(all, updated))
+      return updated
+    })
   }, [])
 
   const customBricks  = groups.flatMap(g => g.bricks).filter(b => b.category === 'custom')
@@ -953,11 +1107,15 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
       {showEditor && (
         <BricksEditorModal
           groups={groups}
+          allCategories={allCategories}
           onSave={setGroups}
           onClose={() => setShowEditor(false)}
           onAdd={handleAdd}
           onUpdate={handleUpdate}
           onDelete={handleDelete}
+          onAddCategory={handleAddCategory}
+          onRenameCategory={handleRenameCategory}
+          onDeleteCategory={handleDeleteCategory}
         />
       )}
     </>
