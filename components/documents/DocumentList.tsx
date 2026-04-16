@@ -6,11 +6,12 @@ import { useRouter } from 'next/navigation';
 import {
   Plus, FileText, Trash2, Search, SortAsc, SortDesc,
   Filter, Download, CheckSquare, Square, Pencil, Check, X,
-  ChevronDown, FileDown
+  ChevronDown, FileDown, FileType, FileType2
 } from 'lucide-react';
 import { db, saveDocument, deleteDocument } from '@/lib/db';
 import { formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import { exportDocx, exportPdf } from '@/lib/export';
 import { NewDocumentDialog } from './NewDocumentDialog';
 import { DocumentHoverPreview } from './DocumentHoverPreview';
 import type { Document } from '@/types';
@@ -27,25 +28,6 @@ function templateToEditorContent(raw: string): string {
   return `<p>${trimmed.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
 }
 
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function downloadDocAsTxt(doc: Document) {
-  const text = (doc.content ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  downloadBlob(new Blob([text], { type: 'text/plain' }), `${doc.title}.txt`);
-}
-
-function downloadDocAsHtml(doc: Document) {
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${doc.title}</title></head><body>${doc.content ?? ''}</body></html>`;
-  downloadBlob(new Blob([html], { type: 'text/html' }), `${doc.title}.html`);
-}
-
 const SORT_OPTIONS: { value: SortField; label: string }[] = [
   { value: 'updatedAt', label: 'Date de modification' },
   { value: 'createdAt', label: 'Date de création' },
@@ -59,6 +41,49 @@ const FILTER_OPTIONS: { value: FilterType; label: string }[] = [
   { value: 'final', label: 'Finalisés' },
   { value: 'contract', label: 'Contrats' },
 ];
+
+// ─── Mini dropdown export par document ───────────────────────────────────────
+
+function DocExportMenu({ doc, onClose }: { doc: Document; onClose: () => void }) {
+  const html = doc.content ?? '';
+
+  const handleDocx = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    await exportDocx(doc.title, html);
+    onClose();
+  };
+
+  const handlePdf = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    exportPdf(doc.title, html);
+    onClose();
+  };
+
+  return (
+    <div
+      className={cn(
+        'absolute right-0 top-full mt-1 z-30 w-36 rounded-md shadow-lg py-1',
+        'bg-[var(--color-surface)] border border-[var(--color-border)]'
+      )}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        onClick={handleDocx}
+        className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2"
+      >
+        <FileType className="w-3.5 h-3.5 text-blue-600" /> Word (.docx)
+      </button>
+      <button
+        onClick={handlePdf}
+        className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2"
+      >
+        <FileType2 className="w-3.5 h-3.5 text-red-500" /> PDF (.pdf)
+      </button>
+    </div>
+  );
+}
+
+// ─── Composant principal ──────────────────────────────────────────────────────
 
 export function DocumentList() {
   const router = useRouter();
@@ -75,7 +100,8 @@ export function DocumentList() {
   const hoverTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-  const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+  const [showBulkDownloadDropdown, setShowBulkDownloadDropdown] = useState(false);
+  const [exportMenuDocId, setExportMenuDocId] = useState<number | null>(null);
 
   const docs = useLiveQuery(() => db.documents.orderBy('updatedAt').reverse().toArray(), []);
 
@@ -102,9 +128,8 @@ export function DocumentList() {
 
   const allSelected = filteredAndSorted.length > 0 && filteredAndSorted.every((d) => selectedIds.has(d.id!));
 
-  const toggleSelectAll = () => {
+  const toggleSelectAll = () =>
     setSelectedIds(allSelected ? new Set() : new Set(filteredAndSorted.map((d) => d.id!)));
-  };
 
   const toggleSelect = (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
@@ -140,10 +165,14 @@ export function DocumentList() {
     setPreviewDoc(null); setPreviewAnchor(null);
   };
 
-  const handleDownloadSelected = (format: 'txt' | 'html') => {
+  const handleBulkDownload = async (format: 'docx' | 'pdf') => {
     if (!docs) return;
-    docs.filter((d) => selectedIds.has(d.id!)).forEach((d) => format === 'txt' ? downloadDocAsTxt(d) : downloadDocAsHtml(d));
-    setShowDownloadDropdown(false);
+    const selected = docs.filter((d) => selectedIds.has(d.id!));
+    for (const d of selected) {
+      if (format === 'docx') await exportDocx(d.title, d.content ?? '');
+      else exportPdf(d.title, d.content ?? '');
+    }
+    setShowBulkDownloadDropdown(false);
   };
 
   const startRename = (e: React.MouseEvent, doc: Document) => {
@@ -153,9 +182,8 @@ export function DocumentList() {
   };
 
   const commitRename = async (doc: Document) => {
-    if (renameValue.trim() && renameValue !== doc.title) {
+    if (renameValue.trim() && renameValue !== doc.title)
       await saveDocument({ ...doc, title: renameValue.trim(), updatedAt: new Date() });
-    }
     setRenamingId(null);
   };
 
@@ -176,7 +204,7 @@ export function DocumentList() {
 
   return (
     <>
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 max-w-4xl" onClick={() => setExportMenuDocId(null)}>
 
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
@@ -188,8 +216,7 @@ export function DocumentList() {
               'bg-[var(--color-primary)] text-white hover:opacity-90 transition-opacity'
             )}
           >
-            <Plus className="w-4 h-4" />
-            Nouveau document
+            <Plus className="w-4 h-4" /> Nouveau document
           </button>
         </div>
 
@@ -222,8 +249,7 @@ export function DocumentList() {
               )}
             >
               {sortDir === 'asc' ? <SortAsc className="w-4 h-4" /> : <SortDesc className="w-4 h-4" />}
-              Trier
-              <ChevronDown className="w-3 h-3 opacity-60" />
+              Trier <ChevronDown className="w-3 h-3 opacity-60" />
             </button>
             {showSortDropdown && (
               <div className={cn(
@@ -231,8 +257,7 @@ export function DocumentList() {
                 'bg-[var(--color-surface)] border border-[var(--color-border)] py-1'
               )}>
                 {SORT_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
+                  <button key={opt.value}
                     onClick={() => { setSortField(opt.value); setShowSortDropdown(false); }}
                     className={cn(
                       'w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors',
@@ -264,9 +289,7 @@ export function DocumentList() {
                 filterType !== 'all' && 'border-[var(--color-primary)] text-[var(--color-primary)]'
               )}
             >
-              <Filter className="w-4 h-4" />
-              Filtrer
-              <ChevronDown className="w-3 h-3 opacity-60" />
+              <Filter className="w-4 h-4" /> Filtrer <ChevronDown className="w-3 h-3 opacity-60" />
             </button>
             {showFilterDropdown && (
               <div className={cn(
@@ -274,8 +297,7 @@ export function DocumentList() {
                 'bg-[var(--color-surface)] border border-[var(--color-border)] py-1'
               )}>
                 {FILTER_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
+                  <button key={opt.value}
                     onClick={() => { setFilterType(opt.value); setShowFilterDropdown(false); }}
                     className={cn(
                       'w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors',
@@ -300,26 +322,25 @@ export function DocumentList() {
             <div className="ml-auto flex items-center gap-2">
               <div className="relative">
                 <button
-                  onClick={() => setShowDownloadDropdown((v) => !v)}
+                  onClick={() => setShowBulkDownloadDropdown((v) => !v)}
                   className={cn(
                     'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md',
                     'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
                     'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors'
                   )}
                 >
-                  <Download className="w-3.5 h-3.5" /> Télécharger
-                  <ChevronDown className="w-3 h-3 opacity-60" />
+                  <Download className="w-3.5 h-3.5" /> Télécharger <ChevronDown className="w-3 h-3 opacity-60" />
                 </button>
-                {showDownloadDropdown && (
+                {showBulkDownloadDropdown && (
                   <div className={cn(
                     'absolute top-full mt-1 right-0 z-20 w-40 rounded-md shadow-lg',
                     'bg-[var(--color-surface)] border border-[var(--color-border)] py-1'
                   )}>
-                    <button onClick={() => handleDownloadSelected('txt')} className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2">
-                      <FileDown className="w-4 h-4" /> Texte (.txt)
+                    <button onClick={() => handleBulkDownload('docx')} className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2">
+                      <FileType className="w-4 h-4 text-blue-600" /> Word (.docx)
                     </button>
-                    <button onClick={() => handleDownloadSelected('html')} className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2">
-                      <FileDown className="w-4 h-4" /> HTML (.html)
+                    <button onClick={() => handleBulkDownload('pdf')} className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2">
+                      <FileType2 className="w-4 h-4 text-red-500" /> PDF (.pdf)
                     </button>
                   </div>
                 )}
@@ -362,13 +383,14 @@ export function DocumentList() {
               key={doc.id}
               onMouseEnter={(e) => handleMouseEnter(e, doc)}
               onMouseLeave={handleMouseLeave}
-              onClick={() => renamingId !== doc.id && router.push(`/documents/${doc.id}`)}
+              onClick={() => { setExportMenuDocId(null); renamingId !== doc.id && router.push(`/documents/${doc.id}`); }}
               className={cn(
                 'flex items-center gap-3 px-4 py-3 rounded-md cursor-pointer group transition-colors',
                 'hover:bg-[var(--color-surface-raised)]',
                 selectedIds.has(doc.id!) && 'bg-[var(--color-primary)]/5'
               )}
             >
+              {/* Checkbox */}
               <button
                 onClick={(e) => toggleSelect(e, doc.id!)}
                 style={selectedIds.has(doc.id!) ? { opacity: 1 } : undefined}
@@ -381,6 +403,7 @@ export function DocumentList() {
 
               <FileText className="w-4 h-4 text-[var(--color-text-muted)] flex-shrink-0" />
 
+              {/* Titre */}
               <div className="flex-1 min-w-0" onClick={(e) => renamingId === doc.id && e.stopPropagation()}>
                 {renamingId === doc.id ? (
                   <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -409,14 +432,18 @@ export function DocumentList() {
                 )}
               </div>
 
+              {/* Date */}
               <div className="text-xs text-[var(--color-text-muted)] w-36 text-right hidden sm:block flex-shrink-0">
                 {formatDateTime(doc.updatedAt)}
               </div>
+
+              {/* Mots */}
               <div className="text-xs text-[var(--color-text-muted)] w-20 text-right hidden sm:block flex-shrink-0">
                 {doc.wordCount ?? 0} mots
               </div>
 
-              <div className="flex items-center justify-end gap-0.5 w-24 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-0.5 w-24 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity relative">
                 <button
                   onClick={(e) => startRename(e, doc)}
                   className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors"
@@ -424,13 +451,24 @@ export function DocumentList() {
                 >
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); downloadDocAsTxt(doc); }}
-                  className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors"
-                  title="Télécharger"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                </button>
+
+                {/* Bouton télécharger avec dropdown docx/pdf */}
+                <div className="relative">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExportMenuDocId(exportMenuDocId === doc.id ? null : doc.id!);
+                    }}
+                    className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors"
+                    title="Télécharger"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                  {exportMenuDocId === doc.id && (
+                    <DocExportMenu doc={doc} onClose={() => setExportMenuDocId(null)} />
+                  )}
+                </div>
+
                 <button
                   onClick={(e) => handleDelete(e, doc.id!)}
                   className="p-1.5 rounded hover:bg-red-100 hover:text-red-600 transition-colors text-[var(--color-text-muted)]"
