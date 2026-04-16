@@ -62,26 +62,10 @@ const INITIAL_BRICK_GROUPS: BrickGroup[] = [
   {
     id: 'parties', label: 'Parties', color: '#01696f', iconName: 'users',
     bricks: [
-      {
-        id: 'personne_physique', label: 'Personne physique',
-        color: '#01696f', icon: 'user', category: 'parties',
-        content: '[M/Mme] **[Nom] [Prénom]**, [né/née] le [Date de naissance] à [Lieu de naissance], de nationalité [Nationalité], demeurant au [Adresse]',
-      },
-      {
-        id: 'personne_morale', label: 'Personne morale',
-        color: '#7c3aed', icon: 'building', category: 'parties',
-        content: 'La société **[Nom de la société]**, [Forme juridique] au capital de [Capital social] euros, immatriculée au RCS de [Ville RCS] sous le numéro [Numéro RCS], dont le siège social est sis [Adresse du siège], représentée par [Représentant légal], en sa qualité de [Qualité du représentant]',
-      },
-      {
-        id: 'avocat', label: 'Ayant pour avocat',
-        color: '#be185d', icon: 'scale', category: 'parties',
-        content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]",
-      },
-      {
-        id: 'representant', label: 'Représentant / mandataire',
-        color: '#c2410c', icon: 'briefcase', category: 'parties',
-        content: "Représenté(e) par **[Nom du mandataire]**, [Qualité], en vertu d'un pouvoir en date du [Date du pouvoir]",
-      },
+      { id: 'personne_physique', label: 'Personne physique', color: '#01696f', icon: 'user', category: 'parties', content: '[M/Mme] **[Nom] [Prénom]**, [né/née] le [Date de naissance] à [Lieu de naissance], de nationalité [Nationalité], demeurant au [Adresse]' },
+      { id: 'personne_morale',   label: 'Personne morale',   color: '#7c3aed', icon: 'building', category: 'parties', content: 'La société **[Nom de la société]**, [Forme juridique] au capital de [Capital social] euros, immatriculée au RCS de [Ville RCS] sous le numéro [Numéro RCS], dont le siège social est sis [Adresse du siège], représentée par [Représentant légal], en sa qualité de [Qualité du représentant]' },
+      { id: 'avocat',            label: 'Ayant pour avocat',        color: '#be185d', icon: 'scale',     category: 'parties', content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]" },
+      { id: 'representant',      label: 'Représentant / mandataire', color: '#c2410c', icon: 'briefcase', category: 'parties', content: "Représenté(e) par **[Nom du mandataire]**, [Qualité], en vertu d'un pouvoir en date du [Date du pouvoir]" },
     ],
   },
   {
@@ -162,7 +146,7 @@ function BrickIcon({ name, size = 11, color }: { name: string; size?: number; co
   }
 }
 
-// ─── Chip brique (panneau latéral) ───────────────────────────────────────────
+// ─── Chip brique ─────────────────────────────────────────────────────────────
 
 function BrickChip({ brick, onInsert }: { brick: Brick; onInsert: () => void }) {
   const [hovered, setHovered] = useState(false)
@@ -264,19 +248,71 @@ function BrickPreview({ content, color }: { content: string; color: string }) {
   )
 }
 
+// ─── Color Picker compact (cercle + popover) ──────────────────────────────────
+
+function ColorPicker({ color, onChange }: { color: string; onChange: (c: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', gap: '4px' }}>
+      <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Couleur</span>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        title="Changer la couleur"
+        style={{
+          width: '34px', height: '34px', borderRadius: '50%', background: color,
+          border: `2px solid ${color}`, outline: open ? `2px solid ${color}` : 'none',
+          outlineOffset: '2px', cursor: 'pointer', transition: 'all 0.12s', flexShrink: 0,
+        }}
+      />
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 50, background: 'var(--color-surface)', border: '1px solid var(--color-border)',
+          borderRadius: '10px', padding: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px', width: '136px',
+        }}>
+          {COLOR_OPTIONS.map(c => (
+            <button
+              key={c} type="button"
+              onClick={() => { onChange(c); setOpen(false) }}
+              style={{
+                width: '20px', height: '20px', borderRadius: '50%', background: c,
+                border: `2px solid ${color === c ? c : 'transparent'}`,
+                outline: color === c ? `2px solid ${c}` : 'none', outlineOffset: '2px',
+                cursor: 'pointer', transition: 'all 0.1s',
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Formulaire d'édition ─────────────────────────────────────────────────────
-// La colonne droite est en overflowY:auto — ce formulaire est en flux normal
-// (pas de flex:1 sur la zone contenu) pour éviter tout chevauchement.
+// Structure : colonne flex avec scroll sur le contenu + actions sticky en bas.
 
 function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
   brick: Brick; onSave: (b: Brick) => void; onCancel: () => void; onDelete?: () => void; isNew?: boolean
 }) {
-  const [label,    setLabel]    = useState(brick.label)
-  const [content,  setContent]  = useState(brick.content)
-  const [category, setCategory] = useState(brick.category)
-  const [icon,     setIcon]     = useState(brick.icon)
-  const [color,    setColor]    = useState(brick.color)
-  const [showPreview, setShowPreview] = useState(false)
+  const [label,         setLabel]         = useState(brick.label)
+  const [content,       setContent]       = useState(brick.content)
+  const [category,      setCategory]      = useState(brick.category)
+  const [icon,          setIcon]          = useState(brick.icon)
+  const [color,         setColor]         = useState(brick.color)
+  const [showPreview,   setShowPreview]   = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -316,107 +352,92 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
     borderRadius: 'var(--radius-md)', color: 'var(--color-text)', outline: 'none',
   }
 
-  // ── Rendu : flux vertical simple, pas de flex stretch ────────────────────
+  // ─── Le wrapper externe est en flex-column height:100%
+  // ─── La zone scrollable prend flex:1, les actions sont flexShrink:0
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
 
-      {/* Icône + Nom */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <div style={{ width: '36px', height: '36px', borderRadius: 'var(--radius-md)', flexShrink: 0, background: color + '18', border: `2px solid ${color}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <BrickIcon name={icon} size={16} color={color} />
-        </div>
-        <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Nom de la brique" autoFocus={isNew}
-          style={{ ...inp, flex: 1, fontSize: '14px', fontWeight: 600 }} />
-      </div>
+      {/* Zone scrollable ─────────────────────────────────────────── */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
 
-      {/* Catégorie + Icône */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-        <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          Catégorie
-          <select value={category} onChange={e => setCategory(e.target.value)} style={inp}>
-            {ALL_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-          </select>
-        </label>
-        <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          Icône
-          <select value={icon} onChange={e => setIcon(e.target.value)} style={inp}>
-            {ICON_OPTIONS.map(o => <option key={o.name} value={o.name}>{o.label}</option>)}
-          </select>
-        </label>
-      </div>
-
-      {/* Couleur */}
-      <div>
-        <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginBottom: '6px' }}>Couleur</p>
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-          {COLOR_OPTIONS.map(c => (
-            <button key={c} onClick={() => setColor(c)} style={{ width: '22px', height: '22px', borderRadius: '50%', background: c, border: `2px solid ${color === c ? c : 'transparent'}`, outline: color === c ? `2px solid ${c}` : 'none', outlineOffset: '2px', cursor: 'pointer', transition: 'all 0.1s' }} />
-          ))}
-        </div>
-      </div>
-
-      {/* ── Zone contenu : flux normal, pas de flex-grow ── */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
-
-        {/* Label + toggle aperçu */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-          <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0 }}>Contenu</p>
-          <button type="button" onClick={() => setShowPreview(v => !v)}
-            style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: `1px solid ${showPreview ? color : 'var(--color-border)'}`, background: showPreview ? color + '15' : 'transparent', color: showPreview ? color : 'var(--color-text-faint)', cursor: 'pointer', transition: 'all 0.1s' }}
-          >
-            {showPreview ? "Masquer l'aperçu" : 'Aperçu'}
-          </button>
+        {/* Icône + Nom */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ width: '36px', height: '36px', borderRadius: 'var(--radius-md)', flexShrink: 0, background: color + '18', border: `2px solid ${color}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <BrickIcon name={icon} size={16} color={color} />
+          </div>
+          <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Nom de la brique" autoFocus={isNew}
+            style={{ ...inp, flex: 1, fontSize: '14px', fontWeight: 600 }} />
         </div>
 
-        {/* Barre de formatage */}
-        <FormatToolbar onFormat={applyFormat} />
-
-        {/* Textarea */}
-        <textarea
-          ref={textareaRef}
-          value={content}
-          onChange={e => setContent(e.target.value)}
-          placeholder={`Rédigez le contenu…\n**Gras** __Souligné__ _Italique_ ^^MAJUSCULES^^\n[Variable] [M/Mme] [né/née]`}
-          rows={5}
-          style={{ ...inp, resize: 'vertical', lineHeight: 1.6, fontFamily: 'monospace', fontSize: '12px', borderRadius: '0 0 6px 6px', borderTop: 'none' }}
-        />
-
-        {/* Aperçu — juste en dessous du textarea, dans le flux */}
-        {showPreview && <BrickPreview content={content} color={color} />}
-      </div>
-
-      {/* ── Variables texte ── */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>Variables texte</p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-          {SUGGESTED_TAGS.map(t => (
-            <button key={t} type="button" onClick={() => insertTag(t)}
-              style={{ padding: '2px 7px', borderRadius: '20px', border: '1.5px solid #01696f60', background: '#01696f0c', color: '#01696f', fontSize: '10px', fontWeight: 500, cursor: 'pointer', fontFamily: 'monospace' }}
-              onMouseEnter={e => { const b = e.currentTarget; b.style.background = '#01696f18'; b.style.borderColor = '#01696f' }}
-              onMouseLeave={e => { const b = e.currentTarget; b.style.background = '#01696f0c'; b.style.borderColor = '#01696f60' }}
-            >[{t}]</button>
-          ))}
+        {/* Catégorie + Icône + Couleur sur la même ligne */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
+          <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            Catégorie
+            <select value={category} onChange={e => setCategory(e.target.value)} style={inp}>
+              {ALL_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </label>
+          <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            Icône
+            <select value={icon} onChange={e => setIcon(e.target.value)} style={inp}>
+              {ICON_OPTIONS.map(o => <option key={o.name} value={o.name}>{o.label}</option>)}
+            </select>
+          </label>
+          <ColorPicker color={color} onChange={setColor} />
         </div>
-      </div>
 
-      {/* ── Variables conditionnelles ── */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>
-          Variables conditionnelles <span style={{ textTransform: 'none', fontWeight: 400 }}>(liste déroulante)</span>
-        </p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-          {CONDITIONAL_TAGS.map(t => (
-            <button key={t.value} type="button" onClick={() => insertTag(t.value)}
-              style={{ padding: '2px 7px', borderRadius: '20px', border: '1.5px solid #7c3aed60', background: '#7c3aed0c', color: '#7c3aed', fontSize: '10px', fontWeight: 500, cursor: 'pointer', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '4px' }}
-              onMouseEnter={e => { const b = e.currentTarget; b.style.background = '#7c3aed18'; b.style.borderColor = '#7c3aed' }}
-              onMouseLeave={e => { const b = e.currentTarget; b.style.background = '#7c3aed0c'; b.style.borderColor = '#7c3aed60' }}
-            ><ListFilter size={9} />[{t.label}]</button>
-          ))}
+        {/* Zone contenu */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0 }}>Contenu</p>
+            <button type="button" onClick={() => setShowPreview(v => !v)}
+              style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '20px', border: `1px solid ${showPreview ? color : 'var(--color-border)'}`, background: showPreview ? color + '15' : 'transparent', color: showPreview ? color : 'var(--color-text-faint)', cursor: 'pointer', transition: 'all 0.1s' }}
+            >{showPreview ? "Masquer l'aperçu" : 'Aperçu'}</button>
+          </div>
+          <FormatToolbar onFormat={applyFormat} />
+          <textarea
+            ref={textareaRef} value={content} onChange={e => setContent(e.target.value)}
+            placeholder={`Rédigez le contenu…\n**Gras** __Souligné__ _Italique_ ^^MAJUSCULES^^\n[Variable] [M/Mme] [né/née]`}
+            rows={5}
+            style={{ ...inp, resize: 'vertical', lineHeight: 1.6, fontFamily: 'monospace', fontSize: '12px', borderRadius: '0 0 6px 6px', borderTop: 'none' }}
+          />
+          {showPreview && <BrickPreview content={content} color={color} />}
         </div>
-      </div>
 
-      {/* ── Actions ── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px solid var(--color-border)', marginTop: '4px' }}>
+        {/* Variables texte */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>Variables texte</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+            {SUGGESTED_TAGS.map(t => (
+              <button key={t} type="button" onClick={() => insertTag(t)}
+                style={{ padding: '2px 7px', borderRadius: '20px', border: '1.5px solid #01696f60', background: '#01696f0c', color: '#01696f', fontSize: '10px', fontWeight: 500, cursor: 'pointer', fontFamily: 'monospace' }}
+                onMouseEnter={e => { const b = e.currentTarget; b.style.background = '#01696f18'; b.style.borderColor = '#01696f' }}
+                onMouseLeave={e => { const b = e.currentTarget; b.style.background = '#01696f0c'; b.style.borderColor = '#01696f60' }}
+              >[{t}]</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Variables conditionnelles */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>
+            Variables conditionnelles <span style={{ textTransform: 'none', fontWeight: 400 }}>(liste déroulante)</span>
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+            {CONDITIONAL_TAGS.map(t => (
+              <button key={t.value} type="button" onClick={() => insertTag(t.value)}
+                style={{ padding: '2px 7px', borderRadius: '20px', border: '1.5px solid #7c3aed60', background: '#7c3aed0c', color: '#7c3aed', fontSize: '10px', fontWeight: 500, cursor: 'pointer', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '4px' }}
+                onMouseEnter={e => { const b = e.currentTarget; b.style.background = '#7c3aed18'; b.style.borderColor = '#7c3aed' }}
+                onMouseLeave={e => { const b = e.currentTarget; b.style.background = '#7c3aed0c'; b.style.borderColor = '#7c3aed60' }}
+              ><ListFilter size={9} />[{t.label}]</button>
+            ))}
+          </div>
+        </div>
+
+      </div>{/* fin zone scrollable */}
+
+      {/* Actions — toujours visibles, ne scrollent pas ────────────── */}
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
         <div>
           {onDelete && (confirmDelete ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -439,6 +460,7 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
           >{isNew ? 'Créer' : 'Enregistrer'}</button>
         </div>
       </div>
+
     </div>
   )
 }
@@ -469,12 +491,12 @@ function BrickEditorRow({ brick, onEdit, isSelected }: { brick: Brick; onEdit: (
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function BricksEditorModal({ groups, onSave, onClose }: { groups: BrickGroup[]; onSave: (g: BrickGroup[]) => void; onClose: () => void }) {
-  const [localGroups, setLocalGroups] = useState<BrickGroup[]>(() => JSON.parse(JSON.stringify(groups)))
+  const [localGroups,    setLocalGroups]    = useState<BrickGroup[]>(() => JSON.parse(JSON.stringify(groups)))
   const [selectedBrickId, setSelectedBrickId] = useState<string | null>(null)
-  const [isCreating,  setIsCreating]  = useState(false)
-  const [search,      setSearch]      = useState('')
-  const [filterCat,   setFilterCat]   = useState('all')
-  const [hasChanges,  setHasChanges]  = useState(false)
+  const [isCreating,     setIsCreating]     = useState(false)
+  const [search,         setSearch]         = useState('')
+  const [filterCat,      setFilterCat]      = useState('all')
+  const [hasChanges,     setHasChanges]     = useState(false)
 
   const allBricks      = localGroups.flatMap(g => g.bricks)
   const filteredBricks = allBricks.filter(b => {
@@ -551,10 +573,10 @@ function BricksEditorModal({ groups, onSave, onClose }: { groups: BrickGroup[]; 
           </div>
         </div>
 
-        {/* Corps : liste fixe à gauche | formulaire scrollable à droite */}
+        {/* Corps */}
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-          {/* ── Colonne gauche ── */}
+          {/* Colonne gauche */}
           <div style={{ width: '300px', flexShrink: 0, borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', background: 'var(--color-surface-offset)' }}>
             <div style={{ padding: '12px', borderBottom: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
               <div style={{ position: 'relative' }}>
@@ -581,8 +603,8 @@ function BricksEditorModal({ groups, onSave, onClose }: { groups: BrickGroup[]; 
             </div>
           </div>
 
-          {/* ── Colonne droite : scroll libre, formulaire en flux normal ── */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+          {/* Colonne droite — BrickEditorForm gère son propre scroll + actions sticky */}
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {isCreating ? (
               <BrickEditorForm brick={newTpl} isNew
                 onSave={b => addBrick({ label: b.label, content: b.content, category: b.category, icon: b.icon, color: b.color })}
@@ -593,7 +615,7 @@ function BricksEditorModal({ groups, onSave, onClose }: { groups: BrickGroup[]; 
                 onCancel={() => setSelectedBrickId(null)}
                 onDelete={() => deleteBrick(selectedBrick.id)} />
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: 'var(--color-text-faint)', minHeight: '400px' }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: 'var(--color-text-faint)' }}>
                 <Settings2 size={40} style={{ opacity: 0.12 }} />
                 <p style={{ fontSize: '13px', textAlign: 'center', maxWidth: '280px', lineHeight: 1.6 }}>
                   Sélectionnez une brique pour la modifier, ou créez-en une nouvelle.<br /><br />
@@ -604,7 +626,7 @@ function BricksEditorModal({ groups, onSave, onClose }: { groups: BrickGroup[]; 
           </div>
         </div>
 
-        {/* Footer */}
+        {/* Footer global (modifs non enregistrées) */}
         {hasChanges && (
           <div style={{ padding: '8px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-primary)08', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <span style={{ fontSize: '11px', color: 'var(--color-primary)', fontWeight: 500 }}>● Modifications non enregistrées</span>
