@@ -15,17 +15,9 @@ const TYPE_LABELS: Record<string, string> = {
   contract: 'Contrat',
 };
 
-/**
- * Extrait le texte brut depuis n'importe quel format de contenu :
- * - JSON TipTap  ({"type":"doc", ...})
- * - HTML          (<p>...</p>)
- * - Texte brut
- */
 function extractPlainText(raw: string): string {
   if (!raw || raw.trim() === '') return '';
   const trimmed = raw.trim();
-
-  // JSON TipTap
   if (trimmed.startsWith('{')) {
     try {
       const doc = JSON.parse(trimmed);
@@ -34,24 +26,14 @@ function extractPlainText(raw: string): string {
         if (node.type === 'text' && node.text) parts.push(node.text);
         if (Array.isArray(node.content)) {
           node.content.forEach((child) => walk(child as { type?: string; text?: string; content?: unknown[] }));
-          // Ajoute un espace après les blocs (paragraph, heading...)
-          if (['paragraph', 'heading', 'bulletList', 'listItem'].includes(node.type ?? '')) {
-            parts.push(' ');
-          }
+          if (['paragraph', 'heading', 'bulletList', 'listItem'].includes(node.type ?? '')) parts.push(' ');
         }
       }
       walk(doc);
       return parts.join('').replace(/\s+/g, ' ').trim();
-    } catch {
-      // pas du JSON valide, on continue
-    }
+    } catch { /* not valid JSON */ }
   }
-
-  // HTML
-  if (trimmed.startsWith('<')) {
-    return trimmed.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  }
-
+  if (trimmed.startsWith('<')) return trimmed.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   return trimmed;
 }
 
@@ -61,68 +43,65 @@ export function DocumentPreviewPanel({ doc }: DocumentPreviewPanelProps) {
   return (
     <aside
       className={cn(
-        // Panneau fixe à droite — 40% de la largeur disponible, min 280px, max 420px
-        'hidden lg:flex flex-col flex-shrink-0',
-        'w-[38%] min-w-[280px] max-w-[420px]',
+        // 55 % de l'espace total
+        'hidden lg:flex flex-col basis-[55%] shrink-0',
         'border-l border-[var(--color-border)] bg-[var(--color-surface)]',
         'overflow-hidden'
       )}
     >
       {/* Panel header */}
-      <div className="px-5 py-4 border-b border-[var(--color-border)]">
+      <div className="px-6 py-4 border-b border-[var(--color-border)]">
         <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
           Aper\u00e7u
         </p>
       </div>
 
       {!doc ? (
-        /* Empty state */
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
-          <div className="w-16 h-16 rounded-2xl bg-[var(--color-surface-raised)] flex items-center justify-center">
-            <FileText className="w-8 h-8 text-[var(--color-text-subtle)]" />
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-10">
+          <div className="w-20 h-20 rounded-3xl bg-[var(--color-surface-raised)] flex items-center justify-center">
+            <FileText className="w-10 h-10 text-[var(--color-text-subtle)]" />
           </div>
-          <p className="text-sm text-[var(--color-text-muted)]">
+          <p className="text-sm text-[var(--color-text-muted)] max-w-xs">
             Survolez un document pour afficher son aper\u00e7u
           </p>
         </div>
       ) : (
-        /* Document preview */
         <div className="flex-1 overflow-y-auto">
 
-          {/* Big document icon + title */}
-          <div className="flex flex-col items-center gap-3 px-6 py-8 border-b border-[var(--color-border)]">
-            <div className="w-20 h-20 rounded-2xl bg-[var(--color-primary)]/10 flex items-center justify-center">
-              <FileText className="w-10 h-10 text-[var(--color-primary)]" />
+          {/* Icon + title */}
+          <div className="flex flex-col items-center gap-4 px-8 py-10 border-b border-[var(--color-border)]">
+            <div className="w-24 h-24 rounded-3xl bg-[var(--color-primary)]/10 flex items-center justify-center">
+              <FileText className="w-12 h-12 text-[var(--color-primary)]" />
             </div>
             <div className="text-center">
-              <p className="text-sm font-semibold text-[var(--color-text)] leading-snug">{doc.title}</p>
-              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+              <p className="text-base font-semibold text-[var(--color-text)] leading-snug">{doc.title}</p>
+              <p className="text-sm text-[var(--color-text-muted)] mt-1">
                 {TYPE_LABELS[doc.type ?? ''] ?? doc.type ?? 'Document'}
               </p>
             </div>
           </div>
 
-          {/* Meta info */}
-          <div className="px-6 py-5 space-y-4 border-b border-[var(--color-border)]">
+          {/* Meta */}
+          <div className="px-8 py-6 space-y-4 border-b border-[var(--color-border)]">
             <div className="flex items-start gap-3">
               <Clock className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
               <div>
                 <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium">Modifi\u00e9 le</p>
-                <p className="text-xs text-[var(--color-text)] mt-0.5">{formatDateTime(doc.updatedAt)}</p>
+                <p className="text-sm text-[var(--color-text)] mt-0.5">{formatDateTime(doc.updatedAt)}</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
               <Clock className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
               <div>
                 <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium">Cr\u00e9\u00e9 le</p>
-                <p className="text-xs text-[var(--color-text)] mt-0.5">{formatDateTime(doc.createdAt)}</p>
+                <p className="text-sm text-[var(--color-text)] mt-0.5">{formatDateTime(doc.createdAt)}</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
               <AlignLeft className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
               <div>
                 <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium">Longueur</p>
-                <p className="text-xs text-[var(--color-text)] mt-0.5">{doc.wordCount ?? 0} mots</p>
+                <p className="text-sm text-[var(--color-text)] mt-0.5">{doc.wordCount ?? 0} mots</p>
               </div>
             </div>
             {doc.tags && doc.tags.length > 0 && (
@@ -130,7 +109,7 @@ export function DocumentPreviewPanel({ doc }: DocumentPreviewPanelProps) {
                 <Tag className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 flex-shrink-0" />
                 <div className="flex flex-wrap gap-1.5">
                   {doc.tags.map((tag) => (
-                    <span key={tag} className="px-2 py-0.5 text-[10px] rounded-full bg-[var(--color-surface-raised)] text-[var(--color-text-muted)]">
+                    <span key={tag} className="px-2.5 py-1 text-xs rounded-full bg-[var(--color-surface-raised)] text-[var(--color-text-muted)]">
                       {tag}
                     </span>
                   ))}
@@ -139,18 +118,16 @@ export function DocumentPreviewPanel({ doc }: DocumentPreviewPanelProps) {
             )}
           </div>
 
-          {/* Text excerpt */}
-          <div className="px-6 py-5">
+          {/* Excerpt */}
+          <div className="px-8 py-6">
             <p className="text-[10px] text-[var(--color-text-subtle)] uppercase tracking-wide font-medium mb-3">Contenu</p>
             {textContent ? (
-              <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
-                {textContent.slice(0, 800)}
-                {textContent.length > 800 && (
-                  <span className="text-[var(--color-text-subtle)]"> \u2026</span>
-                )}
+              <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
+                {textContent.slice(0, 1000)}
+                {textContent.length > 1000 && <span className="text-[var(--color-text-subtle)]"> \u2026</span>}
               </p>
             ) : (
-              <p className="text-xs text-[var(--color-text-subtle)] italic">Document vide.</p>
+              <p className="text-sm text-[var(--color-text-subtle)] italic">Document vide.</p>
             )}
           </div>
         </div>

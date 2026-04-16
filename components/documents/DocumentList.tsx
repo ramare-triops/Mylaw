@@ -48,15 +48,15 @@ function downloadDocAsHtml(doc: Document) {
 
 const SORT_OPTIONS: { value: SortField; label: string }[] = [
   { value: 'updatedAt', label: 'Date de modification' },
-  { value: 'createdAt', label: 'Date de création' },
-  { value: 'title', label: 'Titre (A‑Z)' },
+  { value: 'createdAt', label: 'Date de cr\u00e9ation' },
+  { value: 'title', label: 'Titre (A\u2011Z)' },
   { value: 'wordCount', label: 'Nombre de mots' },
 ];
 
 const FILTER_OPTIONS: { value: FilterType; label: string }[] = [
   { value: 'all', label: 'Tous les types' },
   { value: 'draft', label: 'Brouillons' },
-  { value: 'final', label: 'Finalisés' },
+  { value: 'final', label: 'Finalis\u00e9s' },
   { value: 'contract', label: 'Contrats' },
 ];
 
@@ -170,11 +170,11 @@ export function DocumentList() {
 
   return (
     <>
-      {/* Two-column layout: list | preview panel */}
+      {/* Two-column layout 45 / 55 */}
       <div className="flex h-full">
 
-        {/* ── Left: document list ── */}
-        <div className="flex-1 min-w-0 overflow-auto p-6">
+        {/* ── Left: document list ── 45% */}
+        <div className="basis-[45%] shrink-0 min-w-0 overflow-auto p-6">
 
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
@@ -193,11 +193,11 @@ export function DocumentList() {
 
           {/* Toolbar */}
           <div className="flex items-center gap-2 mb-4 flex-wrap">
-            <div className="relative flex-1 min-w-[180px]">
+            <div className="relative flex-1 min-w-[160px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
               <input
                 type="text"
-                placeholder="Rechercher…"
+                placeholder="Rechercher\u2026"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className={cn(
@@ -244,7 +244,7 @@ export function DocumentList() {
                       className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2"
                     >
                       {sortDir === 'asc' ? <SortAsc className="w-4 h-4" /> : <SortDesc className="w-4 h-4" />}
-                      {sortDir === 'asc' ? 'Croissant' : 'Décroissant'}
+                      {sortDir === 'asc' ? 'Croissant' : 'D\u00e9croissant'}
                     </button>
                   </div>
                 </div>
@@ -293,7 +293,7 @@ export function DocumentList() {
               'bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20'
             )}>
               <span className="text-[var(--color-primary)] font-medium">
-                {selectedIds.size} sélectionné{selectedIds.size > 1 ? 's' : ''}
+                {selectedIds.size} s\u00e9lectionn\u00e9{selectedIds.size > 1 ? 's' : ''}
               </span>
               <div className="ml-auto flex items-center gap-2">
                 <div className="relative">
@@ -305,7 +305,7 @@ export function DocumentList() {
                       'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors'
                     )}
                   >
-                    <Download className="w-3.5 h-3.5" /> Télécharger
+                    <Download className="w-3.5 h-3.5" /> T\u00e9l\u00e9charger
                     <ChevronDown className="w-3 h-3 opacity-60" />
                   </button>
                   {showDownloadDropdown && (
@@ -347,8 +347,8 @@ export function DocumentList() {
                   : <Square className="w-4 h-4" />}
               </button>
               <span className="flex-1">Titre</span>
-              <span className="w-36 text-right hidden sm:block">Modifié le</span>
-              <span className="w-20 text-right hidden sm:block">Mots</span>
+              <span className="w-32 text-right">Modifi\u00e9 le</span>
+              <span className="w-16 text-right">Mots</span>
               <span className="w-16" />
             </div>
           )}
@@ -368,7 +368,6 @@ export function DocumentList() {
                   previewDoc?.id === doc.id && 'bg-[var(--color-surface-raised)]'
                 )}
               >
-                {/* Checkbox */}
                 <button
                   onClick={(e) => toggleSelect(e, doc.id!)}
                   style={selectedIds.has(doc.id!) ? { opacity: 1 } : undefined}
@@ -381,7 +380,6 @@ export function DocumentList() {
 
                 <FileText className="w-4 h-4 text-[var(--color-text-muted)] flex-shrink-0" />
 
-                {/* Title / rename */}
                 <div className="flex-1 min-w-0" onClick={(e) => renamingId === doc.id && e.stopPropagation()}>
                   {renamingId === doc.id ? (
                     <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -405,20 +403,19 @@ export function DocumentList() {
                   ) : (
                     <>
                       <div className="text-sm font-medium text-[var(--color-text)] truncate">{doc.title}</div>
-                      <div className="text-xs text-[var(--color-text-muted)] sm:hidden">{formatDateTime(doc.updatedAt)} • {doc.wordCount} mots</div>
+                      <div className="text-xs text-[var(--color-text-muted)]">{formatDateTime(doc.updatedAt)} \u2022 {doc.wordCount} mots</div>
                     </>
                   )}
                 </div>
 
-                <div className="text-xs text-[var(--color-text-muted)] w-36 text-right hidden sm:block flex-shrink-0">{formatDateTime(doc.updatedAt)}</div>
-                <div className="text-xs text-[var(--color-text-muted)] w-20 text-right hidden sm:block flex-shrink-0">{doc.wordCount} mots</div>
+                <div className="text-xs text-[var(--color-text-muted)] w-32 text-right flex-shrink-0">{formatDateTime(doc.updatedAt)}</div>
+                <div className="text-xs text-[var(--color-text-muted)] w-16 text-right flex-shrink-0">{doc.wordCount} mots</div>
 
-                {/* Row actions */}
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity w-16 justify-end flex-shrink-0">
                   <button onClick={(e) => startRename(e, doc)} className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors" title="Renommer">
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
-                  <button onClick={(e) => { e.stopPropagation(); downloadDocAsTxt(doc); }} className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors" title="Télécharger">
+                  <button onClick={(e) => { e.stopPropagation(); downloadDocAsTxt(doc); }} className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors" title="T\u00e9l\u00e9charger">
                     <Download className="w-3.5 h-3.5" />
                   </button>
                   <button onClick={(e) => handleDelete(e, doc.id!)} className="p-1.5 rounded hover:bg-red-100 hover:text-red-600 transition-colors" title="Supprimer">
@@ -431,14 +428,14 @@ export function DocumentList() {
             {filteredAndSorted.length === 0 && (
               <div className="py-12 text-center text-[var(--color-text-muted)] text-sm">
                 {search || filterType !== 'all'
-                  ? 'Aucun document ne correspond aux critères.'
-                  : 'Aucun document. Créez votre premier document ci-dessus.'}
+                  ? 'Aucun document ne correspond aux crit\u00e8res.'
+                  : 'Aucun document. Cr\u00e9ez votre premier document ci-dessus.'}
               </div>
             )}
           </div>
         </div>
 
-        {/* ── Right: sticky preview panel ── */}
+        {/* ── Right: preview panel ── 55% */}
         <DocumentPreviewPanel doc={previewDoc} />
       </div>
 
