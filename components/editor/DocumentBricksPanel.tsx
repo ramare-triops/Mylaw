@@ -50,22 +50,18 @@ const ICON_OPTIONS = [
   { name: 'blocks',     label: 'Brique'     },
 ]
 
+// 10 couleurs — une seule par teinte, toutes bien contrastées
 const COLOR_OPTIONS = [
-  '#01696f',
-  '#0369a1',
-  '#4f46e5',
-  '#7c3aed',
-  '#be185d',
-  '#c2410c',
-  '#b45309',
-  '#15803d',
-  '#6b7280',
-  '#dc2626',
-  '#0891b2',
-  '#059669',
-  '#d97706',
-  '#9333ea',
-  '#e11d48',
+  '#01696f', // teal
+  '#2563eb', // bleu
+  '#4f46e5', // indigo
+  '#7c3aed', // violet
+  '#be185d', // rose
+  '#dc2626', // rouge
+  '#c2410c', // orange
+  '#b45309', // ambre
+  '#15803d', // vert
+  '#374151', // gris ardoise
 ]
 
 // ─── Données par défaut ───────────────────────────────────────────────────────
@@ -278,7 +274,6 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', gap: '4px' }}>
       <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Couleur</span>
-      {/* Petit cercle déclencheur */}
       <div style={{ display: 'flex', alignItems: 'center', height: '31px' }}>
         <button
           type="button"
@@ -319,7 +314,6 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
 }
 
 // ─── Formulaire d'édition ─────────────────────────────────────────────────────
-// onSave : sauvegarde immédiate sans passer par hasChanges du parent.
 
 function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
   brick: Brick
@@ -457,7 +451,7 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
 
       </div>{/* fin zone scrollable */}
 
-      {/* Actions — toujours visibles, ne scrollent pas */}
+      {/* Actions */}
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
         <div>
           {onDelete && (confirmDelete ? (
@@ -531,7 +525,6 @@ function BricksEditorModal({ groups, onSave, onClose }: {
   })
   const selectedBrick = allBricks.find(b => b.id === selectedBrickId) ?? null
 
-  // Met à jour localGroups ET sauvegarde + ferme immédiatement
   function updateAndSave(updated: Brick) {
     setLocalGroups(prev => {
       const cleaned = prev.map(g => ({ ...g, bricks: g.bricks.filter(b => b.id !== updated.id) }))
