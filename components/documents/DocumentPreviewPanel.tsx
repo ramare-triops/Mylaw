@@ -16,24 +16,15 @@ const TYPE_LABELS: Record<string, string> = {
   contract: 'Contrat',
 };
 
-/**
- * Convertit le contenu (JSON TipTap ou HTML) en HTML rendu.
- * Pour le JSON TipTap on reconstruit un HTML simple mais fid\u00e8le.
- */
 function contentToHtml(raw: string): string {
   if (!raw || raw.trim() === '') return '';
   const trimmed = raw.trim();
-
-  // JSON TipTap \u2192 reconstruction HTML
   if (trimmed.startsWith('{')) {
     try {
       const doc = JSON.parse(trimmed);
-      function nodeToHtml(node: { type?: string; text?: string; attrs?: Record<string, unknown>; marks?: { type: string; attrs?: Record<string, unknown> }[]; content?: unknown[] }): string {
+      function nodeToHtml(node: { type?: string; text?: string; attrs?: Record<string, unknown>; marks?: { type: string }[]; content?: unknown[] }): string {
         if (node.type === 'text') {
-          let t = node.text ?? '';
-          // Escape HTML
-          t = t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          // Apply marks
+          let t = (node.text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           (node.marks ?? []).forEach((m) => {
             if (m.type === 'bold') t = `<strong>${t}</strong>`;
             if (m.type === 'italic') t = `<em>${t}</em>`;
@@ -48,10 +39,7 @@ function contentToHtml(raw: string): string {
         switch (node.type) {
           case 'doc': return inner;
           case 'paragraph': return `<p${style}>${inner || '&nbsp;'}</p>`;
-          case 'heading': {
-            const level = (node.attrs?.level as number) ?? 1;
-            return `<h${level}${style}>${inner}</h${level}>`;
-          }
+          case 'heading': return `<h${node.attrs?.level ?? 1}${style}>${inner}</h${node.attrs?.level ?? 1}>`;
           case 'bulletList': return `<ul>${inner}</ul>`;
           case 'orderedList': return `<ol>${inner}</ol>`;
           case 'listItem': return `<li>${inner}</li>`;
@@ -64,61 +52,71 @@ function contentToHtml(raw: string): string {
       return nodeToHtml(doc);
     } catch { /* fallback */ }
   }
-
-  // HTML direct
   if (trimmed.startsWith('<')) return trimmed;
-
-  // Texte brut
   return `<p>${trimmed.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
 }
 
-/** Composant page A4 mise \u00e0 l'\u00e9chelle dans son conteneur */
 function A4Page({ html }: { html: string }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
-
-  // Largeur r\u00e9elle d'une page A4 \u00e0 96 dpi = 794 px
   const A4_W = 794;
-  const A4_H = 1123;
+  // On affiche seulement le haut de la page (environ 1/3) pour un effet vignette
+  const VISIBLE_H = 340;
 
   useEffect(() => {
     if (!wrapperRef.current) return;
     const obs = new ResizeObserver(([entry]) => {
-      const available = entry.contentRect.width;
-      setScale(Math.min(1, available / A4_W));
+      setScale(Math.min(1, entry.contentRect.width / A4_W));
     });
     obs.observe(wrapperRef.current);
     return () => obs.disconnect();
   }, []);
 
   return (
-    // Conteneur qui mesure la largeur disponible
     <div ref={wrapperRef} className="w-full flex justify-center">
-      {/* Wrapper qui prend la hauteur mise \u00e0 l'\u00e9chelle */}
-      <div style={{ width: A4_W * scale, height: A4_H * scale, position: 'relative', flexShrink: 0 }}>
-        {/* La page A4 r\u00e9elle, transform\u00e9e */}
+      {/* Cadre avec overflow:hidden pour ne montrer que la partie haute */}
+      <div
+        style={{
+          width: A4_W * scale,
+          height: VISIBLE_H * scale,
+          position: 'relative',
+          flexShrink: 0,
+          overflow: 'hidden',
+          borderRadius: 6,
+          boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+        }}
+      >
+        {/* Page A4 r\u00e9elle mise \u00e0 l'\u00e9chelle */}
         <div
           style={{
             width: A4_W,
-            height: A4_H,
             transformOrigin: 'top left',
             transform: `scale(${scale})`,
             position: 'absolute',
             top: 0,
             left: 0,
             backgroundColor: '#ffffff',
-            boxShadow: '0 2px 16px rgba(0,0,0,0.13)',
-            padding: '72px 80px',
+            padding: '56px 64px',
             fontFamily: "Georgia, 'Source Serif 4', ui-serif",
             fontSize: '15px',
             lineHeight: '1.8',
             color: '#1a1a1a',
-            overflow: 'hidden',
             boxSizing: 'border-box',
           }}
-          // Applique les m\u00eames styles que .tiptap-editor
           className="tiptap-editor"
           dangerouslySetInnerHTML={{ __html: html }}
+        />
+        {/* Fondu en bas pour indiquer que le contenu continue */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 60,
+            background: 'linear-gradient(to bottom, transparent, rgba(255,255,255,0.95))',
+            pointerEvents: 'none',
+          }}
         />
       </div>
     </div>
@@ -131,13 +129,13 @@ export function DocumentPreviewPanel({ doc }: DocumentPreviewPanelProps) {
   return (
     <aside
       className={cn(
-        'hidden lg:flex flex-col basis-[55%] shrink-0',
+        'hidden lg:flex flex-col basis-[40%] shrink-0',
         'border-l border-[var(--color-border)] bg-[var(--color-surface-raised)]',
         'overflow-hidden'
       )}
     >
       {/* Header */}
-      <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between">
+      <div className="px-5 py-3.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between">
         <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
           Aper\u00e7u
         </p>
@@ -150,43 +148,47 @@ export function DocumentPreviewPanel({ doc }: DocumentPreviewPanelProps) {
 
       {!doc ? (
         /* Empty state */
-        <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-10">
-          <div className="w-20 h-20 rounded-3xl bg-[var(--color-surface)] flex items-center justify-center shadow-sm">
-            <FileText className="w-10 h-10 text-[var(--color-text-subtle)]" />
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-8">
+          <div className="w-16 h-16 rounded-2xl bg-[var(--color-surface)] flex items-center justify-center shadow-sm">
+            <FileText className="w-8 h-8 text-[var(--color-text-subtle)]" />
           </div>
-          <p className="text-sm text-[var(--color-text-muted)] max-w-xs">
+          <p className="text-xs text-[var(--color-text-muted)] max-w-[200px]">
             Survolez un document pour afficher son aper\u00e7u
           </p>
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto">
 
-          {/* M\u00e9ta compacte en haut */}
-          <div className="px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center gap-6 flex-wrap">
+          {/* Titre */}
+          <div className="px-5 py-4 border-b border-[var(--color-border)]">
+            <p className="text-sm font-semibold text-[var(--color-text)] leading-snug truncate">{doc.title}</p>
+            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{TYPE_LABELS[doc.type ?? ''] ?? doc.type ?? 'Document'}</p>
+          </div>
+
+          {/* M\u00e9ta compacte */}
+          <div className="px-5 py-3 border-b border-[var(--color-border)] flex flex-wrap gap-x-4 gap-y-1.5">
             <div className="flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+              <Clock className="w-3 h-3 text-[var(--color-text-muted)]" />
               <span className="text-xs text-[var(--color-text-muted)]">{formatDateTime(doc.updatedAt)}</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <AlignLeft className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+              <AlignLeft className="w-3 h-3 text-[var(--color-text-muted)]" />
               <span className="text-xs text-[var(--color-text-muted)]">{doc.wordCount ?? 0} mots</span>
             </div>
             {doc.tags && doc.tags.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                <div className="flex gap-1">
-                  {doc.tags.map((tag) => (
-                    <span key={tag} className="px-2 py-0.5 text-[10px] rounded-full bg-[var(--color-surface-raised)] text-[var(--color-text-muted)]">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
+              <div className="flex items-center gap-1">
+                <Tag className="w-3 h-3 text-[var(--color-text-muted)]" />
+                {doc.tags.map((tag) => (
+                  <span key={tag} className="px-1.5 py-0.5 text-[10px] rounded-full bg-[var(--color-surface)] text-[var(--color-text-muted)]">
+                    {tag}
+                  </span>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Page A4 simul\u00e9e */}
-          <div className="p-6">
+          {/* Miniature page A4 dans un cadre */}
+          <div className="p-4">
             <A4Page html={html} />
           </div>
         </div>

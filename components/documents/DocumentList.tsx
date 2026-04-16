@@ -170,11 +170,11 @@ export function DocumentList() {
 
   return (
     <>
-      {/* Two-column layout 45 / 55 */}
+      {/* Two-column layout 60 / 40 */}
       <div className="flex h-full">
 
-        {/* ── Left: document list ── 45% */}
-        <div className="basis-[45%] shrink-0 min-w-0 overflow-auto p-6">
+        {/* ── Left: document list ── 60% */}
+        <div className="basis-[60%] shrink-0 min-w-0 overflow-auto p-6">
 
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
@@ -435,7 +435,7 @@ export function DocumentList() {
           </div>
         </div>
 
-        {/* ── Right: preview panel ── 55% */}
+        {/* ── Right: preview panel ── 40% */}
         <DocumentPreviewPanel doc={previewDoc} />
       </div>
 
