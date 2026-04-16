@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { Clock, AlignLeft } from 'lucide-react';
-import { generateHTML } from '@tiptap/html';
+import { generateHTML } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
@@ -36,7 +36,6 @@ const TYPE_LABELS: Record<string, string> = {
   contract: 'Contrat',
 };
 
-// Extensions identiques \u00e0 DocumentEditorWrapper (sans les extensions interactives)
 const PREVIEW_EXTENSIONS = [
   StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
   Underline,
@@ -59,18 +58,14 @@ const PREVIEW_EXTENSIONS = [
   VariableField.configure({ HTMLAttributes: {} }),
 ];
 
-/** Convertit le contenu du document (JSON TipTap ou HTML brut) en HTML rendu */
 function contentToHtml(raw: string | null | undefined): string {
   if (!raw || raw.trim() === '') return '';
   const trimmed = raw.trim();
-  // JSON TipTap \u2192 generateHTML
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
-      const json = JSON.parse(trimmed);
-      return generateHTML(json, PREVIEW_EXTENSIONS);
-    } catch { /* fallback HTML */ }
+      return generateHTML(JSON.parse(trimmed), PREVIEW_EXTENSIONS);
+    } catch { /* fallback */ }
   }
-  // HTML brut
   return trimmed;
 }
 
@@ -110,7 +105,6 @@ const A4_STYLES = `
   img { max-width: 100%; height: auto; border-radius: 4px; }
   sub { vertical-align: sub; font-size: smaller; }
   sup { vertical-align: super; font-size: smaller; }
-  /* Variables */
   [data-variable-field] {
     display: inline-flex; align-items: center;
     font-size: 0.82em; font-weight: 500;
@@ -124,8 +118,8 @@ const A4_STYLES = `
   [data-variable-type="price"]     { color: #15803d; background: rgba(21,128,61,0.07); }
   [data-variable-type="duration"]  { color: #7c3aed; background: rgba(124,58,237,0.07); }
   [data-variable-type="reference"] { color: #be185d; background: rgba(190,24,93,0.07); }
-  [data-variable-type="default"],
-  [data-variable-field]:not([data-variable-type]) { color: #6b7280; background: rgba(107,114,128,0.07); }
+  [data-variable-field]:not([data-variable-type]),
+  [data-variable-type="default"]   { color: #6b7280; background: rgba(107,114,128,0.07); }
 `;
 
 const BUBBLE_W = 320;
@@ -138,7 +132,6 @@ export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps)
   const [pos, setPos] = useState({ top: anchor.top, left: anchor.left });
 
   const html = useMemo(() => contentToHtml(doc.content), [doc.content]);
-
   const srcdoc = useMemo(
     () => `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${A4_STYLES}</style></head><body>${html}</body></html>`,
     [html]
@@ -159,14 +152,7 @@ export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps)
   return (
     <div
       ref={bubbleRef}
-      style={{
-        position: 'fixed',
-        top: pos.top,
-        left: pos.left,
-        width: BUBBLE_W,
-        zIndex: 50,
-        pointerEvents: 'none',
-      }}
+      style={{ position: 'fixed', top: pos.top, left: pos.left, width: BUBBLE_W, zIndex: 50, pointerEvents: 'none' }}
       className="animate-fade-in"
     >
       <div style={{
@@ -176,7 +162,7 @@ export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps)
         boxShadow: '0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08)',
         overflow: 'hidden',
       }}>
-        {/* En-t\u00eate m\u00e9ta */}
+        {/* En-t\u00eate */}
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
           <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text)', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {doc.title}
@@ -221,7 +207,6 @@ export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps)
               }}
               sandbox="allow-same-origin"
             />
-            {/* Fondu bas */}
             <div style={{
               position: 'absolute',
               bottom: 0, left: 0, right: 0,
