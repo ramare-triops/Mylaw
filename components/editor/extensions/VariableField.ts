@@ -18,6 +18,21 @@ declare module '@tiptap/core' {
   }
 }
 
+/**
+ * Détermine la catégorie d'une variable à partir de son nom.
+ * Utilisé pour appliquer une couleur CSS via data-variable-type.
+ */
+function getVariableType(name: string): string {
+  const n = name.toLowerCase()
+  if (/date|jour|mois|ann[eé]e|naissance|signature/.test(n)) return 'date'
+  if (/prix|montant|somme|loyer|€|euro|tarif|co[uû]t|charges|caution/.test(n)) return 'price'
+  if (/nom|pr[eé]nom|partie|client|locataire|bailleur|vendeur|acheteur|acqu[eé]reur|c[eé]dant|soci[eé]t[eé]|entreprise|personne|mandant|mandataire|repr[eé]sentant|avocat|notaire/.test(n)) return 'name'
+  if (/adresse|ville|commune|d[eé]partement|r[eé]gion|pays|code.?postal|lieu|domicile|si[eè]ge/.test(n)) return 'address'
+  if (/dur[eé]e|d[eé]lai|p[eé]riode|mois|semaine/.test(n)) return 'duration'
+  if (/num[eé]ro|n°|r[eé]f[eé]rence|siret|siren|rcs|immatriculation|contrat|dossier/.test(n)) return 'reference'
+  return 'default'
+}
+
 export const VariableField = Node.create<VariableFieldOptions>({
   name: 'variableField',
 
@@ -48,14 +63,19 @@ export const VariableField = Node.create<VariableFieldOptions>({
   },
 
   renderHTML({ node, HTMLAttributes }) {
+    const varType = getVariableType(node.attrs.name ?? '')
     return [
       'span',
       mergeAttributes(
-        { 'data-variable-field': '', 'data-variable-name': node.attrs.name },
+        {
+          'data-variable-field': '',
+          'data-variable-name': node.attrs.name,
+          'data-variable-type': varType,
+        },
         this.options.HTMLAttributes,
         HTMLAttributes,
       ),
-      `[${node.attrs.name}]`,
+      node.attrs.name,
     ]
   },
 

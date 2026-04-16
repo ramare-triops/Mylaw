@@ -1,7 +1,7 @@
 // components/editor/DocumentEditorWrapper.tsx
 // Wrapper éditeur : applique les préférences utilisateur (police, taille, interligne, marges, spellcheck…)
 // Bouton Fermer avec popup 3 actions : Enregistrer sans fermer / Enregistrer et fermer / Annuler
-// Champs variables [Nom] [Ville] etc. cliquables avec pop-up de saisie
+// Champs variables Nom Ville etc. cliquables avec pop-up de saisie
 // Bouton "Renseigner les informations" avec dialog guidé pas à pas
 // Zoom document style Google Docs
 // Expansions de texte : remplacement automatique à la frappe depuis db.snippets
@@ -77,7 +77,7 @@ function parseContent(raw: string | undefined | null): string | object {
 function injectVariableSpans(html: string): string {
   return html.replace(/\[([^\]]+)\]/g, (_, name: string) => {
     const escaped = name.replace(/"/g, '&quot;')
-    return `<span data-variable-field="" data-variable-name="${escaped}">[${escaped}]</span>`
+    return `<span data-variable-field="" data-variable-name="${escaped}">${escaped}</span>`
   })
 }
 
@@ -629,19 +629,85 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         .mylex-editor-content img { max-width: 100%; height: auto; border-radius: 4px; margin: 0.5em 0; }
         .mylex-editor-content mark { border-radius: 2px; padding: 0.1em 0; }
         .mylex-editor-content ::selection { background: rgba(1, 105, 111, 0.2); }
+
+        /* ── Base commune à toutes les étiquettes de variables ── */
         .mylex-editor-content [data-variable-field] {
           display: inline-flex; align-items: center; cursor: pointer; user-select: none;
           font-size: 0.82em; font-weight: 500; letter-spacing: 0.01em;
           padding: 0.1em 0.55em; border-radius: 4px;
-          border: 1.5px dashed #01696f; color: #01696f;
-          background: rgba(1, 105, 111, 0.06);
+          border: 1.5px solid currentColor;
           transition: background 0.15s, border-color 0.15s, color 0.15s;
           vertical-align: baseline; line-height: 1.5; margin: 0 1px;
         }
-        .mylex-editor-content [data-variable-field]:hover { background: rgba(1, 105, 111, 0.14); border-color: #01696f; color: #0c4e54; }
-        .mylex-editor-content [data-variable-field].ProseMirror-selectednode { outline: 2px solid #01696f; outline-offset: 1px; }
-        [data-theme="dark"] .mylex-editor-content [data-variable-field] { border-color: #2ec4b6; color: #2ec4b6; background: rgba(46, 196, 182, 0.08); }
-        [data-theme="dark"] .mylex-editor-content [data-variable-field]:hover { background: rgba(46, 196, 182, 0.18); color: #5ddfcd; }
+        .mylex-editor-content [data-variable-field].ProseMirror-selectednode { outline: 2px solid currentColor; outline-offset: 1px; }
+
+        /* ── Dates (bleu indigo) ── */
+        .mylex-editor-content [data-variable-field][data-variable-type="date"] {
+          color: #4f46e5; background: rgba(79, 70, 229, 0.07);
+        }
+        .mylex-editor-content [data-variable-field][data-variable-type="date"]:hover {
+          background: rgba(79, 70, 229, 0.15);
+        }
+
+        /* ── Noms propres (vert teal — couleur primaire app) ── */
+        .mylex-editor-content [data-variable-field][data-variable-type="name"] {
+          color: #01696f; background: rgba(1, 105, 111, 0.07);
+        }
+        .mylex-editor-content [data-variable-field][data-variable-type="name"]:hover {
+          background: rgba(1, 105, 111, 0.15);
+        }
+
+        /* ── Adresses (orange) ── */
+        .mylex-editor-content [data-variable-field][data-variable-type="address"] {
+          color: #c2410c; background: rgba(194, 65, 12, 0.07);
+        }
+        .mylex-editor-content [data-variable-field][data-variable-type="address"]:hover {
+          background: rgba(194, 65, 12, 0.15);
+        }
+
+        /* ── Prix / montants (vert émeraude) ── */
+        .mylex-editor-content [data-variable-field][data-variable-type="price"] {
+          color: #15803d; background: rgba(21, 128, 61, 0.07);
+        }
+        .mylex-editor-content [data-variable-field][data-variable-type="price"]:hover {
+          background: rgba(21, 128, 61, 0.15);
+        }
+
+        /* ── Durées (violet) ── */
+        .mylex-editor-content [data-variable-field][data-variable-type="duration"] {
+          color: #7c3aed; background: rgba(124, 58, 237, 0.07);
+        }
+        .mylex-editor-content [data-variable-field][data-variable-type="duration"]:hover {
+          background: rgba(124, 58, 237, 0.15);
+        }
+
+        /* ── Références / numéros (rose) ── */
+        .mylex-editor-content [data-variable-field][data-variable-type="reference"] {
+          color: #be185d; background: rgba(190, 24, 93, 0.07);
+        }
+        .mylex-editor-content [data-variable-field][data-variable-type="reference"]:hover {
+          background: rgba(190, 24, 93, 0.15);
+        }
+
+        /* ── Défaut (gris neutre) ── */
+        .mylex-editor-content [data-variable-field][data-variable-type="default"],
+        .mylex-editor-content [data-variable-field]:not([data-variable-type]) {
+          color: #6b7280; background: rgba(107, 114, 128, 0.07);
+        }
+        .mylex-editor-content [data-variable-field][data-variable-type="default"]:hover,
+        .mylex-editor-content [data-variable-field]:not([data-variable-type]):hover {
+          background: rgba(107, 114, 128, 0.15);
+        }
+
+        /* ── Dark mode ── */
+        [data-theme="dark"] .mylex-editor-content [data-variable-field][data-variable-type="date"]      { color: #818cf8; background: rgba(129, 140, 248, 0.12); }
+        [data-theme="dark"] .mylex-editor-content [data-variable-field][data-variable-type="name"]      { color: #2ec4b6; background: rgba(46, 196, 182, 0.10); }
+        [data-theme="dark"] .mylex-editor-content [data-variable-field][data-variable-type="address"]   { color: #fb923c; background: rgba(251, 146, 60, 0.10); }
+        [data-theme="dark"] .mylex-editor-content [data-variable-field][data-variable-type="price"]     { color: #4ade80; background: rgba(74, 222, 128, 0.10); }
+        [data-theme="dark"] .mylex-editor-content [data-variable-field][data-variable-type="duration"]  { color: #c084fc; background: rgba(192, 132, 252, 0.10); }
+        [data-theme="dark"] .mylex-editor-content [data-variable-field][data-variable-type="reference"] { color: #f472b6; background: rgba(244, 114, 182, 0.10); }
+        [data-theme="dark"] .mylex-editor-content [data-variable-field][data-variable-type="default"],
+        [data-theme="dark"] .mylex-editor-content [data-variable-field]:not([data-variable-type])       { color: #9ca3af; background: rgba(156, 163, 175, 0.10); }
       `}</style>
     </>
   )
