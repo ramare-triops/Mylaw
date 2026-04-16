@@ -1,15 +1,19 @@
 // components/editor/DocumentBricksPanel.tsx
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   Blocks, Plus, Trash2, Tag, User, Building2,
   Scale, ChevronDown, ChevronRight, Gavel, AlignLeft, FileText,
   Users, Briefcase, X, Check, Pencil, Settings2, Search,
   Bold, Underline, Italic, CaseSensitive, ListFilter,
 } from 'lucide-react'
+import { db, getSetting, setSetting } from '@/lib/db'
+import type { Brick as DBBrick } from '@/types'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types locaux (UI) ────────────────────────────────────────────────────────
+// On conserve la forme exacte de l’UI existante (id string, icon, color…)
+// mais on s’appuie sur Dexie comme source de vérité.
 
 export interface Brick {
   id: string
@@ -55,40 +59,102 @@ const COLOR_OPTIONS = [
   '#dc2626', '#c2410c', '#b45309', '#15803d', '#374151',
 ]
 
-// ─── Données par défaut ───────────────────────────────────────────────────────
+// ─── Briques pré-installées (seed) ──────────────────────────────────────────
+// Injectées une seule fois en base au premier démarrage.
 
-const INITIAL_BRICK_GROUPS: BrickGroup[] = [
-  {
-    id: 'parties', label: 'Parties', color: '#01696f', iconName: 'users',
-    bricks: [
-      { id: 'personne_physique', label: 'Personne physique', color: '#01696f', icon: 'user', category: 'parties', content: '[M/Mme] **[Nom] [Prénom]**, [né/née] le [Date de naissance] à [Lieu de naissance], de nationalité [Nationalité], demeurant au [Adresse]' },
-      { id: 'personne_morale',   label: 'Personne morale',   color: '#7c3aed', icon: 'building', category: 'parties', content: 'La société **[Nom de la société]**, [Forme juridique] au capital de [Capital social] euros, immatriculée au RCS de [Ville RCS] sous le numéro [Numéro RCS], dont le siège social est sis [Adresse du siège], représentée par [Représentant légal], en sa qualité de [Qualité du représentant]' },
-      { id: 'avocat',            label: 'Ayant pour avocat',         color: '#be185d', icon: 'scale',     category: 'parties', content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]" },
-      { id: 'representant',      label: 'Représentant / mandataire', color: '#c2410c', icon: 'briefcase', category: 'parties', content: "Représenté(e) par **[Nom du mandataire]**, [Qualité], en vertu d'un pouvoir en date du [Date du pouvoir]" },
-    ],
-  },
-  {
-    id: 'structure', label: 'Structure', color: '#4f46e5', iconName: 'align-left',
-    bricks: [
-      { id: 'faits_procedure', label: 'Faits et procédure', color: '#4f46e5', icon: 'file-text',  category: 'structure', content: '^^FAITS ET PROCÉDURE^^' },
-      { id: 'plaise_tribunal', label: 'Plaise au Tribunal',  color: '#4f46e5', icon: 'gavel',      category: 'structure', content: '^^PLAISE AU TRIBUNAL DE [Nom du tribunal]^^' },
-      { id: 'par_ces_motifs',  label: 'Par ces motifs',      color: '#4f46e5', icon: 'gavel',      category: 'structure', content: '^^PAR CES MOTIFS^^' },
-      { id: 'discussion',      label: 'Discussion',          color: '#4f46e5', icon: 'align-left', category: 'structure', content: '^^DISCUSSION^^' },
-      { id: 'en_droit',        label: 'En droit',            color: '#4f46e5', icon: 'scale',      category: 'structure', content: '^^EN DROIT^^' },
-      { id: 'en_fait',         label: 'En fait',             color: '#4f46e5', icon: 'file-text',  category: 'structure', content: '^^EN FAIT^^' },
-      { id: 'demandes',        label: 'Demandes',            color: '#4f46e5', icon: 'gavel',      category: 'structure', content: '^^DEMANDES^^' },
-    ],
-  },
-  {
-    id: 'formules', label: 'Formules types', color: '#15803d', iconName: 'file-text',
-    bricks: [
-      { id: 'entre_les_soussignes', label: 'Entre les soussignés', color: '#15803d', icon: 'users',     category: 'formules', content: '^^ENTRE LES SOUSSIGNÉS :^^' },
-      { id: 'il_a_ete_convenu',     label: 'Il a été convenu',     color: '#15803d', icon: 'check',     category: 'formules', content: '^^IL A ÉTÉ CONVENU ET ARRÊTÉ CE QUI SUIT :^^' },
-      { id: 'fait_a',               label: 'Fait à…',              color: '#15803d', icon: 'file-text', category: 'formules', content: 'Fait à [Lieu], le [Date], en [Nombre] exemplaire(s) originaux.' },
-      { id: 'signature',            label: 'Bloc signature',       color: '#15803d', icon: 'check',     category: 'formules', content: 'Pour [Partie 1]\n[Nom et signature]\n\nPour [Partie 2]\n[Nom et signature]' },
-    ],
-  },
+const SEED_BRICKS: Omit<DBBrick, 'id'>[] = [
+  // Parties
+  { title: 'Personne physique', content: '[M/Mme] **[Nom] [Prénom]**, [né/née] le [Date de naissance] à [Lieu de naissance], de nationalité [Nationalité], demeurant au [Adresse]', category: 'clause', tags: ['parties', 'personne', 'physique'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Personne morale', content: 'La société **[Nom de la société]**, [Forme juridique] au capital de [Capital social] euros, immatriculée au RCS de [Ville RCS] sous le numéro [Numéro RCS], dont le siège social est sis [Adresse du siège], représentée par [Représentant légal], en sa qualité de [Qualité du représentant]', category: 'clause', tags: ['parties', 'personne', 'morale', 'société'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Ayant pour avocat', content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]", category: 'clause', tags: ['parties', 'avocat', 'barreau'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Représentant / mandataire', content: "Représenté(e) par **[Nom du mandataire]**, [Qualité], en vertu d'un pouvoir en date du [Date du pouvoir]", category: 'clause', tags: ['parties', 'mandataire', 'représentant'], createdAt: new Date(), updatedAt: new Date() },
+  // Structure
+  { title: 'Faits et procédure', content: '^^FAITS ET PROCÉDURE^^', category: 'introduction', tags: ['structure', 'faits'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Plaise au Tribunal', content: '^^PLAISE AU TRIBUNAL DE [Nom du tribunal]^^', category: 'introduction', tags: ['structure', 'tribunal'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Par ces motifs', content: '^^PAR CES MOTIFS^^', category: 'dispositif', tags: ['structure', 'motifs'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Discussion', content: '^^DISCUSSION^^', category: 'motivation', tags: ['structure', 'discussion'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'En droit', content: '^^EN DROIT^^', category: 'motivation', tags: ['structure', 'droit'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'En fait', content: '^^EN FAIT^^', category: 'motivation', tags: ['structure', 'fait'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Demandes', content: '^^DEMANDES^^', category: 'dispositif', tags: ['structure', 'demandes'], createdAt: new Date(), updatedAt: new Date() },
+  // Formules
+  { title: 'Entre les soussignés', content: '^^ENTRE LES SOUSSIGNÉS :^^', category: 'formule', tags: ['formules', 'soussignés'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Il a été convenu', content: '^^IL A ÉTÉ CONVENU ET ARRÊTÉ CE QUI SUIT :^^', category: 'formule', tags: ['formules', 'convenu'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Fait à…', content: 'Fait à [Lieu], le [Date], en [Nombre] exemplaire(s) originaux.', category: 'formule', tags: ['formules', 'signature', 'lieu'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Bloc signature', content: 'Pour [Partie 1]\n[Nom et signature]\n\nPour [Partie 2]\n[Nom et signature]', category: 'formule', tags: ['formules', 'signature'], createdAt: new Date(), updatedAt: new Date() },
 ]
+
+// ─── Mappage DBBrick → UI Brick ─────────────────────────────────────────────
+// La DB stocke une catégorie typologique (clause, introduction…) et des tags.
+// L’UI les répartit en groupes visuels (parties, structure, formules, custom).
+// On retrouve le groupe via un tag spécial stocké dans tags[0].
+
+const DB_CAT_TO_UI_GROUP: Record<string, string> = {
+  clause: 'parties',
+  introduction: 'structure',
+  motivation: 'structure',
+  dispositif: 'structure',
+  conclusion: 'structure',
+  formule: 'formules',
+  other: 'custom',
+}
+
+function dbBrickToUI(b: DBBrick & { id: number }): Brick {
+  // Le groupe UI est encodé dans tags[0] si présent et correspond à un groupe connu,
+  // sinon on le déduit de la catégorie DB.
+  const tagGroup = ALL_CATEGORIES.find(c => b.tags[0] === c.id)?.id
+  const uiCategory = tagGroup ?? DB_CAT_TO_UI_GROUP[b.category] ?? 'custom'
+  // L’icône et la couleur sont stockées en tags[1] et tags[2] si éditées par l’UI.
+  const icon  = b.tags[1] ?? 'file-text'
+  const color = b.tags[2] ?? ALL_CATEGORIES.find(c => c.id === uiCategory)?.color ?? '#6b7280'
+  return {
+    id: String(b.id),
+    label: b.title,
+    content: b.content,
+    category: uiCategory,
+    icon,
+    color,
+  }
+}
+
+function uiBrickToDB(b: Brick, existing?: DBBrick): DBBrick {
+  const now = new Date()
+  // On encode le groupe UI en tags[0], l’icône en tags[1], la couleur en tags[2]
+  const tags = [b.category, b.icon, b.color]
+  const dbCat = (['clause','introduction','motivation','dispositif','conclusion','formule','other'] as const).includes(
+    existing?.category as any
+  ) ? existing!.category : 'other'
+  return {
+    ...(existing ?? {}),
+    title: b.label,
+    content: b.content,
+    category: dbCat as DBBrick['category'],
+    tags,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  }
+}
+
+// Convertit les briques DB en groupes UI
+function bricksToGroups(bricks: (DBBrick & { id: number })[]): BrickGroup[] {
+  const groupMap = new Map<string, BrickGroup>()
+  for (const b of bricks) {
+    const ui = dbBrickToUI(b)
+    if (!groupMap.has(ui.category)) {
+      const cat = ALL_CATEGORIES.find(c => c.id === ui.category)
+      groupMap.set(ui.category, {
+        id: ui.category,
+        label: cat?.label ?? 'Mes briques',
+        color: cat?.color ?? '#6b7280',
+        iconName: ui.category === 'parties' ? 'users' : ui.category === 'structure' ? 'align-left' : ui.category === 'formules' ? 'file-text' : 'blocks',
+        bricks: [],
+      })
+    }
+    groupMap.get(ui.category)!.bricks.push(ui)
+  }
+  // Ordre fixe des groupes
+  const order = ['parties', 'structure', 'formules', 'custom']
+  return order.map(id => groupMap.get(id)).filter(Boolean) as BrickGroup[]
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -296,22 +362,13 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
   )
 }
 
-// ─── Gestionnaire de variables (texte + conditionnelles) ──────────────────────
-//
-// UX : un bouton global "✏️ Modifier" et un bouton global "🗑️ Supprimer" dans le
-// header de chaque section. En mode édition cliquer un chip l’ouvre inline.
-// En mode suppression cliquer un chip le supprime immédiatement.
-// Un seul mode actif à la fois (changer de mode annule l’édition en cours).
+// ─── Gestionnaire de variables ────────────────────────────────────────────────
 
 interface TextVar { id: string; name: string }
 interface CondVar { id: string; label: string; value: string }
 
 function VariableManager({
-  textVars,
-  condVars,
-  onChangeTextVars,
-  onChangeCondVars,
-  onInsertTag,
+  textVars, condVars, onChangeTextVars, onChangeCondVars, onInsertTag,
 }: {
   textVars: TextVar[]
   condVars: CondVar[]
@@ -319,18 +376,13 @@ function VariableManager({
   onChangeCondVars: (v: CondVar[]) => void
   onInsertTag: (tag: string) => void
 }) {
-  // mode global : null = insertion, 'edit' = édition, 'delete' = suppression
   type Mode = null | 'edit' | 'delete'
   const [mode, setMode] = useState<Mode>(null)
-
-  // édition en cours
   const [editingTextId,    setEditingTextId]    = useState<string | null>(null)
   const [editingTextValue, setEditingTextValue] = useState('')
   const [editingCondId,    setEditingCondId]    = useState<string | null>(null)
   const [editingCondLabel, setEditingCondLabel] = useState('')
   const [editingCondValue, setEditingCondValue] = useState('')
-
-  // ajout
   const [newTextName,  setNewTextName]  = useState('')
   const [newCondLabel, setNewCondLabel] = useState('')
   const [newCondValue, setNewCondValue] = useState('')
@@ -341,37 +393,26 @@ function VariableManager({
     setEditingCondId(null)
   }
 
-  // ── variables texte
   function addTextVar() {
     const name = newTextName.trim(); if (!name) return
     onChangeTextVars([...textVars, { id: generateId(), name }])
     setNewTextName('')
   }
-  function deleteTextVar(id: string) {
-    onChangeTextVars(textVars.filter(v => v.id !== id))
-  }
-  function startEditText(v: TextVar) {
-    setEditingTextId(v.id); setEditingTextValue(v.name)
-  }
+  function deleteTextVar(id: string) { onChangeTextVars(textVars.filter(v => v.id !== id)) }
+  function startEditText(v: TextVar) { setEditingTextId(v.id); setEditingTextValue(v.name) }
   function saveEditText(id: string) {
     const name = editingTextValue.trim(); if (!name) return
     onChangeTextVars(textVars.map(v => v.id === id ? { ...v, name } : v))
     setEditingTextId(null)
   }
-
-  // ── variables conditionnelles
   function addCondVar() {
     const label = newCondLabel.trim(), value = newCondValue.trim()
     if (!label || !value) return
     onChangeCondVars([...condVars, { id: generateId(), label, value }])
     setNewCondLabel(''); setNewCondValue('')
   }
-  function deleteCondVar(id: string) {
-    onChangeCondVars(condVars.filter(v => v.id !== id))
-  }
-  function startEditCond(v: CondVar) {
-    setEditingCondId(v.id); setEditingCondLabel(v.label); setEditingCondValue(v.value)
-  }
+  function deleteCondVar(id: string) { onChangeCondVars(condVars.filter(v => v.id !== id)) }
+  function startEditCond(v: CondVar) { setEditingCondId(v.id); setEditingCondLabel(v.label); setEditingCondValue(v.value) }
   function saveEditCond(id: string) {
     const label = editingCondLabel.trim(), value = editingCondValue.trim()
     if (!label || !value) return
@@ -379,165 +420,91 @@ function VariableManager({
     setEditingCondId(null)
   }
 
-  const chipBase: React.CSSProperties = {
-    display: 'inline-flex', alignItems: 'center', gap: '3px',
-    padding: '2px 7px', borderRadius: '20px', fontSize: '10px',
-    fontWeight: 500, fontFamily: 'monospace', transition: 'all 0.1s',
-  }
-  const smallInput: React.CSSProperties = {
-    padding: '4px 8px', fontSize: '11px', borderRadius: '6px',
-    border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)',
-    color: 'var(--color-text)', outline: 'none', fontFamily: 'monospace',
-  }
-  const miniBtn: React.CSSProperties = {
-    background: 'none', border: 'none', cursor: 'pointer', padding: '1px 4px',
-    display: 'inline-flex', alignItems: 'center', borderRadius: '3px',
-    color: 'var(--color-text-faint)', transition: 'color 0.1s',
-  }
+  const chipBase: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '2px 7px', borderRadius: '20px', fontSize: '10px', fontWeight: 500, fontFamily: 'monospace', transition: 'all 0.1s' }
+  const smallInput: React.CSSProperties = { padding: '4px 8px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text)', outline: 'none', fontFamily: 'monospace' }
+  const miniBtn: React.CSSProperties = { background: 'none', border: 'none', cursor: 'pointer', padding: '1px 4px', display: 'inline-flex', alignItems: 'center', borderRadius: '3px', color: 'var(--color-text-faint)', transition: 'color 0.1s' }
 
-  // bouton de mode (toggle)
   function ModeBtn({ m, color, icon, label }: { m: Mode; color: string; icon: React.ReactNode; label: string }) {
     const active = mode === m
     return (
-      <button type="button" onClick={() => switchMode(m)}
-        title={active ? 'Quitter le mode' : label}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: '3px',
-          padding: '1px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 500,
-          border: `1px solid ${active ? color : 'var(--color-border)'}`,
-          background: active ? color + '18' : 'transparent',
-          color: active ? color : 'var(--color-text-faint)',
-          cursor: 'pointer', transition: 'all 0.1s',
-        }}
+      <button type="button" onClick={() => switchMode(m)} title={active ? 'Quitter le mode' : label}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '1px 6px', borderRadius: '20px', fontSize: '10px', fontWeight: 500, border: `1px solid ${active ? color : 'var(--color-border)'}`, background: active ? color + '18' : 'transparent', color: active ? color : 'var(--color-text-faint)', cursor: 'pointer', transition: 'all 0.1s' }}
       >{icon}{active ? 'Terminer' : label}</button>
     )
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-
-      {/* ── Variables texte ── */}
+      {/* Variables texte */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        {/* Header section */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>Variables texte</p>
           <div style={{ display: 'flex', gap: '4px' }}>
-            <ModeBtn m="edit"   color="#01696f" icon={<Pencil size={9} />}  label="Modifier"   />
-            <ModeBtn m="delete" color="#dc2626" icon={<Trash2 size={9} />}  label="Supprimer"  />
+            <ModeBtn m="edit"   color="#01696f" icon={<Pencil size={9} />} label="Modifier" />
+            <ModeBtn m="delete" color="#dc2626" icon={<Trash2 size={9} />} label="Supprimer" />
           </div>
         </div>
-
-        {/* Chips */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
           {textVars.map(v => (
             editingTextId === v.id ? (
               <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                <input autoFocus value={editingTextValue}
-                  onChange={e => setEditingTextValue(e.target.value)}
+                <input autoFocus value={editingTextValue} onChange={e => setEditingTextValue(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') saveEditText(v.id); if (e.key === 'Escape') setEditingTextId(null) }}
-                  style={{ ...smallInput, width: '110px' }}
-                />
+                  style={{ ...smallInput, width: '110px' }} />
                 <button type="button" onClick={() => saveEditText(v.id)} style={{ ...miniBtn, color: '#01696f' }}><Check size={11} /></button>
                 <button type="button" onClick={() => setEditingTextId(null)} style={miniBtn}><X size={11} /></button>
               </span>
             ) : (
               <button key={v.id} type="button"
-                onClick={() => {
-                  if (mode === 'edit') startEditText(v)
-                  else if (mode === 'delete') deleteTextVar(v.id)
-                  else onInsertTag(v.name)
-                }}
-                style={{
-                  ...chipBase,
-                  border: `1.5px solid ${mode === 'delete' ? '#dc262660' : '#01696f60'}`,
-                  background: mode === 'delete' ? '#dc26260c' : '#01696f0c',
-                  color: mode === 'delete' ? '#dc2626' : '#01696f',
-                  cursor: 'pointer',
-                  outline: mode === 'edit' ? '1.5px dashed #01696f80' : mode === 'delete' ? '1.5px dashed #dc262680' : 'none',
-                  outlineOffset: '1px',
-                }}
+                onClick={() => { if (mode === 'edit') startEditText(v); else if (mode === 'delete') deleteTextVar(v.id); else onInsertTag(v.name) }}
+                style={{ ...chipBase, border: `1.5px solid ${mode === 'delete' ? '#dc262660' : '#01696f60'}`, background: mode === 'delete' ? '#dc26260c' : '#01696f0c', color: mode === 'delete' ? '#dc2626' : '#01696f', cursor: 'pointer', outline: mode === 'edit' ? '1.5px dashed #01696f80' : mode === 'delete' ? '1.5px dashed #dc262680' : 'none', outlineOffset: '1px' }}
               >[{v.name}]</button>
             )
           ))}
         </div>
-
-        {/* Formulaire ajout */}
         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
           <input value={newTextName} onChange={e => setNewTextName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') addTextVar() }}
-            placeholder="Nom de la variable…"
-            style={{ ...smallInput, flex: 1 }}
-          />
+            placeholder="Nom de la variable…" style={{ ...smallInput, flex: 1 }} />
           <button type="button" onClick={addTextVar} disabled={!newTextName.trim()}
             style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', background: newTextName.trim() ? '#01696f' : 'var(--color-border)', color: newTextName.trim() ? '#fff' : 'var(--color-text-faint)', cursor: newTextName.trim() ? 'pointer' : 'not-allowed', fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '3px', transition: 'all 0.1s' }}
           ><Plus size={11} /> Ajouter</button>
         </div>
       </div>
 
-      {/* ── Variables conditionnelles ── */}
+      {/* Variables conditionnelles */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        {/* Header section */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
-          <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0, flexShrink: 0 }}>
-            Cond. <span style={{ textTransform: 'none', fontWeight: 400, fontSize: '9px' }}>(liste déroulante)</span>
-          </p>
+          <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0, flexShrink: 0 }}>Cond. <span style={{ textTransform: 'none', fontWeight: 400, fontSize: '9px' }}>(liste déroulante)</span></p>
           <div style={{ display: 'flex', gap: '4px' }}>
-            <ModeBtn m="edit"   color="#7c3aed" icon={<Pencil size={9} />}  label="Modifier"   />
-            <ModeBtn m="delete" color="#dc2626" icon={<Trash2 size={9} />}  label="Supprimer"  />
+            <ModeBtn m="edit"   color="#7c3aed" icon={<Pencil size={9} />} label="Modifier" />
+            <ModeBtn m="delete" color="#dc2626" icon={<Trash2 size={9} />} label="Supprimer" />
           </div>
         </div>
-
-        {/* Chips */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
           {condVars.map(v => (
             editingCondId === v.id ? (
               <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                <input autoFocus value={editingCondLabel}
-                  onChange={e => setEditingCondLabel(e.target.value)}
-                  placeholder="Libellé"
-                  style={{ ...smallInput, width: '110px' }}
-                />
-                <input value={editingCondValue}
-                  onChange={e => setEditingCondValue(e.target.value)}
-                  placeholder="Valeur"
+                <input autoFocus value={editingCondLabel} onChange={e => setEditingCondLabel(e.target.value)} placeholder="Libellé" style={{ ...smallInput, width: '110px' }} />
+                <input value={editingCondValue} onChange={e => setEditingCondValue(e.target.value)} placeholder="Valeur"
                   onKeyDown={e => { if (e.key === 'Enter') saveEditCond(v.id); if (e.key === 'Escape') setEditingCondId(null) }}
-                  style={{ ...smallInput, width: '90px' }}
-                />
+                  style={{ ...smallInput, width: '90px' }} />
                 <button type="button" onClick={() => saveEditCond(v.id)} style={{ ...miniBtn, color: '#7c3aed' }}><Check size={11} /></button>
                 <button type="button" onClick={() => setEditingCondId(null)} style={miniBtn}><X size={11} /></button>
               </span>
             ) : (
               <button key={v.id} type="button"
-                onClick={() => {
-                  if (mode === 'edit') startEditCond(v)
-                  else if (mode === 'delete') deleteCondVar(v.id)
-                  else onInsertTag(v.value)
-                }}
-                style={{
-                  ...chipBase,
-                  border: `1.5px solid ${mode === 'delete' ? '#dc262660' : '#7c3aed60'}`,
-                  background: mode === 'delete' ? '#dc26260c' : '#7c3aed0c',
-                  color: mode === 'delete' ? '#dc2626' : '#7c3aed',
-                  cursor: 'pointer',
-                  outline: mode === 'edit' ? '1.5px dashed #7c3aed80' : mode === 'delete' ? '1.5px dashed #dc262680' : 'none',
-                  outlineOffset: '1px',
-                }}
+                onClick={() => { if (mode === 'edit') startEditCond(v); else if (mode === 'delete') deleteCondVar(v.id); else onInsertTag(v.value) }}
+                style={{ ...chipBase, border: `1.5px solid ${mode === 'delete' ? '#dc262660' : '#7c3aed60'}`, background: mode === 'delete' ? '#dc26260c' : '#7c3aed0c', color: mode === 'delete' ? '#dc2626' : '#7c3aed', cursor: 'pointer', outline: mode === 'edit' ? '1.5px dashed #7c3aed80' : mode === 'delete' ? '1.5px dashed #dc262680' : 'none', outlineOffset: '1px' }}
               ><ListFilter size={9} />[{v.label}]</button>
             )
           ))}
         </div>
-
-        {/* Formulaire ajout */}
         <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <input value={newCondLabel} onChange={e => setNewCondLabel(e.target.value)}
-            placeholder="Libellé (ex: M / Mme)"
-            style={{ ...smallInput, flex: '1 1 110px' }}
-          />
+          <input value={newCondLabel} onChange={e => setNewCondLabel(e.target.value)} placeholder="Libellé (ex: M / Mme)" style={{ ...smallInput, flex: '1 1 110px' }} />
           <input value={newCondValue} onChange={e => setNewCondValue(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') addCondVar() }}
-            placeholder="Valeur (ex: M/Mme)"
-            style={{ ...smallInput, flex: '1 1 90px' }}
-          />
+            placeholder="Valeur (ex: M/Mme)" style={{ ...smallInput, flex: '1 1 90px' }} />
           <button type="button" onClick={addCondVar} disabled={!newCondLabel.trim() || !newCondValue.trim()}
             style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', background: (newCondLabel.trim() && newCondValue.trim()) ? '#7c3aed' : 'var(--color-border)', color: (newCondLabel.trim() && newCondValue.trim()) ? '#fff' : 'var(--color-text-faint)', cursor: (newCondLabel.trim() && newCondValue.trim()) ? 'pointer' : 'not-allowed', fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '3px', transition: 'all 0.1s', whiteSpace: 'nowrap' }}
           ><Plus size={11} /> Ajouter</button>
@@ -603,18 +570,12 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
     }
   }
 
-  const inp: React.CSSProperties = {
-    width: '100%', padding: '7px 10px', fontSize: '13px',
-    background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)',
-    borderRadius: 'var(--radius-md)', color: 'var(--color-text)', outline: 'none',
-  }
-
+  const inp: React.CSSProperties = { width: '100%', padding: '7px 10px', fontSize: '13px', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text)', outline: 'none' }
   const canSave = label.trim() !== '' && content.trim() !== ''
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{ width: '36px', height: '36px', borderRadius: 'var(--radius-md)', flexShrink: 0, background: color + '18', border: `2px solid ${color}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <BrickIcon name={icon} size={16} color={color} />
@@ -622,7 +583,6 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
           <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Nom de la brique" autoFocus={isNew}
             style={{ ...inp, flex: 1, fontSize: '14px', fontWeight: 600 }} />
         </div>
-
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
           <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
             Catégorie
@@ -638,7 +598,6 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
           </label>
           <ColorPicker color={color} onChange={setColor} />
         </div>
-
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
             <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0 }}>Contenu</p>
@@ -655,17 +614,12 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
           />
           {showPreview && <BrickPreview content={content} color={color} />}
         </div>
-
         <VariableManager
-          textVars={textVars}
-          condVars={condVars}
-          onChangeTextVars={setTextVars}
-          onChangeCondVars={setCondVars}
+          textVars={textVars} condVars={condVars}
+          onChangeTextVars={setTextVars} onChangeCondVars={setCondVars}
           onInsertTag={insertTag}
         />
-
       </div>
-
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
         <div>
           {onDelete && (confirmDelete ? (
@@ -716,10 +670,13 @@ function BrickEditorRow({ brick, onEdit, isSelected }: { brick: Brick; onEdit: (
 // ─── MODALE ÉDITEUR DE BRIQUES ────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function BricksEditorModal({ groups, onSave, onClose }: {
+function BricksEditorModal({ groups, onSave, onClose, onAdd, onUpdate, onDelete }: {
   groups: BrickGroup[]
-  onSave: (g: BrickGroup[]) => void
+  onSave: (g: BrickGroup[]) => void   // mis à jour du state local
   onClose: () => void
+  onAdd: (b: Omit<Brick, 'id'>) => Promise<string>       // écrit en DB
+  onUpdate: (b: Brick) => Promise<void>                  // écrit en DB
+  onDelete: (id: string) => Promise<void>                // supprime en DB
 }) {
   const [localGroups,     setLocalGroups]     = useState<BrickGroup[]>(() => JSON.parse(JSON.stringify(groups)))
   const [selectedBrickId, setSelectedBrickId] = useState<string | null>(null)
@@ -734,34 +691,39 @@ function BricksEditorModal({ groups, onSave, onClose }: {
   })
   const selectedBrick = allBricks.find(b => b.id === selectedBrickId) ?? null
 
-  function updateAndSave(updated: Brick) {
+  async function handleUpdate(updated: Brick) {
+    await onUpdate(updated)
     setLocalGroups(prev => {
       const cleaned = prev.map(g => ({ ...g, bricks: g.bricks.filter(b => b.id !== updated.id) }))
       const tg = cleaned.find(g => g.id === updated.category)
       const next = tg
         ? cleaned.map(g => g.id === updated.category ? { ...g, bricks: [...g.bricks, updated] } : g)
         : [...cleaned, { id: 'custom', label: 'Mes briques', color: '#6b7280', iconName: 'blocks', bricks: [updated] }]
-      onSave(next.filter(g => g.bricks.length > 0))
-      return next
+      const filtered = next.filter(g => g.bricks.length > 0)
+      onSave(filtered)
+      return filtered
     })
     setSelectedBrickId(updated.id)
   }
 
-  function addAndSave(partial: Omit<Brick, 'id'>) {
-    const brick: Brick = { ...partial, id: generateId() }
+  async function handleAdd(partial: Omit<Brick, 'id'>) {
+    const newId = await onAdd(partial)
+    const brick: Brick = { ...partial, id: newId }
     setLocalGroups(prev => {
       const tg = prev.find(g => g.id === brick.category)
       const next = tg
         ? prev.map(g => g.id === brick.category ? { ...g, bricks: [...g.bricks, brick] } : g)
         : [...prev, { id: 'custom', label: 'Mes briques', color: '#6b7280', iconName: 'blocks', bricks: [brick] }]
-      onSave(next.filter(g => g.bricks.length > 0))
-      return next
+      const filtered = next.filter(g => g.bricks.length > 0)
+      onSave(filtered)
+      return filtered
     })
-    setSelectedBrickId(brick.id)
+    setSelectedBrickId(newId)
     setIsCreating(false)
   }
 
-  function deleteAndSave(id: string) {
+  async function handleDelete(id: string) {
+    await onDelete(id)
     setLocalGroups(prev => {
       const next = prev.map(g => ({ ...g, bricks: g.bricks.filter(b => b.id !== id) })).filter(g => g.bricks.length > 0)
       onSave(next)
@@ -786,9 +748,7 @@ function BricksEditorModal({ groups, onSave, onClose }: {
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }} />
-
       <div style={{ position: 'relative', zIndex: 10, width: '920px', maxWidth: 'calc(100vw - 32px)', height: '680px', maxHeight: 'calc(100vh - 48px)', borderRadius: '16px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: '0 24px 80px rgba(0,0,0,0.35)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--color-primary)18', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -803,7 +763,6 @@ function BricksEditorModal({ groups, onSave, onClose }: {
             <X size={16} style={{ color: 'var(--color-text-muted)' }} />
           </button>
         </div>
-
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           <div style={{ width: '300px', flexShrink: 0, borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', background: 'var(--color-surface-offset)' }}>
             <div style={{ padding: '12px', borderBottom: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
@@ -830,17 +789,16 @@ function BricksEditorModal({ groups, onSave, onClose }: {
               ><Plus size={13} /> Nouvelle brique</button>
             </div>
           </div>
-
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {isCreating ? (
               <BrickEditorForm brick={newTpl} isNew
-                onSave={b => addAndSave({ label: b.label, content: b.content, category: b.category, icon: b.icon, color: b.color })}
+                onSave={b => handleAdd({ label: b.label, content: b.content, category: b.category, icon: b.icon, color: b.color })}
                 onCancel={() => setIsCreating(false)} />
             ) : selectedBrick ? (
               <BrickEditorForm key={selectedBrick.id} brick={selectedBrick}
-                onSave={updateAndSave}
+                onSave={handleUpdate}
                 onCancel={() => setSelectedBrickId(null)}
-                onDelete={() => deleteAndSave(selectedBrick.id)} />
+                onDelete={() => handleDelete(selectedBrick.id)} />
             ) : (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: 'var(--color-text-faint)' }}>
                 <Settings2 size={40} style={{ opacity: 0.12 }} />
@@ -852,7 +810,6 @@ function BricksEditorModal({ groups, onSave, onClose }: {
             )}
           </div>
         </div>
-
       </div>
     </div>
   )
@@ -868,9 +825,60 @@ interface DocumentBricksPanelProps {
 }
 
 export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps) {
-  const [groups,     setGroups]     = useState<BrickGroup[]>(INITIAL_BRICK_GROUPS)
+  const [groups,     setGroups]     = useState<BrickGroup[]>([])
   const [tab,        setTab]        = useState<'library' | 'custom'>('library')
   const [showEditor, setShowEditor] = useState(false)
+  const [loaded,     setLoaded]     = useState(false)
+
+  // ── Chargement initial depuis Dexie ─────────────────────────────────────
+  const loadFromDB = useCallback(async () => {
+    // Seed au premier démarrage
+    const seeded = await getSetting<boolean>('bricks_seeded', false)
+    if (!seeded) {
+      await db.bricks.bulkAdd(SEED_BRICKS as DBBrick[])
+      await setSetting('bricks_seeded', true)
+    }
+    const all = await db.bricks.toArray() as (DBBrick & { id: number })[]
+    setGroups(bricksToGroups(all))
+    setLoaded(true)
+  }, [])
+
+  useEffect(() => { loadFromDB() }, [loadFromDB])
+
+  // ── Opérations Dexie ────────────────────────────────────────────────────
+  const handleAdd = useCallback(async (partial: Omit<Brick, 'id'>): Promise<string> => {
+    const now = new Date()
+    const dbBrick: Omit<DBBrick, 'id'> = {
+      title: partial.label,
+      content: partial.content,
+      category: 'other',          // catégorie DB générique pour les briques perso
+      tags: [partial.category, partial.icon, partial.color],
+      createdAt: now,
+      updatedAt: now,
+    }
+    const id = await db.bricks.add(dbBrick as DBBrick)
+    return String(id)
+  }, [])
+
+  const handleUpdate = useCallback(async (updated: Brick) => {
+    const numId = Number(updated.id)
+    if (!numId) return
+    const existing = await db.bricks.get(numId)
+    if (!existing) return
+    await db.bricks.put({
+      ...existing,
+      title: updated.label,
+      content: updated.content,
+      tags: [updated.category, updated.icon, updated.color],
+      updatedAt: new Date(),
+    } as DBBrick)
+  }, [])
+
+  const handleDelete = useCallback(async (id: string) => {
+    const numId = Number(id)
+    if (!numId) return
+    await db.bricks.delete(numId)
+  }, [])
 
   const customBricks  = groups.flatMap(g => g.bricks).filter(b => b.category === 'custom')
   const displayGroups = groups.filter(g => g.bricks.length > 0)
@@ -883,6 +891,12 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
     borderBottom: active ? '2px solid var(--color-primary)' : '2px solid transparent',
     cursor: 'pointer', transition: 'all 0.12s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
   })
+
+  if (!loaded) return (
+    <div style={{ width: '272px', flexShrink: 0, borderLeft: '1px solid var(--color-border)', background: 'var(--color-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: 'var(--color-text-faint)', fontSize: '12px' }}>Chargement…</div>
+    </div>
+  )
 
   return (
     <>
@@ -936,7 +950,16 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
         </div>
       </div>
 
-      {showEditor && <BricksEditorModal groups={groups} onSave={setGroups} onClose={() => setShowEditor(false)} />}
+      {showEditor && (
+        <BricksEditorModal
+          groups={groups}
+          onSave={setGroups}
+          onClose={() => setShowEditor(false)}
+          onAdd={handleAdd}
+          onUpdate={handleUpdate}
+          onDelete={handleDelete}
+        />
+      )}
     </>
   )
 }
