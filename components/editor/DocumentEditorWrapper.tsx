@@ -4,6 +4,7 @@
 // Champs variables [Nom] [Ville] etc. cliquables avec pop-up de saisie
 // Bouton "Renseigner les informations" avec dialog guidé pas à pas
 // Zoom document style Google Docs
+// Expansions de texte : remplacement automatique à la frappe (Espace / Entrée)
 
 'use client'
 
@@ -35,6 +36,7 @@ import type { Editor } from '@tiptap/react'
 import { WordToolbar } from './WordToolbar'
 import { FontSize } from './extensions/FontSize'
 import { VariableField } from './extensions/VariableField'
+import { TextExpansion } from './extensions/TextExpansion'
 import { VariablePopup } from './VariablePopup'
 import { FillAllVariablesDialog } from './FillAllVariablesDialog'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
@@ -159,7 +161,8 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
 
   useEffect(() => {
     getSetting<EditorPrefs>('editorPrefs', DEFAULT_EDITOR_PREFS).then((p) => {
-      setPrefs(p)
+      // Rétrocompatibilité : textExpansions peut être absent des anciennes données
+      setPrefs({ ...DEFAULT_EDITOR_PREFS, ...p, textExpansions: p.textExpansions ?? [] })
       prefsLoaded.current = true
     })
   }, [])
@@ -309,6 +312,11 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         onVariableClick: handleVariableClick,
         HTMLAttributes: {},
       }),
+      // Extension Expansions de texte — les expansions sont injectées depuis les prefs
+      TextExpansion.configure({
+        expansions: prefs.textExpansions ?? [],
+        triggers: [' ', 'Enter'],
+      }),
     ],
     content: initialContent,
     editorProps: {
@@ -323,6 +331,14 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
       setVariableCount(countVariables(ed))
     },
   })
+
+  // Met à jour les expansions dans l'extension quand les prefs changent
+  useEffect(() => {
+    if (!editor) return
+    editor.extensionManager.extensions
+      .find(ext => ext.name === 'textExpansion')
+      ?.configure({ expansions: prefs.textExpansions ?? [] })
+  }, [editor, prefs.textExpansions])
 
   useEffect(() => {
     editorRef.current = editor ?? null
@@ -357,8 +373,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const charCount   = editor?.storage.characterCount.characters() ?? 0
   const pagePadding = MARGIN_MAP[prefs.pageMargin] ?? MARGIN_MAP.normal
 
-  // Largeur réelle de la feuille A4 mise à l'échelle
-  // transform-origin: top center — on ajuste la hauteur du conteneur via scaleY
   const A4_WIDTH_MM = 210
   const scaleFactor = zoom / 100
 
@@ -442,12 +456,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
 
         {/* Zone de document avec zoom */}
         <div className="flex-1 overflow-y-auto overflow-x-auto bg-[#e8e8e8] dark:bg-[#2a2a2a] px-8 py-8">
-          {/* Conteneur qui réserve la place selon l'échelle */}
           <div
             style={{
               width: `${A4_WIDTH_MM * scaleFactor}mm`,
               margin: '0 auto',
-              // La hauteur se fait naturellement via le contenu mis à l'échelle
             }}
           >
             <div
