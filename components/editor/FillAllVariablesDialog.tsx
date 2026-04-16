@@ -4,6 +4,13 @@
 // entre deux champs, elle glisse directement vers le suivant.
 // Pour les champs de type [Date] : masque JJ/MM/AAAA avec slashes permanents,
 // auto-avancement et conversion en texte lors de la confirmation.
+//
+// Navigation clavier :
+//   Entrée        → confirme la saisie et passe à la suivante
+//   TAB           → skip (passe à la suivante sans renseigner)
+//   ArrowRight    → passe à la suivante sans renseigner
+//   ArrowLeft     → revient à la précédente sans renseigner
+//   Escape        → ferme
 
 'use client'
 
@@ -78,13 +85,18 @@ function countVariables(editor: Editor): number {
   return count
 }
 
-function getFirstRemainingSpan(): HTMLElement | null {
+/** Retourne toutes les spans de variables encore présentes, triées par position verticale */
+function getAllRemainingSpans(): HTMLElement[] {
   const editorDom = window.document.querySelector('.mylex-editor-content')
-  if (!editorDom) return null
+  if (!editorDom) return []
   const spans = Array.from(editorDom.querySelectorAll('[data-variable-field]')) as HTMLElement[]
-  if (spans.length === 0) return null
   spans.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
-  return spans[0]
+  return spans
+}
+
+function getFirstRemainingSpan(): HTMLElement | null {
+  const spans = getAllRemainingSpans()
+  return spans.length > 0 ? spans[0] : null
 }
 
 function getPosFromSpan(editor: Editor, span: HTMLElement): number | null {
@@ -145,15 +157,24 @@ interface DateInputProps {
   onChange: (formatted: string) => void
   onConfirm: () => void
   onEscape: () => void
+  onSkipNext: () => void
+  onSkipPrev: () => void
   inputRef: React.RefObject<HTMLInputElement | null>
 }
 
-function DateInput({ value, onChange, onConfirm, onEscape, inputRef }: DateInputProps) {
+function DateInput({ value, onChange, onConfirm, onEscape, onSkipNext, onSkipPrev, inputRef }: DateInputProps) {
   const digits = extractDigits(value)
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter')  { e.preventDefault(); onConfirm() }
     if (e.key === 'Escape') { e.preventDefault(); onEscape() }
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      if (e.shiftKey) onSkipPrev()
+      else onSkipNext()
+    }
+    if (e.key === 'ArrowRight') { e.preventDefault(); onSkipNext() }
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); onSkipPrev() }
     if (e.key === 'Backspace') {
       e.preventDefault()
       const d = extractDigits(value)
@@ -224,16 +245,27 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
   const [currentVarName, setCurrentVarName] = useState<string | null>(null)
   const [bubblePos, setBubblePos]   = useState<BubblePosition | null>(null)
   const [targetSpan, setTargetSpan] = useState<HTMLElement | null>(null)
-  const inputRef  = useRef<HTMLInputElement>(null)
-  const activeRef = useRef(false)
-  const isFirstRef = useRef(true)
+  const inputRef    = useRef<HTMLInputElement>(null)
+  const activeRef   = useRef(false)
+  const isFirstRef  = useRef(true)
+  // Index de navigation dans la liste des spans restantes (pour flèches / TAB)
+  const navIndexRef = useRef(0)
 
   const isDate = isDateVariable(currentVarName)
 
-  const pointToFirstSpan = useCallback(async (isActive: () => boolean, waitScroll: boolean) => {
+  /** Pointe vers la span à l'index donné parmi les spans restantes */
+  const pointToSpanAtIndex = useCallback(async (
+    index: number,
+    isActive: () => boolean,
+    waitScroll: boolean,
+  ) => {
     if (!editor) return
-    const span = getFirstRemainingSpan()
-    if (!span || !isActive()) return
+    const spans = getAllRemainingSpans()
+    if (spans.length === 0 || !isActive()) return
+
+    const clampedIndex = Math.max(0, Math.min(index, spans.length - 1))
+    navIndexRef.current = clampedIndex
+    const span = spans[clampedIndex]
 
     window.document.querySelectorAll('[data-fill-active]')
       .forEach((el) => delete (el as HTMLElement).dataset.fillActive)
@@ -252,10 +284,16 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     setTimeout(() => inputRef.current?.focus(), 30)
   }, [editor])
 
+  const pointToFirstSpan = useCallback(async (isActive: () => boolean, waitScroll: boolean) => {
+    navIndexRef.current = 0
+    await pointToSpanAtIndex(0, isActive, waitScroll)
+  }, [pointToSpanAtIndex])
+
   useEffect(() => {
     if (!open || !editor) return
     activeRef.current = true
     isFirstRef.current = true
+    navIndexRef.current = 0
     const t = countVariables(editor)
     setTotal(t)
     setRemaining(t)
@@ -320,6 +358,8 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
 
     activeRef.current = true
     let cancelled = false
+    // Après confirmation, on repositionne l'index à 0 (première restante)
+    navIndexRef.current = 0
     const nextSpan = getFirstRemainingSpan()
     const needsScroll = nextSpan ? (() => {
       const r = nextSpan.getBoundingClientRect()
@@ -329,9 +369,48 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     return () => { cancelled = true }
   }, [editor, value, targetSpan, remaining, isDate, onClose, pointToFirstSpan])
 
+  /** Skip vers l'étiquette suivante sans renseigner */
+  const handleSkipNext = useCallback(async () => {
+    if (!editor) return
+    const spans = getAllRemainingSpans()
+    if (spans.length === 0) return
+    const nextIndex = (navIndexRef.current + 1) % spans.length
+    let cancelled = false
+    const span = spans[nextIndex]
+    const needsScroll = (() => {
+      const r = span.getBoundingClientRect()
+      return r.top < 80 || r.bottom > window.innerHeight - 80
+    })()
+    await pointToSpanAtIndex(nextIndex, () => !cancelled && activeRef.current, needsScroll)
+    return () => { cancelled = true }
+  }, [editor, pointToSpanAtIndex])
+
+  /** Revient à l'étiquette précédente sans renseigner */
+  const handleSkipPrev = useCallback(async () => {
+    if (!editor) return
+    const spans = getAllRemainingSpans()
+    if (spans.length === 0) return
+    const prevIndex = (navIndexRef.current - 1 + spans.length) % spans.length
+    let cancelled = false
+    const span = spans[prevIndex]
+    const needsScroll = (() => {
+      const r = span.getBoundingClientRect()
+      return r.top < 80 || r.bottom > window.innerHeight - 80
+    })()
+    await pointToSpanAtIndex(prevIndex, () => !cancelled && activeRef.current, needsScroll)
+    return () => { cancelled = true }
+  }, [editor, pointToSpanAtIndex])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter')  { e.preventDefault(); void handleConfirm() }
     if (e.key === 'Escape') { e.preventDefault(); onClose() }
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      if (e.shiftKey) void handleSkipPrev()
+      else void handleSkipNext()
+    }
+    if (e.key === 'ArrowRight') { e.preventDefault(); void handleSkipNext() }
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); void handleSkipPrev() }
   }
 
   if (!open || total === 0) return null
@@ -390,6 +469,8 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
                 onChange={setValue}
                 onConfirm={() => void handleConfirm()}
                 onEscape={onClose}
+                onSkipNext={() => void handleSkipNext()}
+                onSkipPrev={() => void handleSkipPrev()}
                 inputRef={inputRef}
               />
             ) : (
