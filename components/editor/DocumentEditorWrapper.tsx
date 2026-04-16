@@ -164,10 +164,15 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged } =
     useDocumentSave(document.id, prefs.autoSave ? Number(prefs.autoSaveDelay) * 1000 : 0)
 
-  // Charge les préférences éditeur
+  // Charge les préférences éditeur et initialise le zoom à partir de defaultZoom
   useEffect(() => {
     getSetting<EditorPrefs>('editorPrefs', DEFAULT_EDITOR_PREFS).then((p) => {
       setPrefs(p)
+      // Applique le zoom par défaut enregistré dans les réglages
+      const savedZoom = p.defaultZoom ?? ZOOM_DEFAULT
+      if (ZOOM_STEPS.includes(savedZoom)) {
+        setZoom(savedZoom)
+      }
       prefsLoaded.current = true
     })
   }, [])
@@ -231,12 +236,13 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
       }
       if ((e.ctrlKey || e.metaKey) && e.key === '0') {
         e.preventDefault()
-        setZoom(ZOOM_DEFAULT)
+        // Ctrl+0 réinitialise au zoom par défaut des préférences
+        setZoom(prefs.defaultZoom ?? ZOOM_DEFAULT)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [saveNow])
+  }, [saveNow, prefs.defaultZoom])
 
   useEffect(() => {
     const onBefore = (e: BeforeUnloadEvent) => {
@@ -318,7 +324,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     const idx = ZOOM_STEPS.indexOf(z)
     return idx > 0 ? ZOOM_STEPS[idx - 1] : z
   }), [])
-  const zoomReset = useCallback(() => setZoom(ZOOM_DEFAULT), [])
+  const zoomReset = useCallback(() => setZoom(prefs.defaultZoom ?? ZOOM_DEFAULT), [prefs.defaultZoom])
 
   const initialContent = (() => {
     const parsed = parseContent(document.content)
@@ -531,7 +537,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
                 <button
                   type="button"
                   onClick={zoomReset}
-                  title="Cliquer pour réinitialiser à 100% (Ctrl+0)"
+                  title={`Cliquer pour revenir au zoom par défaut (${prefs.defaultZoom ?? 100}%)`}
                   className="min-w-[38px] text-center font-mono text-[10px] tabular-nums hover:bg-white/20 rounded px-1 py-0.5 transition-colors cursor-pointer"
                 >
                   {zoom}%

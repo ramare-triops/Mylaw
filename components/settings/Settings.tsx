@@ -30,6 +30,7 @@ export type EditorPrefs = {
   showWordCount:    boolean;
   showStatusBar:    boolean;
   defaultTextAlign: string;
+  defaultZoom:      number;
 };
 
 const DEFAULT_PROFILE:    Profile    = { firstName: '', lastName: '', email: '', barreau: '', cabinet: '', phone: '' };
@@ -46,6 +47,7 @@ export const DEFAULT_EDITOR_PREFS: EditorPrefs = {
   showWordCount:    true,
   showStatusBar:    true,
   defaultTextAlign: "left",
+  defaultZoom:      100,
 };
 
 const FONT_FAMILIES = [
@@ -85,6 +87,17 @@ const AUTO_SAVE_DELAYS = [
   { label: '5 secondes',  value: '5' },
   { label: '10 secondes', value: '10' },
   { label: '30 secondes', value: '30' },
+];
+const ZOOM_LEVELS = [
+  { label: '50 %',  value: 50 },
+  { label: '75 %',  value: 75 },
+  { label: '90 %',  value: 90 },
+  { label: '100 % (normal)', value: 100 },
+  { label: '110 %', value: 110 },
+  { label: '125 %', value: 125 },
+  { label: '150 %', value: 150 },
+  { label: '175 %', value: 175 },
+  { label: '200 %', value: 200 },
 ];
 
 type SaveState = 'idle' | 'saving' | 'syncing' | 'done' | 'error';
@@ -284,10 +297,21 @@ export function Settings() {
             <div style={{ height: '24px' }} />
 
             {/* Mise en page */}
-            <Section title="Mise en page" description="Dimensions et marges de la page A4">
+            <Section title="Mise en page" description="Dimensions, marges et affichage de la page A4">
               <Field label="Marges de page">
                 <select style={inputStyle} value={editorPrefs.pageMargin} onChange={e => setEp({ pageMargin: e.target.value })}>
                   {PAGE_MARGINS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Zoom par défaut à l'ouverture">
+                <select
+                  style={inputStyle}
+                  value={editorPrefs.defaultZoom ?? 100}
+                  onChange={e => setEp({ defaultZoom: Number(e.target.value) })}
+                >
+                  {ZOOM_LEVELS.map(z => (
+                    <option key={z.value} value={z.value}>{z.label}</option>
+                  ))}
                 </select>
               </Field>
             </Section>
