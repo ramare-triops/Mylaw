@@ -4,11 +4,11 @@
 // API : https://api-adresse.data.gouv.fr (BAN — données publiques, sans clé)
 //
 // Comportements clés :
-//   - Phase codePostal : dès 5 chiffres saisis → appel API → dropdown communes
-//   - Phase commune    : filtre client, auto-sélection si 1 seul résultat
-//   - Phase rue        : tolère "12 Rue de la Paix" (numéro en tête)
-//                       si numéro détecté → skip phase numéro, confirmation directe
-//                       auto-sélection si 1 seule rue correspond
+//   - Phase codePostal : dès 5 chiffres → appel API → dropdown communes
+//   - Phase commune    : filtre client par préfixe strict, auto-sélection si 1 seul
+//   - Phase rue        : filtre client par préfixe strict après réponse API
+//                       auto-sélection si 1 seul résultat filtré
+//                       tolère numéro en tête ("12 Rue...") → skip phase numéro
 //   - Phase numero     : saisie libre, confirmée par Entrée
 
 'use client'
@@ -52,23 +52,48 @@ const PHASES_LABELS: Record<Phase, string> = {
 const DEBOUNCE_MS   = 250
 const CP_MIN_LENGTH = 5
 
+// Articles à ignorer pour la comparaison de préfixe (adresses françaises)
+const STOP_WORDS = /^(rue|avenue|allée|impasse|chemin|route|boulevard|place|domaine|hameau|lieu[\s-]dit|la|le|les|de|du|des|l'|d'|l’|d’)\s+/i
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/** Extrait le mot significatif (après le type de voie) pour la comparaison */
+function rueSignificantPart(s: string): string {
+  return s.toLowerCase().replace(STOP_WORDS, '').trim()
+}
+
 /**
- * Détecte si la saisie commence par un numéro suivi d'un espace ou de texte.
+ * Filtre les rues dont le nom commence strictement par la requête,
+ * en ignorant le type de voie (Rue, Avenue…) et les articles.
+ *
+ * Ex : query="paix" filtre "Rue de la Paix" et "Impasse de la Paix"
+ *      query="rue de la p" filtre "Rue de la Paix" mais pas "Rue du Parvis"
+ */
+function filterRues(results: Suggestion[], query: string): Suggestion[] {
+  if (!query.trim()) return results
+  const q = query.toLowerCase().trim()
+  return results.filter(s => {
+    const full = s.value.toLowerCase()
+    // Test 1 : préfixe exact sur la valeur complète ("rue de la p")
+    if (full.startsWith(q)) return true
+    // Test 2 : préfixe sur la partie significative ("p" matche "paix" dans "Rue de la Paix")
+    const sig = rueSignificantPart(full)
+    if (sig.startsWith(q)) return true
+    return false
+  })
+}
+
+/**
+ * Détecte si la saisie commence par un numéro.
  * Ex : "12 Rue de la Paix" → { numero: "12", rueQuery: "Rue de la Paix" }
- *      "Rue de la Paix"    → { numero: "",   rueQuery: "Rue de la Paix" }
  *      "12bis Rue"         → { numero: "12bis", rueQuery: "Rue" }
+ *      "Rue de la Paix"    → { numero: "", rueQuery: "Rue de la Paix" }
+ *      "12"               → { numero: "12", rueQuery: "" }
  */
 function parseRueInput(input: string): { numero: string; rueQuery: string } {
   const match = input.match(/^(\d+\s*(?:bis|ter|quater|quinquies|[a-zA-Z])?)[\s,]+(.+)$/i)
-  if (match) {
-    return { numero: match[1].trim(), rueQuery: match[2].trim() }
-  }
-  // Si que des chiffres (ex: "12" sans rue encore) → pas encore de séparation
-  if (/^\d+$/.test(input.trim())) {
-    return { numero: input.trim(), rueQuery: '' }
-  }
+  if (match) return { numero: match[1].trim(), rueQuery: match[2].trim() }
+  if (/^\d+$/.test(input.trim())) return { numero: input.trim(), rueQuery: '' }
   return { numero: '', rueQuery: input.trim() }
 }
 
@@ -101,7 +126,7 @@ function filterCommunes(all: Suggestion[], query: string): Suggestion[] {
 async function fetchRues(commune: string, codePostal: string, query: string): Promise<Suggestion[]> {
   if (!query.trim()) return []
   const q = `${query} ${commune}`
-  const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&postcode=${encodeURIComponent(codePostal)}&type=street&limit=6`
+  const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&postcode=${encodeURIComponent(codePostal)}&type=street&limit=8`
   try {
     const res = await fetch(url)
     if (!res.ok) return []
@@ -157,7 +182,7 @@ export function AddressInput({
     setSelectedIndex(-1)
   }, [])
 
-  // ── Helper : construit et déclenche la confirmation finale ───────────────────
+  // ── Confirmation finale ────────────────────────────────────────────────────
 
   const confirmAddress = useCallback((overrides: Partial<AddressState> = {}) => {
     const cur = { ...addressRef.current, ...overrides }
@@ -171,10 +196,6 @@ export function AddressInput({
   const selectSuggestion = useCallback((
     suggestion: Suggestion,
     currentPhase: Phase,
-    /**
-     * Numéro détecté dans la saisie (si l'utilisateur a tapé "12 Rue de la Paix")
-     * S'il est renseigné, on skip la phase numéro et on confirme directement.
-     */
     detectedNumero = '',
   ) => {
     if (currentPhase === 'commune') {
@@ -186,20 +207,17 @@ export function AddressInput({
       setTimeout(() => inputRef.current?.focus(), 30)
 
     } else if (currentPhase === 'rue') {
-      const newAddress = {
+      const updated = {
         ...addressRef.current,
         rue: suggestion.value,
         ...(detectedNumero ? { numero: detectedNumero } : {}),
       }
-      setAddress(newAddress)
+      setAddress(updated)
       setSuggestions([])
       setInputValue('')
-
       if (detectedNumero) {
-        // L'utilisateur avait déjà saisi le numéro → confirmation directe
         setTimeout(() => confirmAddress({ rue: suggestion.value, numero: detectedNumero }), 80)
       } else {
-        // Pas de numéro détecté → on passe à la phase numéro normalement
         setPhase('numero')
         setTimeout(() => inputRef.current?.focus(), 30)
       }
@@ -241,7 +259,7 @@ export function AddressInput({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inputValue, phase])
 
-  // ── Phase commune ───────────────────────────────────────────────────
+  // ── Phase commune ──────────────────────────────────────────────────
 
   useEffect(() => {
     if (phase !== 'commune') return
@@ -262,35 +280,40 @@ export function AddressInput({
     if (phase !== 'rue') return
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
-    // Parse : sépare un éventuel numéro en tête du nom de rue
     const { numero: detectedNumero, rueQuery } = parseRueInput(inputValue)
-
-    // Pas encore de nom de rue saisi (l'utilisateur tape juste le numéro)
     if (!rueQuery) { setSuggestions([]); return }
 
     setLoading(true)
     debounceRef.current = setTimeout(async () => {
-      const results = await fetchRues(
+      const raw = await fetchRues(
         addressRef.current.commune,
         addressRef.current.codePostal,
         rueQuery,
       )
-      setSuggestions(results)
+
+      // ─ Filtre strict par préfixe côté client ───────────────────────────
+      // Priorité : on affiche les résultats filtrés strictement ;
+      // si le filtre est trop restrictif (0 résultat), on affiche tout (fallback).
+      const filtered = filterRues(raw, rueQuery)
+      const displayed = filtered.length > 0 ? filtered : raw
+
+      setSuggestions(displayed)
       setSelectedIndex(-1)
       setLoading(false)
-      // Auto-sélection si une seule rue correspond
-      if (results.length === 1) {
-        setTimeout(() => selectSuggestion(results[0], 'rue', detectedNumero), 150)
+
+      // Auto-sélection si un seul résultat filtré strict
+      if (filtered.length === 1) {
+        setTimeout(() => selectSuggestion(filtered[0], 'rue', detectedNumero), 150)
       }
     }, DEBOUNCE_MS)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inputValue, phase])
 
-  // ── advancePhase (Entrée manuelle) ──────────────────────────────────────
+  // ── advancePhase (Entrée manuelle) ─────────────────────────────────────
 
   const advancePhase = useCallback(() => {
-    if (phase === 'codePostal') return // géré par useEffect
+    if (phase === 'codePostal') return
 
     if (phase === 'commune') {
       const candidate = selectedIndex >= 0 ? suggestions[selectedIndex] : suggestions[0]
@@ -308,29 +331,27 @@ export function AddressInput({
       const candidate = selectedIndex >= 0 ? suggestions[selectedIndex] : suggestions[0]
       if (candidate) {
         selectSuggestion(candidate, 'rue', detectedNumero)
-      } else if (rueQuery || inputValue.trim()) {
-        // L'utilisateur valide manuellement sans suggestion
+      } else {
         const rue = rueQuery || inputValue.trim()
-        if (detectedNumero) {
-          // Numéro en tête → skip phase numéro
-          const newState = { ...addressRef.current, rue, numero: detectedNumero }
-          setAddress(newState)
-          confirmAddress({ rue, numero: detectedNumero })
-        } else {
-          setAddress(prev => ({ ...prev, rue }))
-          setInputValue('')
-          setSuggestions([])
-          setPhase('numero')
+        if (rue) {
+          if (detectedNumero) {
+            setAddress(prev => ({ ...prev, rue, numero: detectedNumero }))
+            confirmAddress({ rue, numero: detectedNumero })
+          } else {
+            setAddress(prev => ({ ...prev, rue }))
+            setInputValue('')
+            setSuggestions([])
+            setPhase('numero')
+          }
         }
       }
 
     } else if (phase === 'numero') {
-      const numero = inputValue.trim()
-      confirmAddress({ numero })
+      confirmAddress({ numero: inputValue.trim() })
     }
   }, [phase, inputValue, suggestions, selectedIndex, selectSuggestion, confirmAddress])
 
-  // ── Clavier ─────────────────────────────────────────────────────────────────
+  // ── Clavier ────────────────────────────────────────────────────────────────
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -374,10 +395,8 @@ export function AddressInput({
     return parts.join(' · ')
   }
 
-  // Dans le dropdown rue, on met en valeur le nom de rue en gras et le numéro détecté en préfixe
   const { numero: previewNumero } = phase === 'rue' ? parseRueInput(inputValue) : { numero: '' }
-
-  const summary = buildSummary()
+  const summary    = buildSummary()
   const PHASES: Phase[] = ['codePostal', 'commune', 'rue', 'numero']
   const phaseIndex = PHASES.indexOf(phase)
 
@@ -480,11 +499,8 @@ export function AddressInput({
                 gap: 6,
               }}
             >
-              {/* Affiche le numéro détecté en préfixe grisé si présent */}
               {phase === 'rue' && previewNumero && (
-                <span style={{ color: '#9ca3af', fontSize: 12, flexShrink: 0 }}>
-                  {previewNumero}
-                </span>
+                <span style={{ color: '#9ca3af', fontSize: 12, flexShrink: 0 }}>{previewNumero}</span>
               )}
               <span>{s.label}</span>
             </div>
