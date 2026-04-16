@@ -70,7 +70,6 @@ export function DocumentList() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  // Hover preview state
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
   const [previewAnchor, setPreviewAnchor] = useState<{ top: number; left: number } | null>(null);
   const hoverTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -352,7 +351,8 @@ export function DocumentList() {
             <span className="flex-1">Titre</span>
             <span className="w-36 text-right hidden sm:block">Modifi\u00e9 le</span>
             <span className="w-20 text-right hidden sm:block">Mots</span>
-            <span className="w-16" />
+            {/* Espace r\u00e9serv\u00e9 pour les actions — doit correspondre exactement \u00e0 w-24 ci-dessous */}
+            <span className="w-24 hidden sm:block" />
           </div>
         )}
 
@@ -370,6 +370,7 @@ export function DocumentList() {
                 selectedIds.has(doc.id!) && 'bg-[var(--color-primary)]/5'
               )}
             >
+              {/* Case \u00e0 cocher */}
               <button
                 onClick={(e) => toggleSelect(e, doc.id!)}
                 style={selectedIds.has(doc.id!) ? { opacity: 1 } : undefined}
@@ -382,6 +383,7 @@ export function DocumentList() {
 
               <FileText className="w-4 h-4 text-[var(--color-text-muted)] flex-shrink-0" />
 
+              {/* Titre / champ renommage */}
               <div className="flex-1 min-w-0" onClick={(e) => renamingId === doc.id && e.stopPropagation()}>
                 {renamingId === doc.id ? (
                   <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -410,17 +412,37 @@ export function DocumentList() {
                 )}
               </div>
 
-              <div className="text-xs text-[var(--color-text-muted)] w-36 text-right hidden sm:block flex-shrink-0">{formatDateTime(doc.updatedAt)}</div>
-              <div className="text-xs text-[var(--color-text-muted)] w-20 text-right hidden sm:block flex-shrink-0">{doc.wordCount} mots</div>
+              {/* Date modif */}
+              <div className="text-xs text-[var(--color-text-muted)] w-36 text-right hidden sm:block flex-shrink-0">
+                {formatDateTime(doc.updatedAt)}
+              </div>
 
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity w-16 justify-end flex-shrink-0">
-                <button onClick={(e) => startRename(e, doc)} className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors" title="Renommer">
+              {/* Mots */}
+              <div className="text-xs text-[var(--color-text-muted)] w-20 text-right hidden sm:block flex-shrink-0">
+                {doc.wordCount ?? 0} mots
+              </div>
+
+              {/* Actions — w-24 pour loger 3 boutons sans d\u00e9border sur la colonne mots */}
+              <div className="flex items-center justify-end gap-0.5 w-24 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={(e) => startRename(e, doc)}
+                  className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors"
+                  title="Renommer"
+                >
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); downloadDocAsTxt(doc); }} className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors" title="T\u00e9l\u00e9charger">
+                <button
+                  onClick={(e) => { e.stopPropagation(); downloadDocAsTxt(doc); }}
+                  className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors"
+                  title="T\u00e9l\u00e9charger"
+                >
                   <Download className="w-3.5 h-3.5" />
                 </button>
-                <button onClick={(e) => handleDelete(e, doc.id!)} className="p-1.5 rounded hover:bg-red-100 hover:text-red-600 transition-colors" title="Supprimer">
+                <button
+                  onClick={(e) => handleDelete(e, doc.id!)}
+                  className="p-1.5 rounded hover:bg-red-100 hover:text-red-600 transition-colors text-[var(--color-text-muted)]"
+                  title="Supprimer"
+                >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -437,7 +459,6 @@ export function DocumentList() {
         </div>
       </div>
 
-      {/* Bulle flottante A4 */}
       {previewDoc && previewAnchor && (
         <DocumentHoverPreview doc={previewDoc} anchor={previewAnchor} />
       )}
