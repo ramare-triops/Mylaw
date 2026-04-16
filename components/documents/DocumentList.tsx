@@ -48,15 +48,15 @@ function downloadDocAsHtml(doc: Document) {
 
 const SORT_OPTIONS: { value: SortField; label: string }[] = [
   { value: 'updatedAt', label: 'Date de modification' },
-  { value: 'createdAt', label: 'Date de cr\u00e9ation' },
-  { value: 'title', label: 'Titre (A\u2011Z)' },
+  { value: 'createdAt', label: 'Date de création' },
+  { value: 'title', label: 'Titre (A‑Z)' },
   { value: 'wordCount', label: 'Nombre de mots' },
 ];
 
 const FILTER_OPTIONS: { value: FilterType; label: string }[] = [
   { value: 'all', label: 'Tous les types' },
   { value: 'draft', label: 'Brouillons' },
-  { value: 'final', label: 'Finalis\u00e9s' },
+  { value: 'final', label: 'Finalisés' },
   { value: 'contract', label: 'Contrats' },
 ];
 
@@ -199,7 +199,7 @@ export function DocumentList() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
             <input
               type="text"
-              placeholder="Rechercher\u2026"
+              placeholder="Rechercher…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className={cn(
@@ -246,7 +246,7 @@ export function DocumentList() {
                     className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors flex items-center gap-2"
                   >
                     {sortDir === 'asc' ? <SortAsc className="w-4 h-4" /> : <SortDesc className="w-4 h-4" />}
-                    {sortDir === 'asc' ? 'Croissant' : 'D\u00e9croissant'}
+                    {sortDir === 'asc' ? 'Croissant' : 'Décroissant'}
                   </button>
                 </div>
               </div>
@@ -295,7 +295,7 @@ export function DocumentList() {
             'bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20'
           )}>
             <span className="text-[var(--color-primary)] font-medium">
-              {selectedIds.size} s\u00e9lectionn\u00e9{selectedIds.size > 1 ? 's' : ''}
+              {selectedIds.size} sélectionné{selectedIds.size > 1 ? 's' : ''}
             </span>
             <div className="ml-auto flex items-center gap-2">
               <div className="relative">
@@ -307,7 +307,7 @@ export function DocumentList() {
                     'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors'
                   )}
                 >
-                  <Download className="w-3.5 h-3.5" /> T\u00e9l\u00e9charger
+                  <Download className="w-3.5 h-3.5" /> Télécharger
                   <ChevronDown className="w-3 h-3 opacity-60" />
                 </button>
                 {showDownloadDropdown && (
@@ -349,9 +349,8 @@ export function DocumentList() {
                 : <Square className="w-4 h-4" />}
             </button>
             <span className="flex-1">Titre</span>
-            <span className="w-36 text-right hidden sm:block">Modifi\u00e9 le</span>
+            <span className="w-36 text-right hidden sm:block">Modifié le</span>
             <span className="w-20 text-right hidden sm:block">Mots</span>
-            {/* Espace r\u00e9serv\u00e9 pour les actions — doit correspondre exactement \u00e0 w-24 ci-dessous */}
             <span className="w-24 hidden sm:block" />
           </div>
         )}
@@ -370,7 +369,6 @@ export function DocumentList() {
                 selectedIds.has(doc.id!) && 'bg-[var(--color-primary)]/5'
               )}
             >
-              {/* Case \u00e0 cocher */}
               <button
                 onClick={(e) => toggleSelect(e, doc.id!)}
                 style={selectedIds.has(doc.id!) ? { opacity: 1 } : undefined}
@@ -383,7 +381,6 @@ export function DocumentList() {
 
               <FileText className="w-4 h-4 text-[var(--color-text-muted)] flex-shrink-0" />
 
-              {/* Titre / champ renommage */}
               <div className="flex-1 min-w-0" onClick={(e) => renamingId === doc.id && e.stopPropagation()}>
                 {renamingId === doc.id ? (
                   <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -407,22 +404,18 @@ export function DocumentList() {
                 ) : (
                   <>
                     <div className="text-sm font-medium text-[var(--color-text)] truncate">{doc.title}</div>
-                    <div className="text-xs text-[var(--color-text-muted)] sm:hidden">{formatDateTime(doc.updatedAt)} \u2022 {doc.wordCount} mots</div>
+                    <div className="text-xs text-[var(--color-text-muted)] sm:hidden">{formatDateTime(doc.updatedAt)} • {doc.wordCount} mots</div>
                   </>
                 )}
               </div>
 
-              {/* Date modif */}
               <div className="text-xs text-[var(--color-text-muted)] w-36 text-right hidden sm:block flex-shrink-0">
                 {formatDateTime(doc.updatedAt)}
               </div>
-
-              {/* Mots */}
               <div className="text-xs text-[var(--color-text-muted)] w-20 text-right hidden sm:block flex-shrink-0">
                 {doc.wordCount ?? 0} mots
               </div>
 
-              {/* Actions — w-24 pour loger 3 boutons sans d\u00e9border sur la colonne mots */}
               <div className="flex items-center justify-end gap-0.5 w-24 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   onClick={(e) => startRename(e, doc)}
@@ -434,7 +427,7 @@ export function DocumentList() {
                 <button
                   onClick={(e) => { e.stopPropagation(); downloadDocAsTxt(doc); }}
                   className="p-1.5 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] transition-colors"
-                  title="T\u00e9l\u00e9charger"
+                  title="Télécharger"
                 >
                   <Download className="w-3.5 h-3.5" />
                 </button>
@@ -452,8 +445,8 @@ export function DocumentList() {
           {filteredAndSorted.length === 0 && (
             <div className="py-12 text-center text-[var(--color-text-muted)] text-sm">
               {search || filterType !== 'all'
-                ? 'Aucun document ne correspond aux crit\u00e8res.'
-                : 'Aucun document. Cr\u00e9ez votre premier document ci-dessus.'}
+                ? 'Aucun document ne correspond aux critères.'
+                : 'Aucun document. Créez votre premier document ci-dessus.'}
             </div>
           )}
         </div>
