@@ -112,17 +112,11 @@ const A4_STYLES = `
   [data-variable-type="default"]   { color: #6b7280; background: rgba(107,114,128,0.07); }
 `;
 
-const BUBBLE_W = 368;   // largeur de la bulle
-const A4_W = 794;       // largeur réelle A4 en px
-const A4_VISIBLE_H = 460; // hauteur visible souhaitée dans la bulle
-
-// SCALE découplé de BUBBLE_W : on zoome plus fort (0.55 vs ~0.42)
-// La page A4 est plus grande que la bulle → clippée par overflow:hidden
+const BUBBLE_W = 368;
+const A4_W = 794;
+const A4_VISIBLE_H = 460;
 const SCALE = 0.55;
-
-// Dimensions du cadre visible (zone grise)
-const FRAME_W = A4_W * SCALE;           // ~436px — légèrement plus large que la bulle
-const FRAME_H = A4_VISIBLE_H * SCALE;   // ~253px
+const FRAME_H = A4_VISIBLE_H * SCALE; // hauteur visible ~253px
 
 export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps) {
   const bubbleRef = useRef<HTMLDivElement>(null);
@@ -159,7 +153,7 @@ export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps)
         boxShadow: '0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08)',
         overflow: 'hidden',
       }}>
-        {/* En-tête */}
+        {/* En-tête méta */}
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
           <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text)', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {doc.title}
@@ -177,54 +171,34 @@ export function DocumentHoverPreview({ doc, anchor }: DocumentHoverPreviewProps)
           </div>
         </div>
 
-        {/* Zone grise autour de la page A4 */}
-        <div style={{ background: '#e8e4dc', padding: '12px 0 0', position: 'relative', overflow: 'hidden' }}>
-          {/* Cadre clipé : on centre horizontalement la page scalée dans la bulle */}
-          <div style={{
-            width: BUBBLE_W,
-            height: FRAME_H,
-            position: 'relative',
-            overflow: 'hidden',
-          }}>
-            {/* Ombre portée sur la page blanche */}
-            <div style={{
+        {/* Page A4 pleine largeur — pas de padding latéral, pas de fond gris */}
+        <div style={{ position: 'relative', height: FRAME_H, overflow: 'hidden', background: '#fff' }}>
+          <iframe
+            srcDoc={srcdoc}
+            scrolling="no"
+            style={{
+              width: A4_W,
+              height: Math.ceil(FRAME_H / SCALE),
+              border: 'none',
+              transformOrigin: 'top left',
+              transform: `scale(${SCALE})`,
               position: 'absolute',
               top: 0,
-              // Centre la page A4 scalée dans la bulle
-              left: (BUBBLE_W - FRAME_W) / 2,
-              width: FRAME_W,
-              height: FRAME_H,
-              borderRadius: '3px 3px 0 0',
-              boxShadow: '0 2px 16px rgba(0,0,0,0.18)',
-              overflow: 'hidden',
-            }}>
-              <iframe
-                srcDoc={srcdoc}
-                scrolling="no"
-                style={{
-                  width: A4_W,
-                  height: Math.ceil(FRAME_H / SCALE),
-                  border: 'none',
-                  transformOrigin: 'top left',
-                  transform: `scale(${SCALE})`,
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  pointerEvents: 'none',
-                  background: '#fff',
-                }}
-                sandbox="allow-same-origin"
-              />
-            </div>
-            {/* Fondu bas */}
-            <div style={{
-              position: 'absolute',
-              bottom: 0, left: 0, right: 0,
-              height: 64,
-              background: 'linear-gradient(to bottom, transparent, rgba(232,228,220,0.98))',
+              left: '50%',
+              marginLeft: `${-(A4_W / 2)}px`,
               pointerEvents: 'none',
-            }} />
-          </div>
+              background: '#fff',
+            }}
+            sandbox="allow-same-origin"
+          />
+          {/* Fondu bas : blanc → transparent pour raccorder proprement avec le bas de la bulle */}
+          <div style={{
+            position: 'absolute',
+            bottom: 0, left: 0, right: 0,
+            height: 72,
+            background: 'linear-gradient(to bottom, transparent, rgba(255,255,255,1))',
+            pointerEvents: 'none',
+          }} />
         </div>
       </div>
     </div>
