@@ -9,6 +9,8 @@ import type {
   AIChat,
   HistoryEntry,
   Deadline,
+  Brick,
+  InfoLabel,
 } from '@/types';
 
 type SettingsRecord = { key: string; value: unknown };
@@ -39,6 +41,8 @@ export class MyLexDatabase extends Dexie {
   settings!: Table<SettingsRecord>;
   history!: Table<HistoryEntry>;
   deadlines!: Table<Deadline>;
+  bricks!: Table<Brick>;
+  infoLabels!: Table<InfoLabel>;
 
   constructor() {
     super('MyLexDB');
@@ -55,6 +59,23 @@ export class MyLexDatabase extends Dexie {
       settings: 'key',
       history: '++id, action, entityId, entityType, timestamp',
       deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
+    });
+
+    // ─── Version 2 : ajout des briques et des étiquettes d'information ────
+    this.version(2).stores({
+      documents:
+        '++id, title, type, folderId, updatedAt, tags, *searchTokens',
+      folders: '++id, name, parentId, color, createdAt',
+      tools: '++id, slug, name, pinned, order, config, lastUsedAt',
+      templates: '++id, name, category, content, variables, createdAt',
+      sessions: '++id, date, toolId, content, tags',
+      snippets: '++id, trigger, expansion, category',
+      aiChats: '++id, documentId, messages, createdAt',
+      settings: 'key',
+      history: '++id, action, entityId, entityType, timestamp',
+      deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
+      bricks: '++id, title, category, infoLabelId, updatedAt, *tags',
+      infoLabels: '++id, name, color, createdAt',
     });
 
     // ─── Middleware : déclenche le sync Drive sur toute mutation ───
@@ -143,4 +164,43 @@ export async function searchDocuments(query: string): Promise<Document[]> {
         d.tags.some((t) => t.toLowerCase().includes(lower))
     )
     .toArray();
+}
+
+// ─── Brick helpers ─────────────────────────────────────────────────────────────────────
+export async function saveBrick(brick: Brick): Promise<number> {
+  const now = new Date();
+  const payload: Brick = { ...brick, updatedAt: now, createdAt: brick.createdAt ?? now };
+  const id = await db.bricks.put(payload);
+  return Number(id);
+}
+
+export async function deleteBrick(id: number): Promise<void> {
+  await db.bricks.delete(id);
+}
+
+export async function searchBricks(query: string): Promise<Brick[]> {
+  const lower = query.toLowerCase();
+  return db.bricks
+    .filter(
+      (b) =>
+        b.title.toLowerCase().includes(lower) ||
+        b.content.toLowerCase().includes(lower) ||
+        b.tags.some((t) => t.toLowerCase().includes(lower))
+    )
+    .toArray();
+}
+
+// ─── InfoLabel helpers ─────────────────────────────────────────────────────────────────
+export async function saveInfoLabel(label: InfoLabel): Promise<number> {
+  const id = await db.infoLabels.put(label);
+  return Number(id);
+}
+
+export async function deleteInfoLabel(id: number): Promise<void> {
+  // Détacher les briques qui référençaient cette étiquette
+  const linked = await db.bricks.where('infoLabelId').equals(id).toArray();
+  await Promise.all(
+    linked.map((b) => db.bricks.put({ ...b, infoLabelId: undefined }))
+  );
+  await db.infoLabels.delete(id);
 }

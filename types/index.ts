@@ -218,3 +218,50 @@ export interface UIState {
   sidebarCollapsed: boolean;
   activeDocumentScrollY: number;
 }
+
+// ─── Briques ───────────────────────────────────────────────────────────────
+// Une brique est un bloc de contenu juridique réutilisable (clause, paragraphe,
+// formule type…) que l'on peut insérer dans un document.
+export type BrickCategory =
+  | 'clause'
+  | 'introduction'
+  | 'conclusion'
+  | 'motivation'
+  | 'dispositif'
+  | 'formule'
+  | 'other';
+
+export interface Brick {
+  id?: number;
+  title: string;
+  content: string;
+  /** Catégorie fonctionnelle de la brique */
+  category: BrickCategory;
+  /** Tags libres pour la recherche */
+  tags: string[];
+  /** Référence à une étiquette structurée (optionnel) */
+  infoLabelId?: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// ─── Étiquettes d'information ──────────────────────────────────────────────
+// Une étiquette est un label structuré (couleur + texte) que l'on associe
+// à des briques ou à des documents pour les classifier.
+export type InfoLabelColor =
+  | 'gray'
+  | 'red'
+  | 'orange'
+  | 'yellow'
+  | 'green'
+  | 'blue'
+  | 'purple'
+  | 'pink';
+
+export interface InfoLabel {
+  id?: number;
+  name: string;
+  color: InfoLabelColor;
+  description?: string;
+  createdAt: Date;
+}

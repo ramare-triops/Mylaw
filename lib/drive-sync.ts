@@ -17,6 +17,10 @@ export interface MylawBackup {
   templates: any[];
   tools: any[];
   aiChats: any[];
+  /** Briques de contenu réutilisables */
+  bricks: any[];
+  /** Étiquettes d'information structurées */
+  infoLabels: any[];
 }
 
 export type DriveStatus =
