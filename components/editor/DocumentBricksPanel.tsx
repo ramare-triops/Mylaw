@@ -113,41 +113,37 @@ const CONDITIONAL_TAGS = [
 // ─── Conversion brique → HTML TipTap ─────────────────────────────────────────
 //
 // Stratégie :
-// 1. Repérer les contextes de formatage (**bold**, __underline__, _italic_,
-//    ^^caps^^) AVANT de substituer les variables.
-// 2. Pour chaque variable trouvée dans un contexte formaté, passer les
-//    attributs data-bold / data-underline / data-italic sur le <span> afin
-//    que VariableField (atom ProseMirror) puisse les stocker et les restituer
-//    via style inline — les marks ProseMirror ne s'appliquant pas aux atoms.
-// 3. Ajouter une espace fine insécable (\u202F) avant et après chaque span
-//    variable pour éviter que deux étiquettes consécutives se collent.
+// 1. Convertir les contextes formatés (**bold**, __underline__, _italic_,
+//    ^^caps^^) et injecter les attributs data-bold/data-underline/data-italic
+//    sur les <span> variables qui s'y trouvent.
+// 2. Convertir les variables restantes en <span data-variable-field>.
+//    Aucun espace n'est ajouté à ce stade.
+// 3. POST-TRAITEMENT : insérer un espace ' ' UNIQUEMENT entre deux spans
+//    variables consécutifs (</span><span data-variable-field), c'est-à-dire
+//    quand l'auteur de la brique a écrit [Var1][Var2] sans rien entre eux.
+//    Si du texte ou de la ponctuation sépare déjà les variables, aucun
+//    espace supplémentaire n'est inséré.
 //
 export function brickContentToHtml(content: string): string {
   return content.split('\n').map(line => {
     let p = line
 
-    // ── 1. Majuscules ^^...^^ (pas de variable dedans en général) ──────────
+    // ── 1. Majuscules ^^...^^ ──────────────────────────────────────────
     p = p.replace(/\^\^(.+?)\^\^/g, '<span style="text-transform:uppercase;font-weight:600">$1</span>')
 
-    // ── 2. Traitement des contextes formatés contenant des variables ───────
-    // On traite chaque marqueur dans l'ordre : bold > underline > italic.
-    // Pour chaque match, on convertit les [Variables] internes en spans avec
-    // les attributs de formatage appropriés, puis on entoure le reste de
-    // texte brut du tag HTML correspondant.
-
+    // ── 2. Contextes formatés contenant des variables ─────────────────────
     type FormatSpec = { re: RegExp; tag: string; attr: string }
     const formats: FormatSpec[] = [
-      { re: /\*\*(.+?)\*\*/gs, tag: 'strong', attr: 'data-bold="true"'      },
-      { re: /__(.+?)__/gs,      tag: 'u',      attr: 'data-underline="true"' },
-      { re: /(?<!_)_([^_]+)_(?!_)/gs, tag: 'em', attr: 'data-italic="true"'  },
+      { re: /\*\*(.+?)\*\*/gs,            tag: 'strong', attr: 'data-bold="true"'      },
+      { re: /__(.+?)__/gs,                tag: 'u',      attr: 'data-underline="true"' },
+      { re: /(?<!_)_([^_]+)_(?!_)/gs,    tag: 'em',     attr: 'data-italic="true"'   },
     ]
 
     for (const { re, tag, attr } of formats) {
       p = p.replace(re, (_match, inner: string) => {
-        // Convertit les [Variables] internes en spans avec l'attribut de format
         const innerConverted = inner.replace(/\[([^\]]+)\]/g, (_m, name: string) => {
           const esc = name.replace(/"/g, '&quot;')
-          return `\u202F<span data-variable-field="" data-variable-name="${esc}" ${attr}>${esc}</span>\u202F`
+          return `<span data-variable-field="" data-variable-name="${esc}" ${attr}>${esc}</span>`
         })
         return `<${tag}>${innerConverted}</${tag}>`
       })
@@ -156,8 +152,24 @@ export function brickContentToHtml(content: string): string {
     // ── 3. Variables restantes (hors contexte formaté) ────────────────────
     p = p.replace(/\[([^\]]+)\]/g, (_m, name: string) => {
       const esc = name.replace(/"/g, '&quot;')
-      return `\u202F<span data-variable-field="" data-variable-name="${esc}">${esc}</span>\u202F`
+      return `<span data-variable-field="" data-variable-name="${esc}">${esc}</span>`
     })
+
+    // ── 4. POST-TRAITEMENT : espace entre deux variables consécutives ──────
+    // Détecte </span><span data-variable-field (avec éventuellement une
+    // balise fermante de formatage </strong>, </u>, </em> entre les deux)
+    // et insère un espace uniquement dans ce cas.
+    p = p.replace(
+      /(<\/span>)(<span data-variable-field)/g,
+      '$1 $2',
+    )
+    // Cas où un span variable suit une balise fermante de formatage
+    // elle-même suivie d'un autre span variable sans espace :
+    // ex : </strong><span  ou  </em><span
+    p = p.replace(
+      /(<\/(strong|u|em)>)(<span data-variable-field)/g,
+      (_, closingTag, _tag, openSpan) => `${closingTag} ${openSpan}`,
+    )
 
     return `<p>${p.trim() || '<br>'}</p>`
   }).join('')
@@ -638,7 +650,7 @@ function BricksEditorModal({ groups, onSave, onClose }: {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ─── COMPOSANT PRINCIPAL ──────────────────────────────────────────────────────
+// ─── COMPOSANT PRINCIPAL ─────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface DocumentBricksPanelProps {
