@@ -50,6 +50,20 @@ function generateId(): string {
   return Math.random().toString(36).slice(2, 9)
 }
 
+/**
+ * Retourne le contenu dans le bon format pour TipTap :
+ * - Si c'est un JSON TipTap stringifié => retourne l'objet parsé
+ * - Sinon => retourne la chaîne HTML telle quelle
+ */
+function parseContent(raw: string): Record<string, unknown> | string {
+  if (!raw) return ''
+  const trimmed = raw.trim()
+  if (trimmed.startsWith('{"type":"doc"')) {
+    try { return JSON.parse(trimmed) as Record<string, unknown> } catch { /* fall through */ }
+  }
+  return trimmed
+}
+
 export function TemplateEditorView({ template, onSave, onClose }: TemplateEditorViewProps) {
   const [title, setTitle]             = useState(template.name)
   const [category, setCategory]       = useState(template.category)
@@ -64,6 +78,8 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
   const fieldsRef                     = useRef<TemplateField[]>(fields)
 
   useEffect(() => { fieldsRef.current = fields }, [fields])
+
+  const initialContent = parseContent(template.content)
 
   const editor = useEditor({
     extensions: [
@@ -80,7 +96,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
       Placeholder.configure({ placeholder: 'Rédigez votre modèle ici… Glissez ou cliquez sur un champ pour l\'insérer.' }),
       VariableField.configure({ onVariableClick: undefined, HTMLAttributes: {} }),
     ],
-    content: template.content || '',
+    content: initialContent,
     editorProps: {
       attributes: { class: 'mylex-editor-content', spellcheck: 'true', lang: 'fr' },
     },
@@ -96,7 +112,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
     if (editor) setVariableCount(countVariables(editor))
   }, [editor])
 
-  // ── Insertion de variable ──────────────────────────────────────────────────
+  // ── Insertion de variable
   const handleInsertVariable = useCallback((name: string) => {
     const ed = editorRef.current
     if (!ed) return
@@ -106,7 +122,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
     setTimeout(() => setVariableCount(countVariables(ed)), 50)
   }, [])
 
-  // ── Drag & drop depuis le panneau ──────────────────────────────────────────
+  // ── Drag & drop
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes(DRAG_FIELD_KEY)) return
     e.preventDefault()
@@ -115,10 +131,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
   }, [])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    // Ne désactiver que si on quitte vraiment la zone
-    if (!editorZoneRef.current?.contains(e.relatedTarget as Node)) {
-      setDropTarget(false)
-    }
+    if (!editorZoneRef.current?.contains(e.relatedTarget as Node)) setDropTarget(false)
   }, [])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -126,48 +139,25 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
     const raw = e.dataTransfer.getData(DRAG_FIELD_KEY)
     if (!raw) return
     e.preventDefault()
-
     let data: { name: string; label: string; type: TemplateField['type']; placeholder: string }
     try { data = JSON.parse(raw) } catch { return }
-
     const ed = editorRef.current
     if (!ed) return
-
-    // Positionner le curseur à l'endroit du drop via coordonnées
-    const view = ed.view
-    const pos = view.posAtCoords({ left: e.clientX, top: e.clientY })
-    if (pos) {
-      ed.chain().focus().setTextSelection(pos.pos).insertVariable(data.name).run()
-    } else {
-      ed.chain().focus().insertVariable(data.name).run()
-    }
-
+    const pos = ed.view.posAtCoords({ left: e.clientX, top: e.clientY })
+    if (pos) ed.chain().focus().setTextSelection(pos.pos).insertVariable(data.name).run()
+    else ed.chain().focus().insertVariable(data.name).run()
     setHasChanges(true)
     setSaved(false)
     setTimeout(() => setVariableCount(countVariables(ed)), 50)
-
-    // Ajouter le champ dans la liste du modèle si absent
     const current = fieldsRef.current
     if (!current.some((f) => f.name === data.name)) {
-      const newField: TemplateField = {
-        id: generateId(),
-        name: data.name,
-        label: data.label,
-        type: data.type,
-        defaultValue: '',
-        required: false,
-        placeholder: data.placeholder,
-      }
-      setFields((prev) => {
-        const updated = [...prev, newField]
-        fieldsRef.current = updated
-        return updated
-      })
+      const newField: TemplateField = { id: generateId(), name: data.name, label: data.label, type: data.type, defaultValue: '', required: false, placeholder: data.placeholder }
+      setFields((prev) => { const updated = [...prev, newField]; fieldsRef.current = updated; return updated })
       setHasChanges(true)
     }
   }, [])
 
-  // ── Sauvegarde ────────────────────────────────────────────────────────────
+  // ── Sauvegarde
   const handleSave = useCallback(() => {
     const ed = editorRef.current
     if (!ed) return
@@ -215,96 +205,50 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
 
       {/* Barre de titre */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 16px', background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
-        <button
-          onClick={onClose}
-          style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', fontSize: 'var(--text-xs)', cursor: 'pointer', flexShrink: 0 }}
-        >
+        <button onClick={onClose} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', fontSize: 'var(--text-xs)', cursor: 'pointer', flexShrink: 0 }}>
           <ArrowLeft size={13} /> Retour
         </button>
-
-        <input
-          type="text" value={title}
-          onChange={(e) => { setTitle(e.target.value); setHasChanges(true) }}
-          placeholder="Nom du modèle"
+        <input type="text" value={title} onChange={(e) => { setTitle(e.target.value); setHasChanges(true) }} placeholder="Nom du modèle"
           style={{ flex: 1, minWidth: 0, fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--color-text)', background: 'transparent', border: 'none', outline: 'none', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}
           onFocus={(e) => { (e.target as HTMLInputElement).style.background = 'var(--color-surface-offset)' }}
           onBlur={(e) => { (e.target as HTMLInputElement).style.background = 'transparent' }}
         />
-
-        <input
-          type="text" value={category}
-          onChange={(e) => { setCategory(e.target.value); setHasChanges(true) }}
-          placeholder="Catégorie"
+        <input type="text" value={category} onChange={(e) => { setCategory(e.target.value); setHasChanges(true) }} placeholder="Catégorie"
           style={{ width: '140px', flexShrink: 0, fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '4px 8px', outline: 'none' }}
         />
-
         {variableCount > 0 && (
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-primary)', background: 'var(--color-primary-highlight)', padding: '3px 9px', borderRadius: 'var(--radius-full)', fontWeight: 500, flexShrink: 0 }}>
             {variableCount} variable{variableCount > 1 ? 's' : ''}
           </span>
         )}
-
-        <button
-          onClick={() => setShowFields((v) => !v)}
-          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: showFields ? 'var(--color-primary-highlight)' : 'transparent', color: showFields ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: showFields ? 600 : 400, cursor: 'pointer', flexShrink: 0, transition: 'all 0.12s' }}
-        >
+        <button onClick={() => setShowFields((v) => !v)}
+          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: showFields ? 'var(--color-primary-highlight)' : 'transparent', color: showFields ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: showFields ? 600 : 400, cursor: 'pointer', flexShrink: 0, transition: 'all 0.12s' }}>
           <Tag size={12} /> Champs
         </button>
-
         {saved && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-success)', flexShrink: 0 }}>✓ Enregistré</span>}
         {hasChanges && !saved && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-warning)', flexShrink: 0 }}>● Non enregistré</span>}
-
-        <button
-          onClick={handleSave}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', color: '#fff', fontSize: 'var(--text-sm)', fontWeight: 500, cursor: 'pointer', flexShrink: 0 }}
-        >
+        <button onClick={handleSave}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', color: '#fff', fontSize: 'var(--text-sm)', fontWeight: 500, cursor: 'pointer', flexShrink: 0 }}>
           <Save size={13} /> Enregistrer
         </button>
       </div>
 
-      {/* Toolbar */}
       <WordToolbar editor={editor} onInsertLink={handleInsertLink} onInsertImage={handleInsertImage} hasVariables={false} />
 
-      {/* Corps */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-
-        {/* Zone document avec gestion du drop */}
         <div
           ref={editorZoneRef}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          style={{
-            flex: 1, overflowY: 'auto', overflowX: 'auto',
-            background: dropTarget ? '#e8f4f4' : '#e8e8e8',
-            padding: '32px 32px',
-            transition: 'background 0.15s',
-            outline: dropTarget ? '3px dashed #01696f' : '3px dashed transparent',
-            outlineOffset: '-4px',
-          }}
+          style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', background: dropTarget ? '#e8f4f4' : '#e8e8e8', padding: '32px', transition: 'background 0.15s', outline: dropTarget ? '3px dashed #01696f' : '3px dashed transparent', outlineOffset: '-4px' }}
         >
-          {/* Indicateur de drop */}
           {dropTarget && (
-            <div style={{
-              position: 'sticky', top: 0, zIndex: 10,
-              textAlign: 'center', padding: '6px',
-              background: '#01696f', color: 'white',
-              fontSize: '12px', fontWeight: 500,
-              borderRadius: '0 0 var(--radius-md) var(--radius-md)',
-              marginBottom: '8px',
-              boxShadow: '0 2px 8px rgba(1,105,111,0.3)',
-            }}>
+            <div style={{ position: 'sticky', top: 0, zIndex: 10, textAlign: 'center', padding: '6px', background: '#01696f', color: 'white', fontSize: '12px', fontWeight: 500, borderRadius: '0 0 var(--radius-md) var(--radius-md)', marginBottom: '8px', boxShadow: '0 2px 8px rgba(1,105,111,0.3)' }}>
               Relâchez pour insérer le champ ici
             </div>
           )}
-
-          <div
-            style={{
-              width: '210mm', margin: '0 auto', background: 'white',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05)',
-              minHeight: '297mm', padding: '25mm 20mm 20mm 25mm',
-            }}
-          >
+          <div style={{ width: '210mm', margin: '0 auto', background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05)', minHeight: '297mm', padding: '25mm 20mm 20mm 25mm' }}>
             <EditorContent editor={editor} />
           </div>
         </div>
@@ -318,7 +262,6 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
         )}
       </div>
 
-      {/* Barre de statut */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 16px', background: 'var(--color-primary)', color: 'white', fontSize: 'var(--text-xs)', flexShrink: 0 }}>
         <span>{wordCount} mot{wordCount !== 1 ? 's' : ''}</span>
         <span style={{ opacity: 0.75 }}>Mode édition de modèle — Ctrl+S pour enregistrer</span>
