@@ -1,14 +1,54 @@
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
   AlignmentType, UnderlineType, Table, TableRow, TableCell,
-  WidthType, BorderStyle, ShadingType,
+  WidthType, ShadingType,
 } from 'docx';
+import { generateHTML } from '@tiptap/core';
+import StarterKit from '@tiptap/starter-kit';
+import Underline from '@tiptap/extension-underline';
+import TextAlign from '@tiptap/extension-text-align';
+import TextStyle from '@tiptap/extension-text-style';
+import FontFamily from '@tiptap/extension-font-family';
+import Color from '@tiptap/extension-color';
+import Highlight from '@tiptap/extension-highlight';
+import Link from '@tiptap/extension-link';
+import Image from '@tiptap/extension-image';
+import Table2 from '@tiptap/extension-table';
+import TableRow2 from '@tiptap/extension-table-row';
+import TableCell2 from '@tiptap/extension-table-cell';
+import TableHeader from '@tiptap/extension-table-header';
+import Subscript from '@tiptap/extension-subscript';
+import Superscript from '@tiptap/extension-superscript';
+import TaskList from '@tiptap/extension-task-list';
+import TaskItem from '@tiptap/extension-task-item';
 
-// ─── Helpers HTML → texte brut ───────────────────────────────────────────────
+// Extensions Tiptap pour la conversion JSON → HTML
+const EXPORT_EXTENSIONS = [
+  StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
+  Underline, TextStyle, FontFamily, Color,
+  Highlight.configure({ multicolor: true }),
+  TextAlign.configure({ types: ['heading', 'paragraph'] }),
+  Link.configure({ openOnClick: false }),
+  Image.configure({ inline: true, allowBase64: true }),
+  Table2.configure({ resizable: false }),
+  TableRow2, TableCell2, TableHeader,
+  Subscript, Superscript,
+  TaskList, TaskItem.configure({ nested: true }),
+];
 
-function attr(el: Element, name: string): string {
-  return el.getAttribute(name) ?? '';
+// Convertit le contenu brut (JSON Tiptap ou HTML) en HTML propre
+function contentToHtml(raw: string | null | undefined): string {
+  if (!raw || raw.trim() === '') return '';
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return generateHTML(JSON.parse(trimmed), EXPORT_EXTENSIONS);
+    } catch { /* fallback */ }
+  }
+  return trimmed;
 }
+
+// ─── Helpers HTML → DOCX ─────────────────────────────────────────────────────
 
 function parseInlineRuns(node: ChildNode): TextRun[] {
   const runs: TextRun[] = [];
@@ -35,11 +75,9 @@ function parseInlineRuns(node: ChildNode): TextRun[] {
     const isItalic = italic || tag === 'em' || tag === 'i';
     const isUnderline = underline || tag === 'u';
     const isStrike = strike || tag === 's' || tag === 'del';
-    // couleur inline
     const style = el.getAttribute('style') ?? '';
     const colorMatch = style.match(/color:\s*([#\w]+)/);
     const nodeColor = colorMatch ? colorMatch[1] : color;
-
     for (const child of Array.from(el.childNodes)) {
       walk(child, isBold, isItalic, isUnderline, isStrike, nodeColor);
     }
@@ -51,10 +89,9 @@ function parseInlineRuns(node: ChildNode): TextRun[] {
 
 function alignmentOf(el: Element): AlignmentType {
   const style = el.getAttribute('style') ?? '';
-  const cls = el.getAttribute('class') ?? '';
-  if (style.includes('text-align: center') || cls.includes('text-center')) return AlignmentType.CENTER;
-  if (style.includes('text-align: right') || cls.includes('text-right')) return AlignmentType.RIGHT;
-  if (style.includes('text-align: justify') || cls.includes('text-justify')) return AlignmentType.JUSTIFIED;
+  if (style.includes('text-align: center')) return AlignmentType.CENTER;
+  if (style.includes('text-align: right')) return AlignmentType.RIGHT;
+  if (style.includes('text-align: justify')) return AlignmentType.JUSTIFIED;
   return AlignmentType.LEFT;
 }
 
@@ -63,69 +100,49 @@ function parseBlock(el: Element): Paragraph[] {
   const align = alignmentOf(el);
 
   const headingMap: Record<string, HeadingLevel> = {
-    h1: HeadingLevel.HEADING_1,
-    h2: HeadingLevel.HEADING_2,
-    h3: HeadingLevel.HEADING_3,
-    h4: HeadingLevel.HEADING_4,
+    h1: HeadingLevel.HEADING_1, h2: HeadingLevel.HEADING_2,
+    h3: HeadingLevel.HEADING_3, h4: HeadingLevel.HEADING_4,
   };
 
   if (headingMap[tag]) {
-    return [new Paragraph({
-      heading: headingMap[tag],
-      alignment: align,
-      children: parseInlineRuns(el),
-    })];
+    return [new Paragraph({ heading: headingMap[tag], alignment: align, children: parseInlineRuns(el) })];
   }
-
   if (tag === 'p' || tag === 'div') {
     return [new Paragraph({ alignment: align, children: parseInlineRuns(el) })];
   }
-
   if (tag === 'ul' || tag === 'ol') {
-    const paras: Paragraph[] = [];
-    Array.from(el.querySelectorAll('li')).forEach((li, idx) => {
-      paras.push(new Paragraph({
+    return Array.from(el.querySelectorAll('li')).map((li) =>
+      new Paragraph({
         bullet: tag === 'ul' ? { level: 0 } : undefined,
         numbering: tag === 'ol' ? { reference: 'default-numbering', level: 0 } : undefined,
         children: [new TextRun(li.textContent ?? '')],
-      }));
-    });
-    return paras;
+      })
+    );
   }
-
   if (tag === 'blockquote') {
     return [new Paragraph({
       indent: { left: 720 },
       children: [new TextRun({ text: el.textContent ?? '', italics: true, color: '6b7280' })],
     })];
   }
-
-  if (tag === 'hr') {
-    return [new Paragraph({ thematicBreak: true })];
-  }
-
-  // fallback : texte brut
+  if (tag === 'hr') return [new Paragraph({ thematicBreak: true })];
   const text = el.textContent ?? '';
   if (text.trim()) return [new Paragraph({ children: [new TextRun(text)] })];
   return [];
 }
 
 function parseTableEl(tableEl: Element) {
-  const rows = Array.from(tableEl.querySelectorAll('tr')).map((tr) => {
-    const cells = Array.from(tr.querySelectorAll('th, td')).map((td) =>
-      new TableCell({
-        children: [new Paragraph({ children: [new TextRun(td.textContent ?? '')] })],
-        shading: td.tagName.toLowerCase() === 'th'
-          ? { type: ShadingType.CLEAR, fill: 'f9fafb' }
-          : undefined,
-      })
-    );
-    return new TableRow({ children: cells });
-  });
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows,
-  });
+  const rows = Array.from(tableEl.querySelectorAll('tr')).map((tr) =>
+    new TableRow({
+      children: Array.from(tr.querySelectorAll('th, td')).map((td) =>
+        new TableCell({
+          children: [new Paragraph({ children: [new TextRun(td.textContent ?? '')] })],
+          shading: td.tagName.toLowerCase() === 'th' ? { type: ShadingType.CLEAR, fill: 'f9fafb' } : undefined,
+        })
+      ),
+    })
+  );
+  return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows });
 }
 
 function htmlToDocxChildren(html: string): (Paragraph | Table)[] {
@@ -133,46 +150,30 @@ function htmlToDocxChildren(html: string): (Paragraph | Table)[] {
   const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
   const root = doc.body.firstElementChild!;
   const children: (Paragraph | Table)[] = [];
-
   for (const child of Array.from(root.children)) {
-    const tag = child.tagName.toLowerCase();
-    if (tag === 'table') {
-      children.push(parseTableEl(child));
-    } else {
-      children.push(...parseBlock(child));
-    }
+    if (child.tagName.toLowerCase() === 'table') children.push(parseTableEl(child));
+    else children.push(...parseBlock(child));
   }
-
-  if (children.length === 0) {
+  if (children.length === 0)
     children.push(new Paragraph({ children: [new TextRun(root.textContent ?? '')] }));
-  }
-
   return children;
 }
 
 // ─── Export DOCX ─────────────────────────────────────────────────────────────
 
-export async function exportDocx(title: string, html: string): Promise<void> {
+export async function exportDocx(title: string, rawContent: string): Promise<void> {
+  const html = contentToHtml(rawContent);
   const children = htmlToDocxChildren(html);
 
   const docxDoc = new Document({
     numbering: {
       config: [{
         reference: 'default-numbering',
-        levels: [{
-          level: 0,
-          format: 'decimal',
-          text: '%1.',
-          alignment: AlignmentType.LEFT,
-        }],
+        levels: [{ level: 0, format: 'decimal', text: '%1.', alignment: AlignmentType.LEFT }],
       }],
     },
     sections: [{
-      properties: {
-        page: {
-          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
-        },
-      },
+      properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } },
       children,
     }],
   });
@@ -188,16 +189,13 @@ export async function exportDocx(title: string, html: string): Promise<void> {
 
 // ─── Export PDF (via impression iframe) ──────────────────────────────────────
 
-export function exportPdf(title: string, html: string): void {
+export function exportPdf(title: string, rawContent: string): void {
+  const html = contentToHtml(rawContent);
+
   const styles = `
     @page { size: A4; margin: 2cm; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: Georgia, 'Times New Roman', serif;
-      font-size: 12pt;
-      line-height: 1.8;
-      color: #1a1a1a;
-    }
+    body { font-family: Georgia, 'Times New Roman', serif; font-size: 12pt; line-height: 1.8; color: #1a1a1a; }
     h1 { font-size: 22pt; font-weight: 700; margin: 0.8em 0 0.4em; }
     h2 { font-size: 18pt; font-weight: 700; margin: 0.7em 0 0.35em; }
     h3 { font-size: 14pt; font-weight: 600; margin: 0.6em 0 0.3em; }
@@ -209,21 +207,12 @@ export function exportPdf(title: string, html: string): void {
     table { border-collapse: collapse; width: 100%; margin: 0.8em 0; }
     th, td { border: 1px solid #d1d5db; padding: 0.4em 0.6em; }
     th { background: #f9fafb; font-weight: 600; }
-    strong { font-weight: 700; }
-    em { font-style: italic; }
-    u  { text-decoration: underline; }
-    s  { text-decoration: line-through; }
-    a  { color: #01696f; }
-    [data-variable-field] {
-      display: inline; border: 1px solid currentColor; border-radius: 3px;
-      padding: 0 4px; font-size: 0.85em;
-    }
+    strong { font-weight: 700; } em { font-style: italic; } u { text-decoration: underline; } s { text-decoration: line-through; }
+    a { color: #01696f; }
+    [data-variable-field] { display: inline; border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; font-size: 0.85em; }
   `;
 
-  const srcdoc = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${title}</title>
-<style>${styles}</style></head>
-<body>${html}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${styles}</style></head><body>${html}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:210mm;height:297mm;border:none;';
@@ -231,7 +220,6 @@ export function exportPdf(title: string, html: string): void {
   document.body.appendChild(iframe);
 
   iframe.onload = () => {
-    // On donne le titre à la fenêtre pour que le PDF proposé porte le bon nom
     if (iframe.contentWindow) {
       iframe.contentWindow.document.title = title;
       setTimeout(() => {
