@@ -5,6 +5,7 @@
 // Bouton "Renseigner les informations" avec dialog guidé pas à pas
 // Zoom document style Google Docs
 // Expansions de texte : remplacement automatique à la frappe depuis db.snippets
+// Panneau boîte à outils (briques) sur la droite
 
 'use client'
 
@@ -39,6 +40,8 @@ import { VariableField } from './extensions/VariableField'
 import { TextExpansion } from './extensions/TextExpansion'
 import { VariablePopup } from './VariablePopup'
 import { FillAllVariablesDialog } from './FillAllVariablesDialog'
+import { DocumentBricksPanel, DRAG_BRICK_KEY } from './DocumentBricksPanel'
+import type { Brick } from './DocumentBricksPanel'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
 import { getSetting, db } from '@/lib/db'
 import type { Document } from '@/lib/db'
@@ -88,6 +91,20 @@ function countVariables(editor: Editor): number {
     if (node.type.name === 'variableField') count++
   })
   return count
+}
+
+/** Convertit le contenu d'une brique (avec [Variables]) en HTML insérable */
+function brickContentToHtml(content: string): string {
+  // Chaque variable [Nom] devient un span data-variable-field
+  const withVars = content.replace(/\[([^\]]+)\]/g, (_, name: string) => {
+    const escaped = name.replace(/"/g, '&quot;')
+    return `<span data-variable-field="" data-variable-name="${escaped}">${escaped}</span>`
+  })
+  // Retours à la ligne => paragraphes
+  return withVars
+    .split('\n')
+    .map((line) => `<p>${line.trim() || '<br>'}</p>`)
+    .join('')
 }
 
 function CloseDialog({
@@ -168,16 +185,13 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   useEffect(() => {
     getSetting<EditorPrefs>('editorPrefs', DEFAULT_EDITOR_PREFS).then((p) => {
       setPrefs(p)
-      // Applique le zoom par défaut enregistré dans les réglages
       const savedZoom = p.defaultZoom ?? ZOOM_DEFAULT
-      if (ZOOM_STEPS.includes(savedZoom)) {
-        setZoom(savedZoom)
-      }
+      if (ZOOM_STEPS.includes(savedZoom)) setZoom(savedZoom)
       prefsLoaded.current = true
     })
   }, [])
 
-  // Charge les snippets depuis Dexie (table snippets = source de vérité)
+  // Charge les snippets depuis Dexie
   useEffect(() => {
     async function loadExpansions() {
       try {
@@ -193,14 +207,11 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     loadExpansions()
   }, [])
 
-  // Synchronise les expansions dans l'extension TipTap dès que la liste change
   useEffect(() => {
     const ed = editorRef.current
     if (!ed) return
     const ext = ed.extensionManager.extensions.find(e => e.name === 'textExpansion')
-    if (ext) {
-      ext.options.expansions = expansions
-    }
+    if (ext) ext.options.expansions = expansions
   }, [expansions])
 
   useEffect(() => {
@@ -212,7 +223,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down) }
   }, [])
 
-  // Raccourcis clavier pour le zoom (Ctrl+= / Ctrl+-)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -222,21 +232,14 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
       }
       if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
         e.preventDefault()
-        setZoom((z) => {
-          const idx = ZOOM_STEPS.indexOf(z)
-          return idx < ZOOM_STEPS.length - 1 ? ZOOM_STEPS[idx + 1] : z
-        })
+        setZoom((z) => { const idx = ZOOM_STEPS.indexOf(z); return idx < ZOOM_STEPS.length - 1 ? ZOOM_STEPS[idx + 1] : z })
       }
       if ((e.ctrlKey || e.metaKey) && e.key === '-') {
         e.preventDefault()
-        setZoom((z) => {
-          const idx = ZOOM_STEPS.indexOf(z)
-          return idx > 0 ? ZOOM_STEPS[idx - 1] : z
-        })
+        setZoom((z) => { const idx = ZOOM_STEPS.indexOf(z); return idx > 0 ? ZOOM_STEPS[idx - 1] : z })
       }
       if ((e.ctrlKey || e.metaKey) && e.key === '0') {
         e.preventDefault()
-        // Ctrl+0 réinitialise au zoom par défaut des préférences
         setZoom(prefs.defaultZoom ?? ZOOM_DEFAULT)
       }
     }
@@ -315,15 +318,47 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     }, 50)
   }, [])
 
+  // ── Insertion d'une brique au curseur ─────────────────────────────────────
+  const handleInsertBrick = useCallback((brickContent: string) => {
+    const ed = editorRef.current
+    if (!ed) return
+    const html = brickContentToHtml(brickContent)
+    ed.chain().focus().insertContent(html).run()
+    setTimeout(() => {
+      const c = editorRef.current ? countVariables(editorRef.current) : 0
+      setVariableCount(c)
+    }, 50)
+  }, [])
+
+  // ── Drop d'une brique depuis le panneau ─────────────────────────────────
+  const handleEditorDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    const brickData = e.dataTransfer.getData(DRAG_BRICK_KEY)
+    if (!brickData) return // laisse TipTap gérer les autres drops
+    e.preventDefault()
+    try {
+      const brick: Brick = JSON.parse(brickData)
+      const ed = editorRef.current
+      if (!ed) return
+      // Détermine la position de drop dans l'éditeur
+      const view = ed.view
+      const coords = { left: e.clientX, top: e.clientY }
+      const pos = view.posAtCoords(coords)
+      const html = brickContentToHtml(brick.content)
+      if (pos) {
+        ed.chain().focus().insertContentAt(pos.pos, html).run()
+      } else {
+        ed.chain().focus().insertContent(html).run()
+      }
+      setTimeout(() => {
+        const c = editorRef.current ? countVariables(editorRef.current) : 0
+        setVariableCount(c)
+      }, 50)
+    } catch {}
+  }, [])
+
   // Zoom helpers
-  const zoomIn  = useCallback(() => setZoom((z) => {
-    const idx = ZOOM_STEPS.indexOf(z)
-    return idx < ZOOM_STEPS.length - 1 ? ZOOM_STEPS[idx + 1] : z
-  }), [])
-  const zoomOut = useCallback(() => setZoom((z) => {
-    const idx = ZOOM_STEPS.indexOf(z)
-    return idx > 0 ? ZOOM_STEPS[idx - 1] : z
-  }), [])
+  const zoomIn    = useCallback(() => setZoom((z) => { const idx = ZOOM_STEPS.indexOf(z); return idx < ZOOM_STEPS.length - 1 ? ZOOM_STEPS[idx + 1] : z }), [])
+  const zoomOut   = useCallback(() => setZoom((z) => { const idx = ZOOM_STEPS.indexOf(z); return idx > 0 ? ZOOM_STEPS[idx - 1] : z }), [])
   const zoomReset = useCallback(() => setZoom(prefs.defaultZoom ?? ZOOM_DEFAULT), [prefs.defaultZoom])
 
   const initialContent = (() => {
@@ -349,8 +384,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         onVariableClick: handleVariableClick,
         HTMLAttributes: {},
       }),
-      // Extension expansions de texte — lit expansionsRef pour toujours avoir la version à jour
-      // sans avoir à recréer l'éditeur.
       TextExpansion.configure({
         expansions: expansionsRef.current,
         triggers: [' ', 'Enter'],
@@ -484,30 +517,46 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           defaultFontSize={String(prefs.fontSize)}
         />
 
-        {/* Zone de document avec zoom */}
-        <div className="flex-1 overflow-y-auto overflow-x-auto bg-[#e8e8e8] dark:bg-[#2a2a2a] px-8 py-8">
+        {/* Ligne principale : éditeur + panneau briques */}
+        <div className="flex flex-1 overflow-hidden">
+
+          {/* Zone de document avec zoom */}
           <div
-            style={{
-              width: `${A4_WIDTH_MM * scaleFactor}mm`,
-              margin: '0 auto',
+            className="flex-1 overflow-y-auto overflow-x-auto bg-[#e8e8e8] dark:bg-[#2a2a2a] px-8 py-8"
+            onDrop={handleEditorDrop}
+            onDragOver={(e) => {
+              // Autorise le drop de briques
+              if (e.dataTransfer.types.includes(DRAG_BRICK_KEY)) e.preventDefault()
             }}
           >
             <div
               style={{
-                width: `${A4_WIDTH_MM}mm`,
-                maxWidth: '100%',
-                padding: pagePadding,
-                background: 'white',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05)',
-                minHeight: '297mm',
-                transformOrigin: 'top left',
-                transform: `scale(${scaleFactor})`,
-                transition: 'transform 0.15s ease',
+                width: `${A4_WIDTH_MM * scaleFactor}mm`,
+                margin: '0 auto',
               }}
             >
-              <EditorContent editor={editor} />
+              <div
+                style={{
+                  width: `${A4_WIDTH_MM}mm`,
+                  maxWidth: '100%',
+                  padding: pagePadding,
+                  background: 'white',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05)',
+                  minHeight: '297mm',
+                  transformOrigin: 'top left',
+                  transform: `scale(${scaleFactor})`,
+                  transition: 'transform 0.15s ease',
+                }}
+              >
+                <EditorContent editor={editor} />
+              </div>
             </div>
           </div>
+
+          {/* Panneau Boîte à outils (briques) */}
+          <DocumentBricksPanel
+            onInsertBrick={handleInsertBrick}
+          />
         </div>
 
         {/* Barre de statut */}
