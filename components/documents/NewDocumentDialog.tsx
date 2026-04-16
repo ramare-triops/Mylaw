@@ -11,7 +11,7 @@ interface StoredTemplate {
   category: string;
   description: string;
   icon: string;
-  content: string; // HTML ou JSON TipTap stringifié
+  content: string;
   fields: unknown[];
   createdAt: string;
   updatedAt: string;
@@ -73,7 +73,7 @@ function loadTemplates(): StoredTemplate[] {
   }
 }
 
-// ─── Convertit JSON TipTap stringifié en HTML basique pour l'aperçu ──────────────────
+// ─── Convertit JSON TipTap / HTML en texte pour l'aperçu ───────────────────────────
 function tiptapNodeToText(node: Record<string, unknown>): string {
   const type = node.type as string;
   const content = (node.content as Record<string, unknown>[] | undefined) ?? [];
@@ -90,11 +90,8 @@ function contentToPreviewText(content: string): string {
   if (!content) return '';
   const t = content.trim();
   if (t.startsWith('{"type":"doc"')) {
-    try {
-      return tiptapNodeToText(JSON.parse(t));
-    } catch { return t; }
+    try { return tiptapNodeToText(JSON.parse(t)); } catch { return t; }
   }
-  // Strip HTML tags for plain text preview
   return t.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -112,12 +109,6 @@ function TemplateIcon({ icon }: { icon: string }) {
   return <Icon size={14} />;
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  Contentieux: '#dc2626',
-  Cabinet: '#01696f',
-  Correspondance: '#2563eb',
-};
-
 // ─── Props ────────────────────────────────────────────────────────────────────────────
 interface NewDocumentDialogProps {
   open: boolean;
@@ -126,12 +117,11 @@ interface NewDocumentDialogProps {
 }
 
 export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialogProps) {
-  const [title, setTitle]                               = useState('');
-  const [selectedCategory, setSelectedCategory]         = useState('Tous');
-  const [selectedTemplate, setSelectedTemplate]         = useState<StoredTemplate | null>(null);
-  const [templates, setTemplates]                       = useState<StoredTemplate[]>([]);
+  const [title, setTitle]                       = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('Tous');
+  const [selectedTemplate, setSelectedTemplate] = useState<StoredTemplate | null>(null);
+  const [templates, setTemplates]               = useState<StoredTemplate[]>([]);
 
-  // Charger depuis le localStorage à chaque ouverture
   useEffect(() => {
     if (open) {
       setTemplates(loadTemplates());
@@ -172,13 +162,7 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
     >
       <div
         className="relative flex flex-col rounded-xl shadow-2xl"
-        style={{
-          width: '780px',
-          maxWidth: 'calc(100vw - 32px)',
-          maxHeight: 'calc(100vh - 64px)',
-          background: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-        }}
+        style={{ width: '780px', maxWidth: 'calc(100vw - 32px)', maxHeight: 'calc(100vh - 64px)', background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: 'var(--color-border)', flexShrink: 0 }}>
@@ -207,7 +191,7 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
               />
             </div>
 
-            {/* Filtres */}
+            {/* Filtres catégories */}
             <div className="flex items-center justify-between gap-3">
               <span style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--color-text)', flexShrink: 0 }}>
                 Choisir un modèle
@@ -245,14 +229,14 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
               {/* Cards modèles */}
               {filtered.map((t) => {
                 const isActive = selectedTemplate?.id === t.id;
-                const catColor = CATEGORY_COLORS[t.category] ?? '#6b7280';
                 const previewText = contentToPreviewText(t.content);
                 return (
                   <button key={t.id} type="button" onClick={() => setSelectedTemplate(t)}
                     style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '8px', padding: '14px', borderRadius: 'var(--radius-md)', border: `2px solid ${isActive ? 'var(--color-primary)' : 'var(--color-border)'}`, background: isActive ? 'var(--color-primary-highlight)' : 'var(--color-bg)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s' }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
-                      <div style={{ width: '32px', height: '32px', borderRadius: 'var(--radius-sm)', background: isActive ? 'var(--color-primary)' : `${catColor}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: isActive ? '#fff' : catColor }}>
+                      {/* Icône — toujours couleur primary */}
+                      <div style={{ width: '32px', height: '32px', borderRadius: 'var(--radius-sm)', background: isActive ? 'var(--color-primary)' : 'var(--color-primary-highlight)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: isActive ? '#fff' : 'var(--color-primary)' }}>
                         <TemplateIcon icon={t.icon} />
                       </div>
                       {t.isCustom && (
@@ -261,7 +245,8 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
                     </div>
                     <div>
                       <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: isActive ? 'var(--color-primary)' : 'var(--color-text)' }}>{t.name}</div>
-                      <div style={{ fontSize: 'var(--text-xs)', color: isActive ? 'var(--color-primary)' : catColor, fontWeight: 500, marginTop: '1px' }}>{t.category}</div>
+                      {/* Catégorie — toujours color-text-muted, sans couleur par catégorie */}
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: '1px' }}>{t.category}</div>
                       {t.description && (
                         <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: '2px' }}>{t.description}</div>
                       )}
