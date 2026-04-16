@@ -94,7 +94,7 @@ const INITIAL_BRICK_GROUPS: BrickGroup[] = [
 
 function generateId() { return Math.random().toString(36).slice(2, 9) }
 
-const SUGGESTED_TAGS = [
+const DEFAULT_SUGGESTED_TAGS = [
   'Nom', 'Prénom', 'Date de naissance', 'Lieu de naissance', 'Nationalité', 'Adresse',
   'Nom de la société', 'Forme juridique', 'Capital social', 'Numéro RCS', 'Ville RCS',
   'Adresse du siège', 'Représentant légal', 'Qualité',
@@ -102,7 +102,7 @@ const SUGGESTED_TAGS = [
   'Date', 'Lieu', 'Montant', 'Durée', 'Tribunal', 'Nombre',
 ]
 
-const CONDITIONAL_TAGS = [
+const DEFAULT_CONDITIONAL_TAGS = [
   { label: 'M / Mme',            value: 'M/Mme'            },
   { label: 'né / née',           value: 'né/née'           },
   { label: 'inscrit / inscrite', value: 'inscrit/inscrite' },
@@ -328,6 +328,252 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
   )
 }
 
+// ─── Gestionnaire de variables (texte + conditionnelles) ──────────────────────
+
+interface TextVar { id: string; name: string }
+interface CondVar { id: string; label: string; value: string }
+
+function VariableManager({
+  textVars,
+  condVars,
+  onChangeTextVars,
+  onChangeCondVars,
+  onInsertTag,
+}: {
+  textVars: TextVar[]
+  condVars: CondVar[]
+  onChangeTextVars: (v: TextVar[]) => void
+  onChangeCondVars: (v: CondVar[]) => void
+  onInsertTag: (tag: string) => void
+}) {
+  // ── état formulaire variable texte
+  const [newTextName,      setNewTextName]      = useState('')
+  const [editingTextId,    setEditingTextId]    = useState<string | null>(null)
+  const [editingTextValue, setEditingTextValue] = useState('')
+
+  // ── état formulaire variable conditionnelle
+  const [newCondLabel,     setNewCondLabel]     = useState('')
+  const [newCondValue,     setNewCondValue]     = useState('')
+  const [editingCondId,    setEditingCondId]    = useState<string | null>(null)
+  const [editingCondLabel, setEditingCondLabel] = useState('')
+  const [editingCondValue, setEditingCondValue] = useState('')
+
+  const chipBase: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', gap: '3px',
+    padding: '2px 7px', borderRadius: '20px', fontSize: '10px',
+    fontWeight: 500, cursor: 'pointer', fontFamily: 'monospace',
+    transition: 'all 0.1s',
+  }
+
+  const miniBtn: React.CSSProperties = {
+    background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px',
+    display: 'inline-flex', alignItems: 'center', borderRadius: '3px',
+    color: 'var(--color-text-faint)', transition: 'color 0.1s',
+  }
+
+  const smallInput: React.CSSProperties = {
+    padding: '4px 8px', fontSize: '11px', borderRadius: '6px',
+    border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)',
+    color: 'var(--color-text)', outline: 'none', fontFamily: 'monospace',
+  }
+
+  // ── variables texte
+  function addTextVar() {
+    const name = newTextName.trim()
+    if (!name) return
+    onChangeTextVars([...textVars, { id: generateId(), name }])
+    setNewTextName('')
+  }
+  function deleteTextVar(id: string) {
+    onChangeTextVars(textVars.filter(v => v.id !== id))
+    if (editingTextId === id) setEditingTextId(null)
+  }
+  function startEditText(v: TextVar) {
+    setEditingTextId(v.id)
+    setEditingTextValue(v.name)
+  }
+  function saveEditText(id: string) {
+    const name = editingTextValue.trim()
+    if (!name) return
+    onChangeTextVars(textVars.map(v => v.id === id ? { ...v, name } : v))
+    setEditingTextId(null)
+  }
+
+  // ── variables conditionnelles
+  function addCondVar() {
+    const label = newCondLabel.trim()
+    const value = newCondValue.trim()
+    if (!label || !value) return
+    onChangeCondVars([...condVars, { id: generateId(), label, value }])
+    setNewCondLabel('')
+    setNewCondValue('')
+  }
+  function deleteCondVar(id: string) {
+    onChangeCondVars(condVars.filter(v => v.id !== id))
+    if (editingCondId === id) setEditingCondId(null)
+  }
+  function startEditCond(v: CondVar) {
+    setEditingCondId(v.id)
+    setEditingCondLabel(v.label)
+    setEditingCondValue(v.value)
+  }
+  function saveEditCond(id: string) {
+    const label = editingCondLabel.trim()
+    const value = editingCondValue.trim()
+    if (!label || !value) return
+    onChangeCondVars(condVars.map(v => v.id === id ? { ...v, label, value } : v))
+    setEditingCondId(null)
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+
+      {/* ── Variables texte ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>Variables texte</p>
+
+        {/* Chips existantes */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+          {textVars.map(v => (
+            editingTextId === v.id ? (
+              <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                <input
+                  autoFocus
+                  value={editingTextValue}
+                  onChange={e => setEditingTextValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveEditText(v.id); if (e.key === 'Escape') setEditingTextId(null) }}
+                  style={{ ...smallInput, width: '110px' }}
+                />
+                <button type="button" title="Enregistrer" onClick={() => saveEditText(v.id)}
+                  style={{ ...miniBtn, color: '#01696f' }}>
+                  <Check size={11} />
+                </button>
+                <button type="button" title="Annuler" onClick={() => setEditingTextId(null)}
+                  style={{ ...miniBtn, color: 'var(--color-text-faint)' }}>
+                  <X size={11} />
+                </button>
+              </span>
+            ) : (
+              <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                <button type="button" onClick={() => onInsertTag(v.name)}
+                  style={{ ...chipBase, border: '1.5px solid #01696f60', background: '#01696f0c', color: '#01696f' }}
+                  onMouseEnter={e => { const b = e.currentTarget; b.style.background = '#01696f18'; b.style.borderColor = '#01696f' }}
+                  onMouseLeave={e => { const b = e.currentTarget; b.style.background = '#01696f0c'; b.style.borderColor = '#01696f60' }}
+                >[{v.name}]</button>
+                <button type="button" title="Modifier" onClick={() => startEditText(v)}
+                  style={{ ...miniBtn }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#01696f')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-faint)')}
+                ><Pencil size={9} /></button>
+                <button type="button" title="Supprimer" onClick={() => deleteTextVar(v.id)}
+                  style={{ ...miniBtn }}
+                  onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-error)')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-faint)')}
+                ><Trash2 size={9} /></button>
+              </span>
+            )
+          ))}
+        </div>
+
+        {/* Formulaire ajout */}
+        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+          <input
+            value={newTextName}
+            onChange={e => setNewTextName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') addTextVar() }}
+            placeholder="Nom de la variable…"
+            style={{ ...smallInput, flex: 1 }}
+          />
+          <button type="button" onClick={addTextVar} disabled={!newTextName.trim()}
+            title="Ajouter une variable texte"
+            style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', background: newTextName.trim() ? '#01696f' : 'var(--color-border)', color: newTextName.trim() ? '#fff' : 'var(--color-text-faint)', cursor: newTextName.trim() ? 'pointer' : 'not-allowed', fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '3px', transition: 'all 0.1s' }}
+          ><Plus size={11} /> Ajouter</button>
+        </div>
+      </div>
+
+      {/* ── Variables conditionnelles ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>
+          Variables conditionnelles <span style={{ textTransform: 'none', fontWeight: 400 }}>(liste déroulante)</span>
+        </p>
+
+        {/* Chips existantes */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+          {condVars.map(v => (
+            editingCondId === v.id ? (
+              <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                <input
+                  autoFocus
+                  value={editingCondLabel}
+                  onChange={e => setEditingCondLabel(e.target.value)}
+                  placeholder="Libellé (ex: M / Mme)"
+                  style={{ ...smallInput, width: '120px' }}
+                />
+                <input
+                  value={editingCondValue}
+                  onChange={e => setEditingCondValue(e.target.value)}
+                  placeholder="Valeur (ex: M/Mme)"
+                  onKeyDown={e => { if (e.key === 'Enter') saveEditCond(v.id); if (e.key === 'Escape') setEditingCondId(null) }}
+                  style={{ ...smallInput, width: '100px' }}
+                />
+                <button type="button" title="Enregistrer" onClick={() => saveEditCond(v.id)}
+                  style={{ ...miniBtn, color: '#7c3aed' }}>
+                  <Check size={11} />
+                </button>
+                <button type="button" title="Annuler" onClick={() => setEditingCondId(null)}
+                  style={{ ...miniBtn, color: 'var(--color-text-faint)' }}>
+                  <X size={11} />
+                </button>
+              </span>
+            ) : (
+              <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                <button type="button" onClick={() => onInsertTag(v.value)}
+                  style={{ ...chipBase, border: '1.5px solid #7c3aed60', background: '#7c3aed0c', color: '#7c3aed' }}
+                  onMouseEnter={e => { const b = e.currentTarget; b.style.background = '#7c3aed18'; b.style.borderColor = '#7c3aed' }}
+                  onMouseLeave={e => { const b = e.currentTarget; b.style.background = '#7c3aed0c'; b.style.borderColor = '#7c3aed60' }}
+                ><ListFilter size={9} />[{v.label}]</button>
+                <button type="button" title="Modifier" onClick={() => startEditCond(v)}
+                  style={{ ...miniBtn }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#7c3aed')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-faint)')}
+                ><Pencil size={9} /></button>
+                <button type="button" title="Supprimer" onClick={() => deleteCondVar(v.id)}
+                  style={{ ...miniBtn }}
+                  onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-error)')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-faint)')}
+                ><Trash2 size={9} /></button>
+              </span>
+            )
+          ))}
+        </div>
+
+        {/* Formulaire ajout */}
+        <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            value={newCondLabel}
+            onChange={e => setNewCondLabel(e.target.value)}
+            placeholder="Libellé (ex: M / Mme)"
+            style={{ ...smallInput, flex: '1 1 110px' }}
+          />
+          <input
+            value={newCondValue}
+            onChange={e => setNewCondValue(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') addCondVar() }}
+            placeholder="Valeur (ex: M/Mme)"
+            style={{ ...smallInput, flex: '1 1 90px' }}
+          />
+          <button type="button" onClick={addCondVar} disabled={!newCondLabel.trim() || !newCondValue.trim()}
+            title="Ajouter une variable conditionnelle"
+            style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', background: (newCondLabel.trim() && newCondValue.trim()) ? '#7c3aed' : 'var(--color-border)', color: (newCondLabel.trim() && newCondValue.trim()) ? '#fff' : 'var(--color-text-faint)', cursor: (newCondLabel.trim() && newCondValue.trim()) ? 'pointer' : 'not-allowed', fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '3px', transition: 'all 0.1s', whiteSpace: 'nowrap' }}
+          ><Plus size={11} /> Ajouter</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Formulaire d'édition d'une brique ───────────────────────────────────────
+
 function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
   brick: Brick
   onSave: (b: Brick) => void
@@ -342,6 +588,15 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
   const [color,         setColor]         = useState(brick.color)
   const [showPreview,   setShowPreview]   = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+
+  // variables gérées localement dans ce formulaire (initialisées depuis les défauts)
+  const [textVars, setTextVars] = useState<TextVar[]>(
+    DEFAULT_SUGGESTED_TAGS.map(name => ({ id: generateId(), name }))
+  )
+  const [condVars, setCondVars] = useState<CondVar[]>(
+    DEFAULT_CONDITIONAL_TAGS.map(t => ({ id: generateId(), label: t.label, value: t.value }))
+  )
+
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   function insertTag(tag: string) {
@@ -427,33 +682,14 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
           {showPreview && <BrickPreview content={content} color={color} />}
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>Variables texte</p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-            {SUGGESTED_TAGS.map(t => (
-              <button key={t} type="button" onClick={() => insertTag(t)}
-                style={{ padding: '2px 7px', borderRadius: '20px', border: '1.5px solid #01696f60', background: '#01696f0c', color: '#01696f', fontSize: '10px', fontWeight: 500, cursor: 'pointer', fontFamily: 'monospace' }}
-                onMouseEnter={e => { const b = e.currentTarget; b.style.background = '#01696f18'; b.style.borderColor = '#01696f' }}
-                onMouseLeave={e => { const b = e.currentTarget; b.style.background = '#01696f0c'; b.style.borderColor = '#01696f60' }}
-              >[{t}]</button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <p style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-faint)', margin: 0 }}>
-            Variables conditionnelles <span style={{ textTransform: 'none', fontWeight: 400 }}>(liste déroulante)</span>
-          </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-            {CONDITIONAL_TAGS.map(t => (
-              <button key={t.value} type="button" onClick={() => insertTag(t.value)}
-                style={{ padding: '2px 7px', borderRadius: '20px', border: '1.5px solid #7c3aed60', background: '#7c3aed0c', color: '#7c3aed', fontSize: '10px', fontWeight: 500, cursor: 'pointer', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '4px' }}
-                onMouseEnter={e => { const b = e.currentTarget; b.style.background = '#7c3aed18'; b.style.borderColor = '#7c3aed' }}
-                onMouseLeave={e => { const b = e.currentTarget; b.style.background = '#7c3aed0c'; b.style.borderColor = '#7c3aed60' }}
-              ><ListFilter size={9} />[{t.label}]</button>
-            ))}
-          </div>
-        </div>
+        {/* ── Gestionnaire de variables ── */}
+        <VariableManager
+          textVars={textVars}
+          condVars={condVars}
+          onChangeTextVars={setTextVars}
+          onChangeCondVars={setCondVars}
+          onInsertTag={insertTag}
+        />
 
       </div>
 
@@ -712,7 +948,7 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
               <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--color-text-faint)', fontSize: 'var(--text-xs)' }}>
                 <Blocks size={26} style={{ opacity: 0.15, margin: '0 auto 10px', display: 'block' }} />
                 Aucune brique personnalisée.<br />
-                <button onClick={() => setShowEditor(true)} style={{ color: 'var(--color-primary)', background: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 'inherit', marginTop: '4px' }}>Ouvrir l'éditeur de briques</button>
+                <button onClick={() => setShowEditor(true)} style={{ color: 'var(--color-primary)', background: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 'inherit', marginTop: '4px' }}>Ouvrir l&apos;éditeur de briques</button>
               </div>
             ) : customBricks.map(b => <BrickChip key={b.id} brick={b} onInsert={() => onInsertBrick(brickContentToHtml(b.content))} />)}
           </div>
