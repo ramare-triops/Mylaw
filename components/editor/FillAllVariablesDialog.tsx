@@ -6,6 +6,8 @@
 // auto-avancement et conversion en texte lors de la confirmation.
 // Pour les champs de type [Adresse] : autocomplétion BAN en 4 phases
 // (code postal → commune → rue → numéro)
+// Pour les champs de type [Prénom] : capitalise automatiquement chaque mot
+// Pour les champs de type [Nom]    : injecté en MAJUSCULES
 //
 // Navigation clavier :
 //   Entrée        → confirme la saisie et passe à la suivante
@@ -36,33 +38,66 @@ interface FillAllVariablesDialogProps {
 
 const BUBBLE_WIDTH         = 240
 const BUBBLE_WIDTH_ADDRESS = 320
-const BUBBLE_HEIGHT        = 60  // légèrement plus haut pour accueillir les phases adresse
+const BUBBLE_HEIGHT        = 60
 const BUBBLE_HEIGHT_BASE   = 44
 const ARROW_H              = 8
 const GAP                  = 6
 const VIEWPORT_PAD         = 12
 
-// Noms de mois en français
 const MOIS_FR = [
   'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
   'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre',
 ]
 
-/** Détermine si la variable courante est un champ de type date */
+// ─── Détection du type de variable ───────────────────────────────────────────────
+
 function isDateVariable(name: string | null | undefined): boolean {
   if (!name) return false
   return /date/i.test(name)
 }
 
-/** Détermine si la variable courante est un champ d'adresse postale */
 function isAddressVariable(name: string | null | undefined): boolean {
   if (!name) return false
   return /adresse|address/i.test(name)
 }
 
 /**
- * Formate une chaîne de chiffres bruts (max 8 chiffres) en JJ/MM/AAAA.
+ * Détecte les variables prénom.
+ * Matche : prénom, prenom, firstname, first_name, given_name
  */
+function isFirstNameVariable(name: string | null | undefined): boolean {
+  if (!name) return false
+  return /pr[eé]nom|firstname|first_name|given_name/i.test(name)
+}
+
+/**
+ * Détecte les variables nom de famille.
+ * Matche : nom_de_famille, lastname, last_name, surname, family_name,
+ *          et \bnom\b isolé (sans matcher « numero », « commune », « prenom »...)
+ */
+function isLastNameVariable(name: string | null | undefined): boolean {
+  if (!name) return false
+  // Exclure d'abord les prénoms pour éviter les faux positifs
+  if (isFirstNameVariable(name)) return false
+  return /\bnom\b|nom_de_famille|nom_famille|lastname|last_name|surname|family_name/i.test(name)
+}
+
+// ─── Transformations de casse ─────────────────────────────────────────────────
+
+/**
+ * Capitalise chaque mot d'un prénom (gestion des prénoms composés).
+ * Ex: "jean-baptiste" → "Jean-Baptiste"
+ *     "marie claire"  → "Marie Claire"
+ */
+function capitalizeFirstName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/(^|[\s-])([a-zà-ÿ])/g, (_, sep, letter) => sep + letter.toUpperCase())
+}
+
+// ─── Helpers date ──────────────────────────────────────────────────────────────
+
 function formatDateInput(digits: string): string {
   const d = digits.slice(0, 8)
   if (d.length <= 2) return d
@@ -70,9 +105,6 @@ function formatDateInput(digits: string): string {
   return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`
 }
 
-/**
- * Convertit une date formatée JJ/MM/AAAA en texte lisible.
- */
 function dateToText(formatted: string): string {
   const match = formatted.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
   if (!match) return formatted
@@ -83,10 +115,11 @@ function dateToText(formatted: string): string {
   return `${day} ${MOIS_FR[month - 1]} ${year}`
 }
 
-/** Extrait uniquement les chiffres d'une valeur formatée JJ/MM/AAAA */
 function extractDigits(value: string): string {
   return value.replace(/\D/g, '')
 }
+
+// ─── Helpers DOM ──────────────────────────────────────────────────────────────
 
 function countVariables(editor: Editor): number {
   let count = 0
@@ -94,7 +127,6 @@ function countVariables(editor: Editor): number {
   return count
 }
 
-/** Retourne toutes les spans de variables encore présentes, triées par position verticale */
 function getAllRemainingSpans(): HTMLElement[] {
   const editorDom = window.document.querySelector('.mylex-editor-content')
   if (!editorDom) return []
@@ -165,7 +197,7 @@ function scrollToSpanAndWait(span: HTMLElement): Promise<void> {
   })
 }
 
-// ─── Composant input date masqué ──────────────────────────────────────────────
+// ─── Composant DateInput ────────────────────────────────────────────────────────
 
 interface DateInputProps {
   value: string
@@ -213,27 +245,10 @@ function DateInput({ value, onChange, onConfirm, onEscape, onSkipNext, onSkipPre
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         autoComplete="off" autoCorrect="off" spellCheck={false}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          opacity: 0,
-          width: '100%',
-          height: '100%',
-          cursor: 'text',
-          zIndex: 1,
-        }}
+        style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'text', zIndex: 1 }}
         aria-label="Saisir une date JJ/MM/AAAA"
       />
-      <span style={{
-        display: 'flex',
-        alignItems: 'center',
-        fontVariantNumeric: 'tabular-nums',
-        fontSize: 13,
-        letterSpacing: '0.02em',
-        userSelect: 'none',
-        pointerEvents: 'none',
-        color: 'var(--color-text, #28251d)',
-      }}>
+      <span style={{ display: 'flex', alignItems: 'center', fontVariantNumeric: 'tabular-nums', fontSize: 13, letterSpacing: '0.02em', userSelect: 'none', pointerEvents: 'none', color: 'var(--color-text, #28251d)' }}>
         <span style={{ color: digits.length >= 1 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[0] ?? 'J'}</span>
         <span style={{ color: digits.length >= 2 ? 'var(--color-text, #28251d)' : '#c0bdb5', minWidth: '1ch' }}>{digits[1] ?? 'J'}</span>
         <span style={{ color: '#28251d', fontWeight: 600 }}>/</span>
@@ -263,16 +278,26 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
   const activeRef   = useRef(false)
   const isFirstRef  = useRef(true)
   const navIndexRef = useRef(0)
-  // Clé pour forcer le remontage de AddressInput entre deux champs adresse
   const [addressKey, setAddressKey] = useState(0)
 
-  const isDate    = isDateVariable(currentVarName)
-  const isAddress = isAddressVariable(currentVarName)
+  const isDate      = isDateVariable(currentVarName)
+  const isAddress   = isAddressVariable(currentVarName)
+  const isFirstName = isFirstNameVariable(currentVarName)
+  const isLastName  = isLastNameVariable(currentVarName)
 
   const currentBubbleWidth  = isAddress ? BUBBLE_WIDTH_ADDRESS : BUBBLE_WIDTH
   const currentBubbleHeight = isAddress ? BUBBLE_HEIGHT : BUBBLE_HEIGHT_BASE
 
-  /** Pointe vers la span à l'index donné parmi les spans restantes */
+  // Placeholder et badge casse selon le type de variable
+  const inputPlaceholder = isLastName  ? 'NOM…'
+                         : isFirstName ? 'Prénom…'
+                         : 'Saisir…'
+
+  // Badge visuel dans la bulle pour signaler la casse attendue
+  const caseBadge = isLastName  ? { label: 'AA', title: 'Sera injecté en MAJUSCULES' }
+                  : isFirstName ? { label: 'Aa', title: 'Sera capitalisé' }
+                  : null
+
   const pointToSpanAtIndex = useCallback(async (
     index: number,
     isActive: () => boolean,
@@ -281,22 +306,17 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     if (!editor) return
     const spans = getAllRemainingSpans()
     if (spans.length === 0 || !isActive()) return
-
     const clampedIndex = Math.max(0, Math.min(index, spans.length - 1))
     navIndexRef.current = clampedIndex
     const span = spans[clampedIndex]
-
     window.document.querySelectorAll('[data-fill-active]')
       .forEach((el) => delete (el as HTMLElement).dataset.fillActive)
     span.dataset.fillActive = 'true'
     setTargetSpan(span)
     setDropdownHeight(0)
-
     const varName = span.getAttribute('data-variable-name')
     setCurrentVarName(varName)
-    // Incrémenter la clé pour forcer le remontage de AddressInput
     setAddressKey(k => k + 1)
-
     if (waitScroll) {
       await scrollToSpanAndWait(span)
       if (!isActive()) return
@@ -311,7 +331,6 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     await pointToSpanAtIndex(0, isActive, waitScroll)
   }, [pointToSpanAtIndex])
 
-  // Recompute position when dropdown opens/closes for address fields
   useEffect(() => {
     if (!targetSpan || !isAddress) return
     setBubblePos(computePosition(targetSpan, currentBubbleWidth, currentBubbleHeight, dropdownHeight))
@@ -368,6 +387,8 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     setDropdownHeight(0)
   }, [open])
 
+  // ── Confirmation — applique la transformation selon le type ─────────────────
+
   const handleConfirm = useCallback(async () => {
     if (!editor || !targetSpan) return
 
@@ -375,11 +396,13 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     if (isDate) {
       const digits = extractDigits(value)
       if (digits.length < 8) return
-      const formatted = formatDateInput(digits)
-      finalValue = dateToText(formatted)
+      finalValue = dateToText(formatDateInput(digits))
     } else {
       if (!value.trim()) return
-      finalValue = value.trim()
+      const trimmed = value.trim()
+      if (isLastName)       finalValue = trimmed.toUpperCase()
+      else if (isFirstName) finalValue = capitalizeFirstName(trimmed)
+      else                  finalValue = trimmed
     }
 
     delete targetSpan.dataset.fillActive
@@ -388,7 +411,6 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
 
     const newRemaining = remaining - 1
     setRemaining(newRemaining)
-
     if (newRemaining <= 0) { onClose(); return }
 
     activeRef.current = true
@@ -401,20 +423,16 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     })() : false
     await pointToFirstSpan(() => !cancelled && activeRef.current, needsScroll)
     return () => { cancelled = true }
-  }, [editor, value, targetSpan, remaining, isDate, onClose, pointToFirstSpan])
+  }, [editor, value, targetSpan, remaining, isDate, isFirstName, isLastName, onClose, pointToFirstSpan])
 
-  /** Confirme depuis AddressInput (reçoit la valeur finale construite) */
   const handleAddressConfirm = useCallback(async (address: string) => {
     if (!editor || !targetSpan) return
     delete targetSpan.dataset.fillActive
     const pos = getPosFromSpan(editor, targetSpan)
     if (pos !== null) editor.commands.replaceVariable(pos, address)
-
     const newRemaining = remaining - 1
     setRemaining(newRemaining)
-
     if (newRemaining <= 0) { onClose(); return }
-
     activeRef.current = true
     let cancelled = false
     navIndexRef.current = 0
@@ -547,7 +565,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Saisir…"
+                placeholder={inputPlaceholder}
                 autoComplete="off" autoCorrect="off" spellCheck={false}
                 style={{
                   flex: 1,
@@ -558,9 +576,34 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
                   fontSize: 13,
                   color: 'var(--color-text, #28251d)',
                   caretColor: '#01696f',
+                  // Casse visuelle en temps réel selon le type
+                  textTransform: isLastName ? 'uppercase' : 'none',
                 }}
               />
             )}
+
+            {/* Badge casse : AA pour nom, Aa pour prénom */}
+            {caseBadge && (
+              <span
+                title={caseBadge.title}
+                style={{
+                  fontSize: 9,
+                  fontWeight: 700,
+                  letterSpacing: '0.04em',
+                  color: '#01696f',
+                  background: 'rgba(1,105,111,0.10)',
+                  borderRadius: 3,
+                  padding: '1px 4px',
+                  flexShrink: 0,
+                  userSelect: 'none',
+                  cursor: 'default',
+                  lineHeight: 1.5,
+                }}
+              >
+                {caseBadge.label}
+              </span>
+            )}
+
             <span style={{ fontSize: 10, color: 'var(--color-text-muted, #9ca3af)', whiteSpace: 'nowrap', flexShrink: 0, marginTop: isAddress ? 4 : 0 }}>
               {total - remaining + 1}/{total}
             </span>
