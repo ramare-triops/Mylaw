@@ -78,7 +78,7 @@ const DEFAULT_TEMPLATES: Template[] = [
     category: 'Contentieux',
     description: "Acte d'assignation devant le juge des référés",
     icon: 'scale',
-    content: '<h1>ASSIGNATION EN RÉFÉRÉ</h1><p>L\'AN <strong>[éannée]</strong><br>LE <strong>[date acte]</strong></p><p>À LA REQUÊTE DE :<br><strong>[nom demandeur]</strong>, demeurant <strong>[adresse demandeur]</strong>,<br>ayant pour avocat Maître <strong>[nom avocat]</strong>, avocat au Barreau de <strong>[ville barreau]</strong>, <strong>[adresse cabinet]</strong>.</p><p>DONNÉ ASSIGNATION À :<br><strong>[nom défendeur]</strong>, demeurant <strong>[adresse défendeur]</strong>,</p><p>D\'AVOIR À COMPARAÎTRE devant le Président du Tribunal judiciaire de <strong>[ville tribunal]</strong>, statuant en référé,</p><p>LE <strong>[date audience]</strong> À <strong>[heure audience]</strong>,</p><p>POUR :<br><strong>[exposé demande]</strong></p><p>SOUS TOUTES RÉSERVES</p>',
+    content: '<h1>ASSIGNATION EN RÉFÉRÉ</h1><p>L\'AN <strong>[année]</strong><br>LE <strong>[date acte]</strong></p><p>À LA REQUÊTE DE :<br><strong>[nom demandeur]</strong>, demeurant <strong>[adresse demandeur]</strong>,<br>ayant pour avocat Maître <strong>[nom avocat]</strong>, avocat au Barreau de <strong>[ville barreau]</strong>, <strong>[adresse cabinet]</strong>.</p><p>DONNÉ ASSIGNATION À :<br><strong>[nom défendeur]</strong>, demeurant <strong>[adresse défendeur]</strong>,</p><p>D\'AVOIR À COMPARAÎTRE devant le Président du Tribunal judiciaire de <strong>[ville tribunal]</strong>, statuant en référé,</p><p>LE <strong>[date audience]</strong> À <strong>[heure audience]</strong>,</p><p>POUR :<br><strong>[exposé demande]</strong></p><p>SOUS TOUTES RÉSERVES</p>',
     fields: [
       { id: 'f1', name: 'annee', label: 'Année', type: 'date', defaultValue: '', required: true, placeholder: '' },
       { id: 'f2', name: 'date_acte', label: "Date de l'acte", type: 'date', defaultValue: '', required: true, placeholder: '' },
@@ -102,7 +102,7 @@ const DEFAULT_TEMPLATES: Template[] = [
     category: 'Correspondance',
     description: 'Accusé de réception de dossier client',
     icon: 'mail',
-    content: '<p><strong>[lieu]</strong>, le <strong>[date]</strong></p><p>Objet : Accusé de réception — Dossier <strong>[référence dossier]</strong></p><p>Monsieur / Madame,</p><p>Nous avons bien reçu les documents que vous nous avez transmis concernant votre affaire, et nous vous en remercions.</p><p>Nous avons enregistré votre dossier sous la référence <strong>[référence dossier]</strong>.</p><p>Nous allons procéder à l\''étude de votre situation et reviendrons vers vous dans les meilleurs délais afin de vous communiquer notre analyse ainsi que les suites à donner.</p><p>Reste à votre disposition pour tout renseignement complémentaire.</p><p>Veuillez agréer, Monsieur / Madame, l\'expression de mes salutations distinguées.</p><p>Maître <strong>[nom avocat]</strong></p>',
+    content: '<p><strong>[lieu]</strong>, le <strong>[date]</strong></p><p>Objet : Accusé de réception — Dossier <strong>[référence dossier]</strong></p><p>Monsieur / Madame,</p><p>Nous avons bien reçu les documents que vous nous avez transmis concernant votre affaire, et nous vous en remercions.</p><p>Nous avons enregistré votre dossier sous la référence <strong>[référence dossier]</strong>.</p><p>Nous allons procéder à l\'étude de votre situation et reviendrons vers vous dans les meilleurs délais afin de vous communiquer notre analyse ainsi que les suites à donner.</p><p>Reste à votre disposition pour tout renseignement complémentaire.</p><p>Veuillez agréer, Monsieur / Madame, l\'expression de mes salutations distinguées.</p><p>Maître <strong>[nom avocat]</strong></p>',
     fields: [
       { id: 'f1', name: 'lieu', label: 'Lieu', type: 'address', defaultValue: '', required: true, placeholder: '' },
       { id: 'f2', name: 'date', label: 'Date', type: 'date', defaultValue: '', required: true, placeholder: '' },
@@ -182,16 +182,9 @@ function generateId(): string {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Convertit le contenu stocké (HTML ou JSON TipTap stringifié)
- * en HTML lisible pour l'aperçu. Si c'est du JSON TipTap,
- * on en extrait le texte brut simplement (pas de rendu TipTap complet
- * en prévisualisation statique).
- */
 function contentToPreviewHtml(content: string): string {
   if (!content) return '<em style="color:#9ca3af">Modèle vide</em>'
   const trimmed = content.trim()
-  // Détecter si c'est du JSON TipTap
   if (trimmed.startsWith('{"type":"doc"')) {
     try {
       const doc = JSON.parse(trimmed)
@@ -200,21 +193,15 @@ function contentToPreviewHtml(content: string): string {
       return '<em style="color:#9ca3af">Contenu non lisible</em>'
     }
   }
-  // Sinon, c'est de l'HTML brut
   return trimmed
 }
 
-/**
- * Convertit récursivement un document JSON TipTap en HTML basique
- * suffisant pour un aperçu statique.
- */
 function tiptapJsonToHtml(node: Record<string, unknown>): string {
   const type = node.type as string
   const content = (node.content as Record<string, unknown>[] | undefined) ?? []
   const attrs = (node.attrs as Record<string, unknown>) ?? {}
   const children = content.map(tiptapJsonToHtml).join('')
 
-  // Marks
   function applyMarks(text: string, marks: Record<string, unknown>[]): string {
     return marks.reduce((acc, mark) => {
       const mt = mark.type as string
@@ -280,7 +267,6 @@ function tiptapJsonToHtml(node: Record<string, unknown>): string {
     case 'tableHeader': return `<th>${children}</th>`
     case 'image': return `<img src="${attrs.src}" alt="${attrs.alt ?? ''}" style="max-width:100%">`
     case 'variableField': {
-      // Afficher le tag variable avec le même style visuel
       const name = attrs.name as string ?? ''
       return `<span data-variable-field="" data-variable-name="${name}" data-preview-var="">${name}</span>`
     }
@@ -315,29 +301,17 @@ const CATEGORY_COLORS: Record<string, string> = {
   Correspondance: '#2563eb',
 }
 
-// ─── Panneau d'aperçu ───────────────────────────────────────────────────────────
+// ─── Panneau d'aperçu ─────────────────────────────────────────────────────────
 function TemplatePreview({ template, onEdit }: { template: Template; onEdit: () => void }) {
   const catColor = CATEGORY_COLORS[template.category] ?? '#6b7280'
   const previewHtml = contentToPreviewHtml(template.content)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Header aperçu */}
-      <div style={{
-        padding: '16px 24px 12px',
-        borderBottom: '1px solid var(--color-border)',
-        background: 'var(--color-surface)',
-        flexShrink: 0,
-      }}>
+      <div style={{ padding: '16px 24px 12px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-surface)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
-            <div style={{
-              width: '40px', height: '40px', flexShrink: 0,
-              borderRadius: 'var(--radius-md)',
-              background: `${catColor}15`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: catColor,
-            }}>
+            <div style={{ width: '40px', height: '40px', flexShrink: 0, borderRadius: 'var(--radius-md)', background: `${catColor}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: catColor }}>
               <TemplateIcon icon={template.icon} size={18} />
             </div>
             <div style={{ minWidth: 0 }}>
@@ -359,19 +333,11 @@ function TemplatePreview({ template, onEdit }: { template: Template; onEdit: () 
           </div>
           <button
             onClick={onEdit}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '7px 16px', flexShrink: 0,
-              borderRadius: 'var(--radius-md)',
-              background: 'var(--color-primary)', color: '#fff',
-              fontSize: 'var(--text-sm)', fontWeight: 500, cursor: 'pointer',
-            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 16px', flexShrink: 0, borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', color: '#fff', fontSize: 'var(--text-sm)', fontWeight: 500, cursor: 'pointer' }}
           >
             <Pencil size={13} /> Modifier
           </button>
         </div>
-
-        {/* Méta */}
         <div style={{ display: 'flex', gap: '16px', marginTop: '10px', flexWrap: 'wrap' }}>
           {template.fields.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
@@ -386,14 +352,7 @@ function TemplatePreview({ template, onEdit }: { template: Template; onEdit: () 
           {template.fields.length > 0 && (
             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '2px' }}>
               {template.fields.slice(0, 6).map((f) => (
-                <span key={f.id} style={{
-                  fontSize: '10px', padding: '1px 7px',
-                  borderRadius: '10px',
-                  background: 'var(--color-surface-offset)',
-                  color: 'var(--color-text-muted)',
-                  border: '1px solid var(--color-border)',
-                  fontFamily: 'monospace',
-                }}>
+                <span key={f.id} style={{ fontSize: '10px', padding: '1px 7px', borderRadius: '10px', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', fontFamily: 'monospace' }}>
                   [{f.name}]
                 </span>
               ))}
@@ -405,29 +364,14 @@ function TemplatePreview({ template, onEdit }: { template: Template; onEdit: () 
         </div>
       </div>
 
-      {/* Aperçu du document */}
       <div style={{ flex: 1, overflowY: 'auto', background: '#e8e8e8', padding: '24px' }}>
-        <div style={{
-          width: '100%', maxWidth: '700px', margin: '0 auto',
-          background: 'white',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.04)',
-          padding: '32px 36px',
-          minHeight: '400px',
-        }}>
-          <div
-            className="tpl-preview-content"
-            dangerouslySetInnerHTML={{ __html: previewHtml }}
-          />
+        <div style={{ width: '100%', maxWidth: '700px', margin: '0 auto', background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.04)', padding: '32px 36px', minHeight: '400px' }}>
+          <div className="tpl-preview-content" dangerouslySetInnerHTML={{ __html: previewHtml }} />
         </div>
       </div>
 
       <style jsx global>{`
-        .tpl-preview-content {
-          font-family: Georgia, serif;
-          font-size: 12pt;
-          line-height: 1.65;
-          color: #28251d;
-        }
+        .tpl-preview-content { font-family: Georgia, serif; font-size: 12pt; line-height: 1.65; color: #28251d; }
         .tpl-preview-content h1 { font-size: 1.6em; font-weight: 700; margin: 0.8em 0 0.4em; }
         .tpl-preview-content h2 { font-size: 1.3em; font-weight: 700; margin: 0.8em 0 0.35em; }
         .tpl-preview-content h3 { font-size: 1.1em; font-weight: 600; margin: 0.7em 0 0.3em; }
@@ -534,7 +478,6 @@ export function TemplateLibrary() {
     setPreviewTemplate(updated)
   }
 
-  // Mode édition
   if (editingTemplate) {
     const current = templates.find((t) => t.id === editingTemplate.id) ?? editingTemplate
     return (
@@ -548,8 +491,6 @@ export function TemplateLibrary() {
 
   return (
     <div style={{ display: 'flex', height: '100%', background: 'var(--color-bg)', fontFamily: 'var(--font-body, Inter, sans-serif)' }}>
-
-      {/* Panneau gauche : liste */}
       <div style={{ width: '300px', flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
         <div style={{ padding: '14px 14px 10px', borderBottom: '1px solid var(--color-border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
@@ -567,12 +508,11 @@ export function TemplateLibrary() {
           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
             {categories.map((cat) => (
               <button key={cat} onClick={() => setSelectedCategory(cat)}
-                style={{ fontSize: 'var(--text-xs)', padding: '2px 9px', borderRadius: 'var(--radius-full)', background: selectedCategory === cat ? 'var(--color-primary)' : 'var(--color-surface-offset)', color: selectedCategory === cat ? '#fff' : 'var(--color-text-muted)', fontWeight: selectedCategory === cat ? 600 : 400, cursor: 'pointer', transition: 'all 0.12s' }}
+                style={{ fontSize: 'var(--text-xs)', padding: '2px 9px', borderRadius: 'var(--radius-full)', background: selectedCategory === cat ? 'var(--color-primary)' : 'var(--color-surface-offset)', color: selectedCategory === cat ? '#fff' : 'var(--color-text-muted)', fontWeight: selectedCategory === cat ? 600 : 400, cursor: 'pointer' }}
               >{cat}</button>
             ))}
           </div>
         </div>
-
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
           {filtered.length === 0 && (
             <p style={{ padding: '24px 16px', fontSize: 'var(--text-sm)', color: 'var(--color-text-muted)', textAlign: 'center' }}>Aucun modèle trouvé</p>
@@ -591,21 +531,16 @@ export function TemplateLibrary() {
             />
           ))}
         </div>
-
         <div style={{ padding: '8px 14px', borderTop: '1px solid var(--color-border)', fontSize: 'var(--text-xs)', color: 'var(--color-text-faint)' }}>
           {templates.length} modèle{templates.length !== 1 ? 's' : ''}
         </div>
       </div>
 
-      {/* Panneau droit : aperçu */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
         {previewTemplate ? (
-          <TemplatePreview
-            template={previewTemplate}
-            onEdit={() => handleEdit(previewTemplate)}
-          />
+          <TemplatePreview template={previewTemplate} onEdit={() => handleEdit(previewTemplate)} />
         ) : (
-          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px', color: 'var(--color-text-muted)' }}>
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px' }}>
             <FileText size={48} style={{ opacity: 0.12 }} />
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-muted)' }}>Sélectionnez un modèle</p>
             <button onClick={createNew} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 18px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', color: '#fff', fontSize: 'var(--text-sm)', fontWeight: 500, cursor: 'pointer' }}>
@@ -637,22 +572,13 @@ function TemplateListItem({
   return (
     <div
       onClick={onSelect}
-      style={{
-        display: 'flex', alignItems: 'center', gap: '9px',
-        padding: '9px 12px',
-        borderBottom: '1px solid var(--color-border)',
-        background: isSelected ? 'var(--color-primary-highlight)' : 'transparent',
-        borderLeft: isSelected ? `3px solid var(--color-primary)` : '3px solid transparent',
-        cursor: 'pointer',
-        transition: 'background 0.1s',
-      }}
+      style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '9px 12px', borderBottom: '1px solid var(--color-border)', background: isSelected ? 'var(--color-primary-highlight)' : 'transparent', borderLeft: isSelected ? '3px solid var(--color-primary)' : '3px solid transparent', cursor: 'pointer', transition: 'background 0.1s' }}
       onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = 'var(--color-surface-offset)' }}
       onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = 'transparent' }}
     >
       <div style={{ width: '30px', height: '30px', borderRadius: 'var(--radius-sm)', background: `${catColor}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: catColor }}>
         <TemplateIcon icon={template.icon} size={14} />
       </div>
-
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '1px' }}>
           <span style={{ fontSize: 'var(--text-sm)', fontWeight: isSelected ? 600 : 500, color: isSelected ? 'var(--color-primary)' : 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -669,8 +595,6 @@ function TemplateListItem({
           )}
         </div>
       </div>
-
-      {/* Actions */}
       <div style={{ display: 'flex', gap: '3px', flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
         <button onClick={onEdit} title="Modifier"
           style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 7px', borderRadius: 'var(--radius-sm)', background: 'var(--color-primary)', color: '#fff', fontSize: '10px', fontWeight: 500, cursor: 'pointer' }}>
