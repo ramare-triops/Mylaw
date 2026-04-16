@@ -51,9 +51,21 @@ const ICON_OPTIONS = [
 ]
 
 const COLOR_OPTIONS = [
-  '#01696f','#7c3aed','#be185d','#c2410c',
-  '#4f46e5','#15803d','#6b7280','#b45309',
-  '#0369a1','#dc2626',
+  '#01696f',
+  '#0369a1',
+  '#4f46e5',
+  '#7c3aed',
+  '#be185d',
+  '#c2410c',
+  '#b45309',
+  '#15803d',
+  '#6b7280',
+  '#dc2626',
+  '#0891b2',
+  '#059669',
+  '#d97706',
+  '#9333ea',
+  '#e11d48',
 ]
 
 // ─── Données par défaut ───────────────────────────────────────────────────────
@@ -64,7 +76,7 @@ const INITIAL_BRICK_GROUPS: BrickGroup[] = [
     bricks: [
       { id: 'personne_physique', label: 'Personne physique', color: '#01696f', icon: 'user', category: 'parties', content: '[M/Mme] **[Nom] [Prénom]**, [né/née] le [Date de naissance] à [Lieu de naissance], de nationalité [Nationalité], demeurant au [Adresse]' },
       { id: 'personne_morale',   label: 'Personne morale',   color: '#7c3aed', icon: 'building', category: 'parties', content: 'La société **[Nom de la société]**, [Forme juridique] au capital de [Capital social] euros, immatriculée au RCS de [Ville RCS] sous le numéro [Numéro RCS], dont le siège social est sis [Adresse du siège], représentée par [Représentant légal], en sa qualité de [Qualité du représentant]' },
-      { id: 'avocat',            label: 'Ayant pour avocat',        color: '#be185d', icon: 'scale',     category: 'parties', content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]" },
+      { id: 'avocat',            label: 'Ayant pour avocat',         color: '#be185d', icon: 'scale',     category: 'parties', content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]" },
       { id: 'representant',      label: 'Représentant / mandataire', color: '#c2410c', icon: 'briefcase', category: 'parties', content: "Représenté(e) par **[Nom du mandataire]**, [Qualité], en vertu d'un pouvoir en date du [Date du pouvoir]" },
     ],
   },
@@ -248,7 +260,7 @@ function BrickPreview({ content, color }: { content: string; color: string }) {
   )
 }
 
-// ─── Color Picker compact (cercle + popover) ──────────────────────────────────
+// ─── Color Picker compact : petit cercle + popover colonne verticale ──────────
 
 function ColorPicker({ color, onChange }: { color: string; onChange: (c: string) => void }) {
   const [open, setOpen] = useState(false)
@@ -266,32 +278,37 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', gap: '4px' }}>
       <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Couleur</span>
-      <button
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        title="Changer la couleur"
-        style={{
-          width: '34px', height: '34px', borderRadius: '50%', background: color,
-          border: `2px solid ${color}`, outline: open ? `2px solid ${color}` : 'none',
-          outlineOffset: '2px', cursor: 'pointer', transition: 'all 0.12s', flexShrink: 0,
-        }}
-      />
+      {/* Petit cercle déclencheur */}
+      <div style={{ display: 'flex', alignItems: 'center', height: '31px' }}>
+        <button
+          type="button"
+          onClick={() => setOpen(v => !v)}
+          title="Changer la couleur"
+          style={{
+            width: '22px', height: '22px', borderRadius: '50%', background: color,
+            border: `2px solid ${color}88`,
+            outline: open ? `2px solid ${color}` : 'none',
+            outlineOffset: '2px', cursor: 'pointer', transition: 'all 0.12s', flexShrink: 0,
+          }}
+        />
+      </div>
       {open && (
         <div style={{
           position: 'absolute', top: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)',
           zIndex: 50, background: 'var(--color-surface)', border: '1px solid var(--color-border)',
-          borderRadius: '10px', padding: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-          display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px', width: '136px',
+          borderRadius: '10px', padding: '6px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center',
         }}>
           {COLOR_OPTIONS.map(c => (
             <button
               key={c} type="button"
               onClick={() => { onChange(c); setOpen(false) }}
+              title={c}
               style={{
-                width: '20px', height: '20px', borderRadius: '50%', background: c,
+                width: '18px', height: '18px', borderRadius: '50%', background: c,
                 border: `2px solid ${color === c ? c : 'transparent'}`,
                 outline: color === c ? `2px solid ${c}` : 'none', outlineOffset: '2px',
-                cursor: 'pointer', transition: 'all 0.1s',
+                cursor: 'pointer', transition: 'all 0.1s', flexShrink: 0,
               }}
             />
           ))}
@@ -302,10 +319,14 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
 }
 
 // ─── Formulaire d'édition ─────────────────────────────────────────────────────
-// Structure : colonne flex avec scroll sur le contenu + actions sticky en bas.
+// onSave : sauvegarde immédiate sans passer par hasChanges du parent.
 
 function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
-  brick: Brick; onSave: (b: Brick) => void; onCancel: () => void; onDelete?: () => void; isNew?: boolean
+  brick: Brick
+  onSave: (b: Brick) => void
+  onCancel: () => void
+  onDelete?: () => void
+  isNew?: boolean
 }) {
   const [label,         setLabel]         = useState(brick.label)
   const [content,       setContent]       = useState(brick.content)
@@ -352,12 +373,12 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
     borderRadius: 'var(--radius-md)', color: 'var(--color-text)', outline: 'none',
   }
 
-  // ─── Le wrapper externe est en flex-column height:100%
-  // ─── La zone scrollable prend flex:1, les actions sont flexShrink:0
+  const canSave = label.trim() !== '' && content.trim() !== ''
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
 
-      {/* Zone scrollable ─────────────────────────────────────────── */}
+      {/* Zone scrollable */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
 
         {/* Icône + Nom */}
@@ -436,13 +457,13 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
 
       </div>{/* fin zone scrollable */}
 
-      {/* Actions — toujours visibles, ne scrollent pas ────────────── */}
+      {/* Actions — toujours visibles, ne scrollent pas */}
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
         <div>
           {onDelete && (confirmDelete ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ fontSize: '11px', color: 'var(--color-error)' }}>Supprimer définitivement ?</span>
-              <button onClick={onDelete} style={{ padding: '5px 10px', borderRadius: 'var(--radius-md)', background: 'var(--color-error)', color: '#fff', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Oui</button>
+              <button onClick={onDelete} style={{ padding: '5px 10px', borderRadius: 'var(--radius-md)', background: 'var(--color-error)', color: '#fff', fontSize: '11px', fontWeight: 600, cursor: 'pointer', border: 'none' }}>Oui</button>
               <button onClick={() => setConfirmDelete(false)} style={{ padding: '5px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer' }}>Annuler</button>
             </div>
           ) : (
@@ -454,9 +475,11 @@ function BrickEditorForm({ brick, onSave, onCancel, onDelete, isNew }: {
         <div style={{ display: 'flex', gap: '8px' }}>
           <button onClick={onCancel} style={{ padding: '7px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>Annuler</button>
           <button
-            onClick={() => { if (label.trim() && content.trim()) onSave({ ...brick, label: label.trim(), content: content.trim(), category, icon, color }) }}
-            disabled={!label.trim() || !content.trim()}
-            style={{ padding: '7px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: (!label.trim() || !content.trim()) ? 0.5 : 1 }}
+            onClick={() => {
+              if (canSave) onSave({ ...brick, label: label.trim(), content: content.trim(), category, icon, color })
+            }}
+            disabled={!canSave}
+            style={{ padding: '7px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: canSave ? 'pointer' : 'not-allowed', opacity: canSave ? 1 : 0.5, border: 'none' }}
           >{isNew ? 'Créer' : 'Enregistrer'}</button>
         </div>
       </div>
@@ -490,13 +513,16 @@ function BrickEditorRow({ brick, onEdit, isSelected }: { brick: Brick; onEdit: (
 // ─── MODALE ÉDITEUR DE BRIQUES ────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function BricksEditorModal({ groups, onSave, onClose }: { groups: BrickGroup[]; onSave: (g: BrickGroup[]) => void; onClose: () => void }) {
-  const [localGroups,    setLocalGroups]    = useState<BrickGroup[]>(() => JSON.parse(JSON.stringify(groups)))
+function BricksEditorModal({ groups, onSave, onClose }: {
+  groups: BrickGroup[]
+  onSave: (g: BrickGroup[]) => void
+  onClose: () => void
+}) {
+  const [localGroups,     setLocalGroups]     = useState<BrickGroup[]>(() => JSON.parse(JSON.stringify(groups)))
   const [selectedBrickId, setSelectedBrickId] = useState<string | null>(null)
-  const [isCreating,     setIsCreating]     = useState(false)
-  const [search,         setSearch]         = useState('')
-  const [filterCat,      setFilterCat]      = useState('all')
-  const [hasChanges,     setHasChanges]     = useState(false)
+  const [isCreating,      setIsCreating]      = useState(false)
+  const [search,          setSearch]          = useState('')
+  const [filterCat,       setFilterCat]       = useState('all')
 
   const allBricks      = localGroups.flatMap(g => g.bricks)
   const filteredBricks = allBricks.filter(b => {
@@ -505,29 +531,41 @@ function BricksEditorModal({ groups, onSave, onClose }: { groups: BrickGroup[]; 
   })
   const selectedBrick = allBricks.find(b => b.id === selectedBrickId) ?? null
 
-  function updateBrick(updated: Brick) {
+  // Met à jour localGroups ET sauvegarde + ferme immédiatement
+  function updateAndSave(updated: Brick) {
     setLocalGroups(prev => {
       const cleaned = prev.map(g => ({ ...g, bricks: g.bricks.filter(b => b.id !== updated.id) }))
       const tg = cleaned.find(g => g.id === updated.category)
-      if (tg) return cleaned.map(g => g.id === updated.category ? { ...g, bricks: [...g.bricks, updated] } : g)
-      return [...cleaned, { id: 'custom', label: 'Mes briques', color: '#6b7280', iconName: 'blocks', bricks: [updated] }]
+      const next = tg
+        ? cleaned.map(g => g.id === updated.category ? { ...g, bricks: [...g.bricks, updated] } : g)
+        : [...cleaned, { id: 'custom', label: 'Mes briques', color: '#6b7280', iconName: 'blocks', bricks: [updated] }]
+      onSave(next.filter(g => g.bricks.length > 0))
+      return next
     })
-    setSelectedBrickId(updated.id); setHasChanges(true)
+    setSelectedBrickId(updated.id)
   }
 
-  function addBrick(partial: Omit<Brick, 'id'>) {
+  function addAndSave(partial: Omit<Brick, 'id'>) {
     const brick: Brick = { ...partial, id: generateId() }
     setLocalGroups(prev => {
       const tg = prev.find(g => g.id === brick.category)
-      if (tg) return prev.map(g => g.id === brick.category ? { ...g, bricks: [...g.bricks, brick] } : g)
-      return [...prev, { id: 'custom', label: 'Mes briques', color: '#6b7280', iconName: 'blocks', bricks: [brick] }]
+      const next = tg
+        ? prev.map(g => g.id === brick.category ? { ...g, bricks: [...g.bricks, brick] } : g)
+        : [...prev, { id: 'custom', label: 'Mes briques', color: '#6b7280', iconName: 'blocks', bricks: [brick] }]
+      onSave(next.filter(g => g.bricks.length > 0))
+      return next
     })
-    setSelectedBrickId(brick.id); setIsCreating(false); setHasChanges(true)
+    setSelectedBrickId(brick.id)
+    setIsCreating(false)
   }
 
-  function deleteBrick(id: string) {
-    setLocalGroups(prev => prev.map(g => ({ ...g, bricks: g.bricks.filter(b => b.id !== id) })).filter(g => g.bricks.length > 0))
-    setSelectedBrickId(null); setHasChanges(true)
+  function deleteAndSave(id: string) {
+    setLocalGroups(prev => {
+      const next = prev.map(g => ({ ...g, bricks: g.bricks.filter(b => b.id !== id) })).filter(g => g.bricks.length > 0)
+      onSave(next)
+      return next
+    })
+    setSelectedBrickId(null)
   }
 
   useEffect(() => {
@@ -560,17 +598,9 @@ function BricksEditorModal({ groups, onSave, onClose }: { groups: BrickGroup[]; 
               <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0 }}>{allBricks.length} brique{allBricks.length > 1 ? 's' : ''} · Formatage riche + variables conditionnelles</p>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {hasChanges && (
-              <button onClick={() => { onSave(localGroups.filter(g => g.bricks.length > 0)); onClose() }}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 16px', borderRadius: '8px', background: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
-                <Check size={13} /> Enregistrer
-              </button>
-            )}
-            <button onClick={onClose} style={{ width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', cursor: 'pointer' }}>
-              <X size={16} style={{ color: 'var(--color-text-muted)' }} />
-            </button>
-          </div>
+          <button onClick={onClose} style={{ width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', cursor: 'pointer' }}>
+            <X size={16} style={{ color: 'var(--color-text-muted)' }} />
+          </button>
         </div>
 
         {/* Corps */}
@@ -603,17 +633,17 @@ function BricksEditorModal({ groups, onSave, onClose }: { groups: BrickGroup[]; 
             </div>
           </div>
 
-          {/* Colonne droite — BrickEditorForm gère son propre scroll + actions sticky */}
+          {/* Colonne droite */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {isCreating ? (
               <BrickEditorForm brick={newTpl} isNew
-                onSave={b => addBrick({ label: b.label, content: b.content, category: b.category, icon: b.icon, color: b.color })}
+                onSave={b => addAndSave({ label: b.label, content: b.content, category: b.category, icon: b.icon, color: b.color })}
                 onCancel={() => setIsCreating(false)} />
             ) : selectedBrick ? (
               <BrickEditorForm key={selectedBrick.id} brick={selectedBrick}
-                onSave={updateBrick}
+                onSave={updateAndSave}
                 onCancel={() => setSelectedBrickId(null)}
-                onDelete={() => deleteBrick(selectedBrick.id)} />
+                onDelete={() => deleteAndSave(selectedBrick.id)} />
             ) : (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: 'var(--color-text-faint)' }}>
                 <Settings2 size={40} style={{ opacity: 0.12 }} />
@@ -626,18 +656,6 @@ function BricksEditorModal({ groups, onSave, onClose }: { groups: BrickGroup[]; 
           </div>
         </div>
 
-        {/* Footer global (modifs non enregistrées) */}
-        {hasChanges && (
-          <div style={{ padding: '8px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-primary)08', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            <span style={{ fontSize: '11px', color: 'var(--color-primary)', fontWeight: 500 }}>● Modifications non enregistrées</span>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={() => { setLocalGroups(JSON.parse(JSON.stringify(groups))); setHasChanges(false); setSelectedBrickId(null); setIsCreating(false) }}
-                style={{ padding: '5px 12px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer' }}>Tout annuler</button>
-              <button onClick={() => { onSave(localGroups.filter(g => g.bricks.length > 0)); onClose() }}
-                style={{ padding: '5px 12px', borderRadius: '6px', background: 'var(--color-primary)', color: '#fff', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Enregistrer</button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
