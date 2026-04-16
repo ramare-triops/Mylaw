@@ -55,8 +55,8 @@ const ICON_OPTIONS = [
 ]
 
 const COLOR_OPTIONS = [
-  '#01696f', '#2563eb', '#4f46e5', '#7c3aed', '#be185d',
-  '#dc2626', '#c2410c', '#b45309', '#15803d', '#374151',
+  '#FFB3B3', '#B3F0C2', '#FFF4A3', '#B3D4FF', '#D4B3FF',
+  '#FFD4A3', '#E63946', '#2ECC71', '#3B82F6', '#7C3AED',
 ]
 
 // ─── Briques pré-installées (seed) ───────────────────────────────────────────
@@ -298,56 +298,45 @@ function BrickPreview({ content, color }: { content: string; color: string }) {
   )
 }
 
-// ─── ColorDot — cercle seul + popover vertical au clic (direction adaptative) ─
+// ─── ColorDot — cercle + popover fixed (jamais clippé par overflow:hidden) ────
 
 function ColorDot({ color, onChange }: { color: string; onChange: (c: string) => void }) {
-  const [open, setOpen]       = useState(false)
-  const [openUp, setOpenUp]   = useState(false)   // true = popover vers le haut
+  const [open, setOpen]     = useState(false)
+  const [pos, setPos]       = useState<{ top: number; left: number } | null>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
-  const ref    = useRef<HTMLDivElement>(null)
+  const popRef = useRef<HTMLDivElement>(null)
 
+  // Ferme au clic extérieur
   useEffect(() => {
     if (!open) return
     function onDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      if (
+        popRef.current && !popRef.current.contains(e.target as Node) &&
+        btnRef.current && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false)
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
+  // Recalcule la position à chaque ouverture
   function handleToggle() {
-    if (!open && btnRef.current) {
-      const rect       = btnRef.current.getBoundingClientRect()
-      // Hauteur estimée du popover : 10 couleurs × (18+6)px + 16px padding ≈ 256px
-      const popoverH   = 256
-      const spaceAbove = rect.top
-      const spaceBelow = window.innerHeight - rect.bottom
-      setOpenUp(spaceAbove > popoverH || spaceAbove > spaceBelow)
-    }
-    setOpen(v => !v)
-  }
-
-  const popoverStyle: React.CSSProperties = {
-    position: 'absolute',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    zIndex: 60,
-    background: 'var(--color-surface)',
-    border: '1px solid var(--color-border)',
-    borderRadius: '12px',
-    padding: '8px 7px',
-    boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-    alignItems: 'center',
-    ...(openUp
-      ? { bottom: 'calc(100% + 8px)' }
-      : { top: 'calc(100% + 8px)' }),
+    if (open) { setOpen(false); return }
+    if (!btnRef.current) return
+    const rect      = btnRef.current.getBoundingClientRect()
+    // Hauteur estimée du popover : 10 couleurs × 24px + 16px padding ≈ 256px
+    const popH      = 256
+    const spaceBelow = window.innerHeight - rect.bottom
+    const top = spaceBelow >= popH
+      ? rect.bottom + 8                    // ouvre vers le bas
+      : Math.max(8, rect.top - popH - 8)  // ouvre vers le haut
+    const left = rect.left + rect.width / 2
+    setPos({ top, left })
+    setOpen(true)
   }
 
   return (
-    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+    <>
       <button
         ref={btnRef}
         type="button"
@@ -365,8 +354,26 @@ function ColorDot({ color, onChange }: { color: string; onChange: (c: string) =>
           flexShrink: 0,
         }}
       />
-      {open && (
-        <div style={popoverStyle}>
+      {open && pos && (
+        <div
+          ref={popRef}
+          style={{
+            position: 'fixed',
+            top: pos.top,
+            left: pos.left,
+            transform: 'translateX(-50%)',
+            zIndex: 9999,
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: '12px',
+            padding: '8px 7px',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            alignItems: 'center',
+          }}
+        >
           {COLOR_OPTIONS.map(c => (
             <button
               key={c}
@@ -387,7 +394,7 @@ function ColorDot({ color, onChange }: { color: string; onChange: (c: string) =>
           ))}
         </div>
       )}
-    </div>
+    </>
   )
 }
 
@@ -700,10 +707,10 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
   onClose:        () => void
 }) {
   const [newName,    setNewName]    = useState('')
-  const [newColor,   setNewColor]   = useState('#2563eb')
+  const [newColor,   setNewColor]   = useState(COLOR_OPTIONS[3])
   const [editingId,  setEditingId]  = useState<string | null>(null)   // category.id (string)
   const [editName,   setEditName]   = useState('')
-  const [editColor,  setEditColor]  = useState('#2563eb')
+  const [editColor,  setEditColor]  = useState(COLOR_OPTIONS[3])
   const [confirmDel, setConfirmDel] = useState<string | null>(null)   // category.id
   const [saving,     setSaving]     = useState(false)
 
@@ -717,7 +724,7 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
     const name = newName.trim(); if (!name) return
     setSaving(true)
     await onAdd(name, newColor)
-    setNewName(''); setNewColor('#2563eb'); setSaving(false)
+    setNewName(''); setNewColor(COLOR_OPTIONS[3]); setSaving(false)
   }
 
   async function handleSaveEdit(cat: CategoryDef) {
@@ -765,7 +772,7 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
           if (editingId === cat.id) {
             return (
               <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', borderRadius: '8px', border: `1.5px solid ${editColor}`, background: editColor + '08' }}>
-                {/* Cercle couleur avec popover adaptatif */}
+                {/* Cercle couleur avec popover fixed */}
                 <ColorDot color={editColor} onChange={setEditColor} />
                 <input
                   autoFocus
@@ -817,7 +824,7 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
       <div style={{ flexShrink: 0, padding: '14px 16px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', margin: 0 }}>Nouvelle catégorie</p>
 
-        {/* Ligne 1 : cercle couleur (avec popover) + champ texte */}
+        {/* Ligne 1 : cercle couleur (avec popover fixed) + champ texte */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <ColorDot color={newColor} onChange={setNewColor} />
           <input
@@ -933,7 +940,7 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, showCatManager])
 
-  const newTpl: Brick = { id: '__new__', label: '', content: '', category: allCategories[0]?.id ?? 'custom', icon: 'file-text', color: '#01696f' }
+  const newTpl: Brick = { id: '__new__', label: '', content: '', category: allCategories[0]?.id ?? 'custom', icon: 'file-text', color: COLOR_OPTIONS[7] }
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
