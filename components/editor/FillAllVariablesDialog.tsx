@@ -24,6 +24,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { usePathname } from 'next/navigation'
 import { X } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
 import { AddressInput } from './AddressInput'
@@ -411,6 +412,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
   const [dropdownHeight, setDropdownHeight] = useState(0)
   const [conditionalIndex, setConditionalIndex] = useState(0)
   const inputRef    = useRef<HTMLInputElement>(null)
+  const bubbleRef   = useRef<HTMLDivElement>(null)
   const activeRef   = useRef(false)
   const isFirstRef  = useRef(true)
   const navIndexRef = useRef(0)
@@ -536,6 +538,41 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     setDropdownHeight(0)
   }, [open])
 
+  // ── Outside-click : fermer la bulle quand on clique ailleurs ────────────
+  // Sont considérés "intérieurs" :
+  //   - la bulle elle-même (champ texte, boutons options)
+  //   - le champ de variable actuellement visé (mise en surbrillance verte)
+  // Un clic en dehors ⇒ onClose() pour libérer l'utilisateur.
+  useEffect(() => {
+    if (!open) return
+    function onPointerDown(e: MouseEvent) {
+      if (!activeRef.current) return
+      const target = e.target as Node | null
+      if (!target) return
+      if (bubbleRef.current?.contains(target)) return
+      if (targetSpan && targetSpan.contains(target)) return
+      onClose()
+    }
+    // Utilise mousedown plutôt que click pour intercepter avant que l'input
+    // ne se blur (ce qui peut déclencher d'autres effets indésirables).
+    document.addEventListener('mousedown', onPointerDown)
+    return () => document.removeEventListener('mousedown', onPointerDown)
+  }, [open, onClose, targetSpan])
+
+  // ── Fermeture sur changement de route (Next.js App Router) ──────────────
+  // Le dialogue est en `position: fixed` : sans cette garde il peut rester
+  // visible après une navigation si le parent oublie de remettre `open`
+  // à false. On observe `pathname` et on ferme dès qu'il change.
+  const pathname = usePathname()
+  const lastPathname = useRef(pathname)
+  useEffect(() => {
+    if (!open) { lastPathname.current = pathname; return }
+    if (pathname !== lastPathname.current) {
+      lastPathname.current = pathname
+      onClose()
+    }
+  }, [pathname, open, onClose])
+
   // ── Confirmation — applique la transformation selon le type ─────────────────
 
   const handleConfirm = useCallback(async () => {
@@ -659,6 +696,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
 
       {bubblePos && (
         <div
+          ref={bubbleRef}
           className="fill-bubble"
           role="dialog"
           style={{

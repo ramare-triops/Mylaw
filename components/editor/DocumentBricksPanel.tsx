@@ -440,8 +440,8 @@ interface CondVar { id: string; label: string; value: string }
 function VariableManager({ textVars, condVars, onChangeTextVars, onChangeCondVars, onInsertTag }: {
   textVars: TextVar[]
   condVars: CondVar[]
-  onChangeTextVars: (v: TextVar[]) => void
-  onChangeCondVars: (v: CondVar[]) => void
+  onChangeTextVars: (v: TextVar[]) => void | Promise<void>
+  onChangeCondVars: (v: CondVar[]) => void | Promise<void>
   onInsertTag: (tag: string) => void
 }) {
   type Mode = null | 'edit' | 'delete'
@@ -555,9 +555,14 @@ function VariableManager({ textVars, condVars, onChangeTextVars, onChangeCondVar
 
 // ─── BrickEditorForm ──────────────────────────────────────────────────────────
 
-function BrickEditorForm({ brick, allCategories, onSave, onCancel, onDelete, isNew }: {
+function BrickEditorForm({ brick, allCategories, textVars, condVars, onChangeTextVars, onChangeCondVars, onSave, onCancel, onDelete, isNew }: {
   brick: Brick
   allCategories: CategoryDef[]
+  /** Variables partagées (persistées), gérées par BricksEditorModal. */
+  textVars: TextVar[]
+  condVars: CondVar[]
+  onChangeTextVars: (v: TextVar[]) => void | Promise<void>
+  onChangeCondVars: (v: CondVar[]) => void | Promise<void>
   onSave: (b: Brick) => void
   onCancel: () => void
   onDelete?: () => void
@@ -570,9 +575,6 @@ function BrickEditorForm({ brick, allCategories, onSave, onCancel, onDelete, isN
   const [color,         setColor]         = useState(brick.color)
   const [showPreview,   setShowPreview]   = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
-
-  const [textVars, setTextVars] = useState<TextVar[]>(DEFAULT_SUGGESTED_TAGS.map(name => ({ id: generateId(), name })))
-  const [condVars, setCondVars] = useState<CondVar[]>(DEFAULT_CONDITIONAL_TAGS.map(t => ({ id: generateId(), label: t.label, value: t.value })))
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -644,7 +646,7 @@ function BrickEditorForm({ brick, allCategories, onSave, onCancel, onDelete, isN
           />
           {showPreview && <BrickPreview content={content} color={color} />}
         </div>
-        <VariableManager textVars={textVars} condVars={condVars} onChangeTextVars={setTextVars} onChangeCondVars={setCondVars} onInsertTag={insertTag} />
+        <VariableManager textVars={textVars} condVars={condVars} onChangeTextVars={onChangeTextVars} onChangeCondVars={onChangeCondVars} onInsertTag={insertTag} />
       </div>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
         <div>
@@ -866,7 +868,7 @@ function CategoryManagerPanel({ allCategories, onAdd, onRename, onDelete, onClos
 
 // ─── BricksEditorModal ────────────────────────────────────────────────────────
 
-function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUpdate, onDelete, onAddCategory, onRenameCategory, onDeleteCategory, onRenameSystemCategory, onDeleteSystemCategory }: {
+function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUpdate, onDelete, onAddCategory, onRenameCategory, onDeleteCategory, onRenameSystemCategory, onDeleteSystemCategory, onReloadBricks }: {
   groups: BrickGroup[]
   allCategories: CategoryDef[]
   onSave: (g: BrickGroup[]) => void
@@ -879,6 +881,8 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
   onDeleteCategory:       (dbId: number) => Promise<void>
   onRenameSystemCategory: (id: string, name: string, color: string) => void
   onDeleteSystemCategory: (id: string) => void
+  /** Demande au parent de recharger les briques depuis Dexie après un renommage de variable. */
+  onReloadBricks: () => Promise<void>
 }) {
   const [localGroups,     setLocalGroups]     = useState<BrickGroup[]>(() => JSON.parse(JSON.stringify(groups)))
   const [selectedBrickId, setSelectedBrickId] = useState<string | null>(null)
@@ -886,6 +890,82 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
   const [search,          setSearch]          = useState('')
   const [filterCat,       setFilterCat]       = useState('all')
   const [showCatManager,  setShowCatManager]  = useState(false)
+
+  // ── Variables partagées (textuelles + conditionnelles) ───────────────────
+  // Persistées dans db.settings pour que les modifications survivent à la
+  // fermeture de l'éditeur ET aux renommages qui propagent les changements
+  // aux contenus de briques existantes.
+  const [textVars, setTextVars] = useState<TextVar[]>(
+    () => DEFAULT_SUGGESTED_TAGS.map(name => ({ id: generateId(), name })),
+  )
+  const [condVars, setCondVars] = useState<CondVar[]>(
+    () => DEFAULT_CONDITIONAL_TAGS.map(t => ({ id: generateId(), label: t.label, value: t.value })),
+  )
+  const varsLoaded = useRef(false)
+
+  // Chargement initial des variables depuis Dexie (une seule fois par montage)
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const storedText = await getSetting<TextVar[] | null>('brick_text_vars', null)
+      const storedCond = await getSetting<CondVar[] | null>('brick_cond_vars', null)
+      if (cancelled) return
+      if (Array.isArray(storedText) && storedText.length > 0) setTextVars(storedText)
+      if (Array.isArray(storedCond) && storedCond.length > 0) setCondVars(storedCond)
+      varsLoaded.current = true
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  /** Propage les renommages de variables textuelles aux contenus de briques. */
+  async function handleChangeTextVars(next: TextVar[]) {
+    const renames: Array<{ oldName: string; newName: string }> = []
+    for (const n of next) {
+      const prev = textVars.find(v => v.id === n.id)
+      if (prev && prev.name !== n.name) renames.push({ oldName: prev.name, newName: n.name })
+    }
+    setTextVars(next)
+    if (varsLoaded.current) await setSetting('brick_text_vars', next)
+    if (renames.length > 0) await rewriteBrickTags(renames.map(r => ({ oldTag: `[${r.oldName}]`, newTag: `[${r.newName}]` })))
+  }
+
+  /** Propage les renommages de variables conditionnelles aux contenus de briques. */
+  async function handleChangeCondVars(next: CondVar[]) {
+    const renames: Array<{ oldValue: string; newValue: string }> = []
+    for (const n of next) {
+      const prev = condVars.find(v => v.id === n.id)
+      if (prev && prev.value !== n.value) renames.push({ oldValue: prev.value, newValue: n.value })
+    }
+    setCondVars(next)
+    if (varsLoaded.current) await setSetting('brick_cond_vars', next)
+    if (renames.length > 0) await rewriteBrickTags(renames.map(r => ({ oldTag: `[${r.oldValue}]`, newTag: `[${r.newValue}]` })))
+  }
+
+  /**
+   * Réécrit toutes les briques contenant les anciens tags vers les nouveaux.
+   * Persiste en DB + rafraîchit l'état local (modal + parent) pour que le
+   * placement de la brique dans un modèle reflète immédiatement le changement.
+   */
+  async function rewriteBrickTags(pairs: Array<{ oldTag: string; newTag: string }>) {
+    const all = await db.bricks.toArray() as (DBBrick & { id: number })[]
+    const now = new Date()
+    const toUpdate: (DBBrick & { id: number })[] = []
+    for (const b of all) {
+      let content = b.content ?? ''
+      let changed = false
+      for (const { oldTag, newTag } of pairs) {
+        if (content.includes(oldTag)) { content = content.split(oldTag).join(newTag); changed = true }
+      }
+      if (changed) toUpdate.push({ ...b, content, updatedAt: now })
+    }
+    if (toUpdate.length === 0) return
+    await Promise.all(toUpdate.map(b => db.bricks.put(b)))
+    // Rafraîchir l'affichage local ET parent
+    const refreshed = await db.bricks.toArray() as (DBBrick & { id: number })[]
+    setLocalGroups(bricksToGroups(refreshed, allCategories))
+    onSave(bricksToGroups(refreshed, allCategories))
+    await onReloadBricks()
+  }
 
   const allBricks      = localGroups.flatMap(g => g.bricks)
   const filteredBricks = allBricks.filter(b => {
@@ -1021,10 +1101,14 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {isCreating ? (
               <BrickEditorForm brick={newTpl} allCategories={allCategories} isNew
+                textVars={textVars} condVars={condVars}
+                onChangeTextVars={handleChangeTextVars} onChangeCondVars={handleChangeCondVars}
                 onSave={b => handleAdd({ label: b.label, content: b.content, category: b.category, icon: b.icon, color: b.color })}
                 onCancel={() => setIsCreating(false)} />
             ) : selectedBrick ? (
               <BrickEditorForm key={selectedBrick.id} brick={selectedBrick} allCategories={allCategories}
+                textVars={textVars} condVars={condVars}
+                onChangeTextVars={handleChangeTextVars} onChangeCondVars={handleChangeCondVars}
                 onSave={handleUpdate}
                 onCancel={() => setSelectedBrickId(null)}
                 onDelete={() => handleDelete(selectedBrick.id)} />
@@ -1232,7 +1316,7 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
           groups={groups}
           allCategories={allCategories}
           onSave={setGroups}
-          onClose={() => setShowEditor(false)}
+          onClose={() => { setShowEditor(false); void loadFromDB() }}
           onAdd={handleAdd}
           onUpdate={handleUpdate}
           onDelete={handleDelete}
@@ -1241,6 +1325,7 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
           onDeleteCategory={handleDeleteCategory}
           onRenameSystemCategory={handleRenameSystemCategory}
           onDeleteSystemCategory={handleDeleteSystemCategory}
+          onReloadBricks={loadFromDB}
         />
       )}
     </>
