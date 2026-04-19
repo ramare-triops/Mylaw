@@ -8,12 +8,17 @@
 // (code postal → commune → rue → numéro)
 // Pour les champs de type [Prénom] : capitalise automatiquement chaque mot
 // Pour les champs de type [Nom]    : injecté en MAJUSCULES
+// Pour les champs conditionnels [M/Mme], [né/née] … : sélecteur à choix multiples
+// (pas de saisie libre), navigation par Tab / flèches, validation par Entrée.
 //
 // Navigation clavier :
 //   Entrée        → confirme la saisie et passe à la suivante
 //   TAB           → skip (passe à la suivante sans renseigner)
+//                   (pour une variable conditionnelle : cycle entre les options)
 //   ArrowRight    → passe à la suivante sans renseigner
+//                   (pour une variable conditionnelle : option suivante)
 //   ArrowLeft     → revient à la précédente sans renseigner
+//                   (pour une variable conditionnelle : option précédente)
 //   Escape        → ferme
 
 'use client'
@@ -40,6 +45,15 @@ const BUBBLE_WIDTH         = 240
 const BUBBLE_WIDTH_ADDRESS = 320
 const BUBBLE_HEIGHT        = 60
 const BUBBLE_HEIGHT_BASE   = 44
+
+// Largeur adaptée au sélecteur conditionnel : calcule ~8px par caractère
+// (marge incluse) pour chaque option et borne entre 220 et 360 px.
+function computeConditionalWidth(options: string[]): number {
+  if (options.length === 0) return BUBBLE_WIDTH
+  const totalChars = options.reduce((sum, opt) => sum + opt.length, 0)
+  const estimated  = totalChars * 8 + options.length * 24 + 80
+  return Math.max(220, Math.min(360, estimated))
+}
 const ARROW_H              = 8
 const GAP                  = 6
 const VIEWPORT_PAD         = 12
@@ -80,6 +94,26 @@ function isLastNameVariable(name: string | null | undefined): boolean {
   // Exclure d'abord les prénoms pour éviter les faux positifs
   if (isFirstNameVariable(name)) return false
   return /\bnom\b|nom_de_famille|nom_famille|lastname|last_name|surname|family_name/i.test(name)
+}
+
+/**
+ * Détecte les variables conditionnelles : le nom contient au moins un « / »
+ * et, une fois découpé, donne plusieurs options non vides.
+ * Ex: "M/Mme", "né/née", "inscrit / inscrite", "le/la/les"
+ */
+function isConditionalVariable(name: string | null | undefined): boolean {
+  if (!name) return false
+  if (!name.includes('/')) return false
+  return getConditionalOptions(name).length >= 2
+}
+
+/**
+ * Découpe un nom de variable conditionnelle en options.
+ * Ex: "M / Mme" → ["M", "Mme"]
+ *     "né/née"  → ["né", "née"]
+ */
+function getConditionalOptions(name: string): string[] {
+  return name.split('/').map(s => s.trim()).filter(s => s.length > 0)
 }
 
 // ─── Transformations de casse ─────────────────────────────────────────────────
@@ -264,6 +298,107 @@ function DateInput({ value, onChange, onConfirm, onEscape, onSkipNext, onSkipPre
   )
 }
 
+// ─── Composant ConditionalSelect ──────────────────────────────────────────────
+// Sélecteur à options pour les variables conditionnelles (ex: « M / Mme »,
+// « né / née »). L'utilisateur ne saisit pas de texte : il choisit une option
+// au clavier (Tab ou flèches) ou à la souris, puis confirme avec Entrée.
+
+interface ConditionalSelectProps {
+  options: string[]
+  selectedIndex: number
+  onSelect: (index: number) => void
+  onConfirm: () => void
+  onEscape: () => void
+  inputRef: React.RefObject<HTMLInputElement | null>
+}
+
+function ConditionalSelect({
+  options,
+  selectedIndex,
+  onSelect,
+  onConfirm,
+  onEscape,
+  inputRef,
+}: ConditionalSelectProps) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter')  { e.preventDefault(); onConfirm(); return }
+    if (e.key === 'Escape') { e.preventDefault(); onEscape();  return }
+    if (e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      onSelect((selectedIndex + 1) % options.length)
+      return
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      onSelect((selectedIndex - 1 + options.length) % options.length)
+      return
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, gap: 4, position: 'relative' }}>
+      {/* Input invisible qui capture le focus clavier sans intercepter les clics */}
+      <input
+        ref={inputRef as React.RefObject<HTMLInputElement>}
+        type="text"
+        value=""
+        readOnly
+        onChange={() => { /* lecture seule, géré via clavier */ }}
+        onKeyDown={handleKeyDown}
+        autoComplete="off" autoCorrect="off" spellCheck={false}
+        aria-label="Choisir une option"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          opacity: 0,
+          width: '100%',
+          height: '100%',
+          pointerEvents: 'none',
+          border: 'none',
+          outline: 'none',
+          background: 'transparent',
+        }}
+      />
+      {options.map((opt, i) => {
+        const active = i === selectedIndex
+        return (
+          <button
+            key={`${opt}-${i}`}
+            type="button"
+            tabIndex={-1}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              onSelect(i)
+              inputRef.current?.focus()
+            }}
+            onDoubleClick={(e) => { e.preventDefault(); onConfirm() }}
+            title="Cliquer pour sélectionner · Double-clic ou Entrée pour valider"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              padding: '4px 8px',
+              borderRadius: 6,
+              border: active ? '1.5px solid #01696f' : '1.5px solid transparent',
+              background: active ? 'rgba(1,105,111,0.14)' : 'rgba(1,105,111,0.04)',
+              color: active ? '#01696f' : 'var(--color-text, #28251d)',
+              fontSize: 13,
+              fontWeight: active ? 600 : 500,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              userSelect: 'none',
+              transition: 'background 0.12s ease, border 0.12s ease, color 0.12s ease',
+            }}
+          >
+            {opt}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariablesDialogProps) {
@@ -274,18 +409,25 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
   const [bubblePos, setBubblePos]   = useState<BubblePosition | null>(null)
   const [targetSpan, setTargetSpan] = useState<HTMLElement | null>(null)
   const [dropdownHeight, setDropdownHeight] = useState(0)
+  const [conditionalIndex, setConditionalIndex] = useState(0)
   const inputRef    = useRef<HTMLInputElement>(null)
   const activeRef   = useRef(false)
   const isFirstRef  = useRef(true)
   const navIndexRef = useRef(0)
   const [addressKey, setAddressKey] = useState(0)
 
-  const isDate      = isDateVariable(currentVarName)
-  const isAddress   = isAddressVariable(currentVarName)
-  const isFirstName = isFirstNameVariable(currentVarName)
-  const isLastName  = isLastNameVariable(currentVarName)
+  const isDate        = isDateVariable(currentVarName)
+  const isAddress     = isAddressVariable(currentVarName)
+  const isFirstName   = isFirstNameVariable(currentVarName)
+  const isLastName    = isLastNameVariable(currentVarName)
+  const isConditional = isConditionalVariable(currentVarName)
+  const conditionalOptions = isConditional && currentVarName
+    ? getConditionalOptions(currentVarName)
+    : []
 
-  const currentBubbleWidth  = isAddress ? BUBBLE_WIDTH_ADDRESS : BUBBLE_WIDTH
+  const currentBubbleWidth  = isAddress     ? BUBBLE_WIDTH_ADDRESS
+                            : isConditional ? computeConditionalWidth(conditionalOptions)
+                            :                 BUBBLE_WIDTH
   const currentBubbleHeight = isAddress ? BUBBLE_HEIGHT : BUBBLE_HEIGHT_BASE
 
   // Placeholder et badge casse selon le type de variable
@@ -317,11 +459,18 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     const varName = span.getAttribute('data-variable-name')
     setCurrentVarName(varName)
     setAddressKey(k => k + 1)
+    setConditionalIndex(0)
     if (waitScroll) {
       await scrollToSpanAndWait(span)
       if (!isActive()) return
     }
-    setBubblePos(computePosition(span, isAddressVariable(varName) ? BUBBLE_WIDTH_ADDRESS : BUBBLE_WIDTH, isAddressVariable(varName) ? BUBBLE_HEIGHT : BUBBLE_HEIGHT_BASE, 0))
+    const widthForNext = isAddressVariable(varName)
+      ? BUBBLE_WIDTH_ADDRESS
+      : isConditionalVariable(varName)
+        ? computeConditionalWidth(getConditionalOptions(varName as string))
+        : BUBBLE_WIDTH
+    const heightForNext = isAddressVariable(varName) ? BUBBLE_HEIGHT : BUBBLE_HEIGHT_BASE
+    setBubblePos(computePosition(span, widthForNext, heightForNext, 0))
     setValue('')
     setTimeout(() => inputRef.current?.focus(), 30)
   }, [editor])
@@ -393,7 +542,11 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     if (!editor || !targetSpan) return
 
     let finalValue: string
-    if (isDate) {
+    if (isConditional) {
+      if (conditionalOptions.length === 0) return
+      const safeIndex = Math.max(0, Math.min(conditionalIndex, conditionalOptions.length - 1))
+      finalValue = conditionalOptions[safeIndex]
+    } else if (isDate) {
       const digits = extractDigits(value)
       if (digits.length < 8) return
       finalValue = dateToText(formatDateInput(digits))
@@ -423,7 +576,7 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
     })() : false
     await pointToFirstSpan(() => !cancelled && activeRef.current, needsScroll)
     return () => { cancelled = true }
-  }, [editor, value, targetSpan, remaining, isDate, isFirstName, isLastName, onClose, pointToFirstSpan])
+  }, [editor, value, targetSpan, remaining, isDate, isFirstName, isLastName, isConditional, conditionalOptions, conditionalIndex, onClose, pointToFirstSpan])
 
   const handleAddressConfirm = useCallback(async (address: string) => {
     if (!editor || !targetSpan) return
@@ -538,7 +691,16 @@ export function FillAllVariablesDialog({ open, editor, onClose }: FillAllVariabl
             minHeight: currentBubbleHeight,
             boxSizing: 'border-box',
           }}>
-            {isDate ? (
+            {isConditional ? (
+              <ConditionalSelect
+                options={conditionalOptions}
+                selectedIndex={conditionalIndex}
+                onSelect={setConditionalIndex}
+                onConfirm={() => void handleConfirm()}
+                onEscape={onClose}
+                inputRef={inputRef}
+              />
+            ) : isDate ? (
               <DateInput
                 value={value}
                 onChange={setValue}
