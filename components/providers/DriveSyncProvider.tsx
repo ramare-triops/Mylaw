@@ -12,6 +12,10 @@ interface DriveSyncContextType {
   disconnect: () => Promise<void>;
   syncNow: () => Promise<void>;
   scheduleSync: () => void;
+  /** Vrai si le refresh token a expiré : affichage de la bannière de reconnexion. */
+  needsReconnect: boolean;
+  /** Alias sémantique de connect() pour la bannière. */
+  reconnect: () => Promise<void>;
 }
 
 const DriveSyncContext = createContext<DriveSyncContextType | null>(null);

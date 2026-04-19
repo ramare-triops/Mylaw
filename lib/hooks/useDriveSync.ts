@@ -1,11 +1,18 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { DriveClient, DriveStatus, MylawBackup } from '@/lib/drive-sync';
-import { db, getSetting, setSetting, registerDriveSyncCallback, setRestoreInProgress } from '@/lib/db';
+import { DriveClient, DriveStatus } from '@/lib/drive-sync';
+import { getSetting, setSetting, registerDriveSyncCallback, setRestoreInProgress } from '@/lib/db';
+import { buildBackup, mergeFromBackup } from '@/lib/drive-merge';
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '';
-const UPLOAD_DEBOUNCE_MS = 3000;
+
+// ─── Paramètres de timing ──────────────────────────────────────────────────
+const UPLOAD_DEBOUNCE_MS = 1500;   // Debounce court : on sauvegarde vite après une saisie
+const POLL_INTERVAL_MS   = 30_000; // Polling Drive toutes les 30 s
+const RETRY_BASE_MS      = 2_000;  // Premier retry après 2 s, puis exponentiel
+const RETRY_MAX_MS       = 60_000; // Backoff plafonné à 1 min
+const RETRY_MAX_ATTEMPTS = 6;
 
 let clientInstance: DriveClient | null = null;
 function getClient(): DriveClient {
@@ -17,102 +24,246 @@ export function useDriveSync() {
   const [status,     setStatus]     = useState<DriveStatus>('idle');
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
   const [error,      setError]      = useState<string | null>(null);
-  const statusRef    = useRef<DriveStatus>('idle');
-  const uploadTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const client       = getClient();
+
+  const statusRef      = useRef<DriveStatus>('idle');
+  const uploadTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollTimer      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const retryTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryAttempt   = useRef<number>(0);
+  const syncInFlight   = useRef<boolean>(false);
+  const pendingSync    = useRef<boolean>(false);
+  const lastRemoteTime = useRef<string | null>(null);
+  // Devient true quand l'utilisateur (ou du code applicatif) modifie Dexie.
+  // Retombe à false après un upload réussi. Empêche le ping-pong entre appareils
+  // (sans ce flag, chaque poll déclencherait un ré-upload identique).
+  const localDirty     = useRef<boolean>(false);
+
+  const client = getClient();
 
   function updateStatus(s: DriveStatus) {
     statusRef.current = s;
     setStatus(s);
   }
 
-  // ─── scheduleSync : déclenché par le middleware Dexie à chaque écriture ────
+  // ─── Cœur de la synchronisation : pull → merge → push conditionnel ──────
+  // - On pull toujours (pour détecter les modifs des autres appareils)
+  // - On push UNIQUEMENT si localDirty ou forcePush
+  const runSyncCycle = useCallback(async (
+    opts: { forcePush?: boolean } = {},
+  ): Promise<boolean> => {
+    if (syncInFlight.current) { pendingSync.current = true; return false; }
+    const s = statusRef.current;
+    if (s === 'idle' || s === 'disconnected' || s === 'loading') return false;
+
+    // On fige le bit local dès l'entrée pour éviter qu'une écriture entre
+    // le pull et le push l'efface prématurément.
+    const shouldPush = opts.forcePush === true || localDirty.current;
+    localDirty.current = false;
+
+    syncInFlight.current = true;
+    updateStatus('syncing');
+    try {
+      // ── 1. PULL ───────────────────────────────────────────────────────
+      const localSyncedAt = await getSetting<string | null>('last_synced_at', null);
+      const remote = await client.download();
+
+      let remoteExportedAt: string | null = null;
+      if (remote !== null) {
+        remoteExportedAt = remote.backup?.exportedAt ?? null;
+        const remoteNewer = !localSyncedAt
+          || (remoteExportedAt && Date.parse(remoteExportedAt) > Date.parse(localSyncedAt));
+        if (remoteNewer) {
+          setRestoreInProgress(true);
+          try {
+            await mergeFromBackup(remote.backup, localSyncedAt);
+          } finally {
+            setRestoreInProgress(false);
+          }
+        }
+        if (remote.modifiedTime) lastRemoteTime.current = remote.modifiedTime;
+      }
+
+      // ── 2. PUSH (conditionnel) ────────────────────────────────────────
+      if (shouldPush) {
+        const backup = await buildBackup();
+        const uploadResult = await client.upload(backup);
+        if (uploadResult?.modifiedTime) lastRemoteTime.current = uploadResult.modifiedTime;
+        await setSetting('last_synced_at', backup.exportedAt);
+      } else if (remoteExportedAt) {
+        // Pas de push mais on a pullé : aligner last_synced_at sur le distant
+        // pour que le prochain cycle n'ait pas à re-pull le même backup.
+        await setSetting('last_synced_at', remoteExportedAt);
+      }
+
+      // ── 3. Marqueurs de succès ───────────────────────────────────────
+      await setSetting('last_sync_success_at', new Date().toISOString());
+      await setSetting('last_sync_error', null);
+      setLastSynced(new Date());
+      setError(null);
+      updateStatus('connected');
+      retryAttempt.current = 0;
+      return true;
+    } catch (e: any) {
+      // Si on avait prévu de push, remarque qu'on a toujours du dirty à propager
+      if (shouldPush) localDirty.current = true;
+      const msg = e?.message ?? 'Erreur de synchronisation';
+      setError(msg);
+      await setSetting('last_sync_error', msg).catch(() => {});
+      updateStatus('error');
+      scheduleRetry();
+      return false;
+    } finally {
+      syncInFlight.current = false;
+      if (pendingSync.current) {
+        pendingSync.current = false;
+        scheduleSync();
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ─── Retry avec backoff exponentiel ─────────────────────────────────────
+  const scheduleRetry = useCallback(() => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    if (retryAttempt.current >= RETRY_MAX_ATTEMPTS) return;
+    const delay = Math.min(RETRY_BASE_MS * Math.pow(2, retryAttempt.current), RETRY_MAX_MS);
+    retryAttempt.current += 1;
+    retryTimer.current = setTimeout(() => { void runSyncCycle(); }, delay);
+  }, [runSyncCycle]);
+
+  // ─── Debounced schedule — appelé par le middleware Dexie ────────────────
   const scheduleSync = useCallback(() => {
+    // Chaque appel du middleware signifie : « un record user-editable vient
+    // de changer ». On marque dirty et on arme un timer d'upload.
+    localDirty.current = true;
     const s = statusRef.current;
     if (s === 'idle' || s === 'disconnected' || s === 'loading') return;
     if (uploadTimer.current) clearTimeout(uploadTimer.current);
-    updateStatus('syncing');
-    uploadTimer.current = setTimeout(async () => {
-      try {
-        const backup = await buildBackup();
-        await client.upload(backup);
-        // ✔ Persister la date d'upload pour que l'appareil B sache
-        //   que Drive est plus récent et déclenche bien le restore.
-        await setSetting('last_synced_at', backup.exportedAt);
-        setLastSynced(new Date());
-        updateStatus('connected');
-      } catch {
-        updateStatus('error');
-      }
-    }, UPLOAD_DEBOUNCE_MS);
-  }, []);
+    uploadTimer.current = setTimeout(() => { void runSyncCycle(); }, UPLOAD_DEBOUNCE_MS);
+  }, [runSyncCycle]);
 
   useEffect(() => {
     registerDriveSyncCallback(scheduleSync);
   }, [scheduleSync]);
 
-  // ─── Au démarrage : silent refresh + pull Drive ────────────────────────
+  // ─── Au démarrage : silent refresh + first pull ─────────────────────────
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const params = new URLSearchParams(window.location.search);
     if (params.get('drive') === 'connected') {
       window.history.replaceState({}, '', window.location.pathname);
-      loadFromDrive();
+      void initialLoad();
       return;
     }
 
     updateStatus('loading');
     client.trySilentRefresh().then(async (ok) => {
       if (ok) {
-        await loadFromDrive();
+        await initialLoad();
       } else {
         const wasConnected = await getSetting<boolean>('drive_connected', false);
         updateStatus(wasConnected ? 'disconnected' : 'idle');
       }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Pull Drive ────────────────────────────────────────────────────
-  async function loadFromDrive() {
+  async function initialLoad() {
     updateStatus('syncing');
     try {
+      const localSyncedAt = await getSetting<string | null>('last_synced_at', null);
       const remote = await client.download();
 
       if (remote === null) {
-        // 204 : pas de fichier sur Drive — on garde Dexie intact
+        // Pas de fichier Drive : premier upload à faire, Dexie intact.
         await setSetting('drive_connected', true);
-        setLastSynced(new Date());
         updateStatus('connected');
+        localDirty.current = true; // force le push initial
+        void runSyncCycle({ forcePush: true });
+        startPolling();
         return;
       }
 
-      const localSyncedAt = await getSetting<string | null>('last_synced_at', null);
-      const remoteDate    = remote.exportedAt ? new Date(remote.exportedAt).getTime() : 0;
-      const localDate     = localSyncedAt     ? new Date(localSyncedAt).getTime()     : 0;
-
-      // Drive prime si :
-      //  - il est plus récent que le dernier sync local (cas normal), OU
-      //  - il n'y a aucune date locale enregistrée (premier chargement sur un nouvel appareil).
-      const shouldRestore = !localSyncedAt || remoteDate > localDate;
-
-      if (shouldRestore) {
-        setRestoreInProgress(true);
-        await restoreFromBackup(remote);
+      setRestoreInProgress(true);
+      try {
+        await mergeFromBackup(remote.backup, localSyncedAt);
+      } finally {
         setRestoreInProgress(false);
-        await setSetting('last_synced_at', remote.exportedAt);
       }
 
+      if (remote.modifiedTime) lastRemoteTime.current = remote.modifiedTime;
+      await setSetting('last_synced_at', remote.backup.exportedAt ?? new Date().toISOString());
+      await setSetting('last_sync_success_at', new Date().toISOString());
       await setSetting('drive_connected', true);
       setLastSynced(new Date());
+      setError(null);
       updateStatus('connected');
-    } catch {
+      startPolling();
+      // Au cas où des modifs locales existent (créées offline), on les pousse
+      if (localDirty.current) void runSyncCycle();
+    } catch (e: any) {
       setRestoreInProgress(false);
+      setError(e?.message ?? 'Erreur de chargement Drive');
       updateStatus('error');
     }
   }
 
-  // ─── connect() ────────────────────────────────────────────────────
+  // ─── Polling : détecte les modifications venant des autres appareils ────
+  function startPolling() {
+    if (pollTimer.current) return;
+    pollTimer.current = setInterval(async () => {
+      if (statusRef.current !== 'connected') return;
+      if (syncInFlight.current) return;
+      // Requête "metaOnly" : on ne télécharge que le modifiedTime
+      const meta = await client.fetchRemoteMeta();
+      if (!meta?.modifiedTime) return;
+      if (lastRemoteTime.current && meta.modifiedTime === lastRemoteTime.current) return;
+      // Drive a changé depuis notre dernier pull → pull + merge (pas de push sauf dirty)
+      lastRemoteTime.current = meta.modifiedTime;
+      void runSyncCycle();
+    }, POLL_INTERVAL_MS);
+  }
+
+  function stopPolling() {
+    if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null; }
+  }
+
+  // Relance un cycle quand l'onglet redevient visible
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    function onVisible() {
+      if (document.visibilityState === 'visible' && statusRef.current === 'connected') {
+        void runSyncCycle();
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [runSyncCycle]);
+
+  // Reconnexion réseau → synchro immédiate
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    function onOnline() {
+      if (statusRef.current === 'error' || statusRef.current === 'connected') {
+        void runSyncCycle();
+      }
+    }
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [runSyncCycle]);
+
+  // Cleanup timers au démontage
+  useEffect(() => {
+    return () => {
+      if (uploadTimer.current) clearTimeout(uploadTimer.current);
+      if (retryTimer.current)  clearTimeout(retryTimer.current);
+      stopPolling();
+    };
+  }, []);
+
+  // ─── Actions publiques ──────────────────────────────────────────────────
+
   const connect = useCallback(async () => {
     setError(null);
     try {
@@ -143,31 +294,39 @@ export function useDriveSync() {
   }, []);
 
   const disconnect = useCallback(async () => {
+    stopPolling();
+    if (uploadTimer.current) clearTimeout(uploadTimer.current);
+    if (retryTimer.current)  clearTimeout(retryTimer.current);
     await client.signOut();
     await setSetting('drive_connected', false);
     await setSetting('last_synced_at', null);
     updateStatus('idle');
     setLastSynced(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const syncNow = useCallback(async () => {
-    updateStatus('syncing');
-    try {
-      const backup = await buildBackup();
-      await client.upload(backup);
-      await setSetting('last_synced_at', backup.exportedAt);
-      setLastSynced(new Date());
-      updateStatus('connected');
-    } catch (e: any) {
-      setError(e?.message ?? 'Erreur de synchronisation');
-      updateStatus('error');
-    }
-  }, []);
+    retryAttempt.current = 0;
+    await runSyncCycle({ forcePush: true });
+  }, [runSyncCycle]);
 
-  return { status, lastSynced, error, connect, disconnect, syncNow, scheduleSync };
+  // needsReconnect : l'utilisateur était connecté, son refresh token a expiré ou
+  // a été révoqué. Affiche une bannière pour le prévenir.
+  const needsReconnect = status === 'disconnected';
+
+  return {
+    status, lastSynced, error,
+    connect, disconnect, syncNow, scheduleSync,
+    // Alias sémantiques utilisés par ReconnectBanner
+    needsReconnect,
+    reconnect: connect,
+  };
 }
 
-// ─── Helpers PKCE ──────────────────────────────────────────────────
+// ─── Backwards-compat exports ──────────────────────────────────────────────
+export { buildBackup, mergeFromBackup as restoreFromBackup } from '@/lib/drive-merge';
+
+// ─── Helpers PKCE ──────────────────────────────────────────────────────────
 
 function generateRandomString(length: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -182,58 +341,4 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
   const digest  = await crypto.subtle.digest('SHA-256', data);
   return btoa(String.fromCharCode(...new Uint8Array(digest)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-// ─── Backup / Restore ────────────────────────────────────────────────
-
-export async function buildBackup(): Promise<MylawBackup> {
-  const [
-    documents, folders, snippets, deadlines,
-    templates, tools, aiChats, bricks, infoLabels,
-  ] = await Promise.all([
-    db.documents.toArray(),
-    db.folders.toArray(),
-    db.table('snippets').toArray(),
-    db.table('deadlines').toArray(),
-    db.table('templates').toArray(),
-    db.table('tools').toArray(),
-    db.table('aiChats').toArray(),
-    db.table('bricks').toArray(),
-    db.table('infoLabels').toArray(),
-  ]);
-  const settingsRows = await db.settings.toArray();
-  const settings: Record<string, any> = {};
-  for (const row of settingsRows) settings[row.key] = row.value;
-  return {
-    version: 3,
-    exportedAt: new Date().toISOString(),
-    documents, folders, snippets, deadlines,
-    templates, tools, aiChats,
-    bricks, infoLabels,
-    settings,
-  };
-}
-
-export async function restoreFromBackup(backup: MylawBackup): Promise<void> {
-  await Promise.all([
-    db.documents.clear(),          db.folders.clear(),
-    db.table('snippets').clear(),  db.table('deadlines').clear(),
-    db.table('templates').clear(), db.table('tools').clear(),
-    db.table('aiChats').clear(),   db.settings.clear(),
-    db.table('bricks').clear(),    db.table('infoLabels').clear(),
-  ]);
-  await Promise.all([
-    backup.documents?.length   ? db.documents.bulkAdd(backup.documents)                   : Promise.resolve(),
-    backup.folders?.length     ? db.folders.bulkAdd(backup.folders)                       : Promise.resolve(),
-    backup.snippets?.length    ? db.table('snippets').bulkAdd(backup.snippets)            : Promise.resolve(),
-    backup.deadlines?.length   ? db.table('deadlines').bulkAdd(backup.deadlines)          : Promise.resolve(),
-    backup.templates?.length   ? db.table('templates').bulkAdd(backup.templates)          : Promise.resolve(),
-    backup.tools?.length       ? db.table('tools').bulkAdd(backup.tools)                  : Promise.resolve(),
-    backup.aiChats?.length     ? db.table('aiChats').bulkAdd(backup.aiChats)              : Promise.resolve(),
-    backup.bricks?.length      ? db.table('bricks').bulkAdd(backup.bricks)                : Promise.resolve(),
-    backup.infoLabels?.length  ? db.table('infoLabels').bulkAdd(backup.infoLabels)        : Promise.resolve(),
-  ]);
-  for (const [key, value] of Object.entries(backup.settings ?? {})) {
-    await db.settings.put({ key, value });
-  }
 }

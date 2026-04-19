@@ -86,7 +86,11 @@ export function DriveSyncSection() {
         lineHeight: 1.7,
       }}>
         <strong style={{ color: 'var(--color-text)' }}>Données synchronisées :</strong><br />
-        Documents · Snippets · Échéances · Paramètres · Modèles personnalisés
+        Documents · Dossiers · Modèles · Briques · Étiquettes · Variables · Snippets · Échéances · Outils · Discussions IA · Paramètres (profil, apparence, éditeur, notifications)
+        <br />
+        <span style={{ color: 'var(--color-text-faint)', fontSize: '10px' }}>
+          Sauvegarde chiffrée par Google Drive · stockage compressé gzip · polling toutes les 30 s
+        </span>
       </div>
 
       {/* Actions */}

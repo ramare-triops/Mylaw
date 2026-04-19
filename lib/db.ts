@@ -15,6 +15,37 @@ import type {
 
 type SettingsRecord = { key: string; value: unknown };
 
+// ─── Clés internes au moteur de sync ───────────────────────────────────────
+// Leur mutation ne doit PAS déclencher un nouveau cycle de sync (sinon boucle).
+// Doit rester aligné avec INTERNAL_SETTING_KEYS dans lib/drive-merge.ts.
+const INTERNAL_SETTING_KEYS_DB = new Set<string>([
+  'drive_connected',
+  'last_synced_at',
+  'last_sync_error',
+  'last_sync_success_at',
+]);
+
+/**
+ * Retourne true si la mutation Dexie concerne UNIQUEMENT des clés internes
+ * de la table `settings`. Dans ce cas on n'ouvre pas de nouveau cycle de sync.
+ */
+function isInternalSettingsMutation(tableName: string, req: any): boolean {
+  if (tableName !== 'settings') return false;
+  if (!req) return false;
+  // Dexie dbcore : req.type = 'add' | 'put' | 'delete' | 'deleteRange'
+  if (req.type === 'add' || req.type === 'put') {
+    const values = Array.isArray(req.values) ? req.values : [];
+    if (values.length === 0) return false;
+    return values.every((v: any) => v && INTERNAL_SETTING_KEYS_DB.has(v.key));
+  }
+  if (req.type === 'delete') {
+    const keys = Array.isArray(req.keys) ? req.keys : [];
+    if (keys.length === 0) return false;
+    return keys.every((k: any) => INTERNAL_SETTING_KEYS_DB.has(k));
+  }
+  return false;
+}
+
 // ─── Callback de sync ─────────────────────────────────────────────────────────────────
 // Enregistre un callback que le DriveSyncProvider branche au démarrage.
 // Appelé automatiquement à chaque écriture Dexie (add, put, delete, clear).
@@ -79,9 +110,13 @@ export class MyLexDatabase extends Dexie {
     });
 
     // ─── Middleware : déclenche le sync Drive sur toute mutation ───
-    // On intercepte add, put, delete, clear sur toutes les tables sauf
-    // 'history' (audit log interne) et 'settings' pour la clé 'drive_connected'
-    // pour éviter les boucles infinies.
+    // On intercepte add, put, delete, clear sur toutes les tables sauf :
+    //   - 'history' (audit log interne, jamais synchronisé)
+    //   - Les écritures sur db.settings dont la clé est interne au moteur
+    //     de sync lui-même (drive_connected, last_synced_at, last_sync_error,
+    //     last_sync_success_at). Sans cette exclusion, chaque sync écrit
+    //     last_synced_at, ce qui retrigger une sync, ce qui réécrit, etc. →
+    //     boucle infinie.
     this.use({
       stack: 'dbcore',
       name: 'drive-auto-sync',
@@ -90,16 +125,15 @@ export class MyLexDatabase extends Dexie {
           ...downlevel,
           table(tableName: string) {
             const table = downlevel.table(tableName);
-            // Ne pas syncer la table history (bruit inutile)
             if (tableName === 'history') return table;
             return {
               ...table,
               mutate(req: any) {
                 const result = table.mutate(req);
-                // Après toute mutation réussie, déclencher le sync
-                // (mais pas pendant un restore Drive pour éviter les boucles)
+                // Décide si la mutation doit déclencher un sync.
+                const shouldTrigger = !isInternalSettingsMutation(tableName, req);
                 result.then(() => {
-                  if (!_restoreInProgress) triggerDriveSync();
+                  if (shouldTrigger && !_restoreInProgress) triggerDriveSync();
                 }).catch(() => {});
                 return result;
               },
