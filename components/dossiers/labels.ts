@@ -74,14 +74,17 @@ export const DOCUMENT_ROLE_LABELS: Record<DocumentRole, string> = {
 };
 
 export const PROFESSIONAL_CATEGORY_LABELS: Record<ProfessionalCategory, string> = {
-  lawyer:  'Avocat',
-  expert:  'Expert',
-  bailiff: 'Commissaire de justice',
-  judge:   'Magistrat',
-  court:   'Juridiction',
-  witness: 'Témoin',
-  notary:  'Notaire',
-  other:   'Autre',
+  lawyer:       'Avocat',
+  expert:       'Expert',
+  bailiff:      'Commissaire de justice',
+  judge:        'Magistrat',
+  court:        'Juridiction',
+  witness:      'Témoin',
+  notary:       'Notaire',
+  collaborator: 'Collaborateur',
+  trainee:      'Stagiaire',
+  assistant:    'Assistant(e)',
+  other:        'Autre',
 };
 
 export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {

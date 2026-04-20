@@ -350,14 +350,17 @@ export type ContactType = 'physical' | 'moral';
  * mais sa catégorie professionnelle reste la même partout.
  */
 export type ProfessionalCategory =
-  | 'lawyer'      // Avocat
-  | 'expert'      // Expert (judiciaire ou amiable)
-  | 'bailiff'     // Commissaire de justice
-  | 'judge'       // Magistrat
-  | 'court'       // Juridiction (personne morale)
-  | 'witness'     // Témoin
-  | 'notary'      // Notaire
-  | 'other';      // Autre profession
+  | 'lawyer'        // Avocat
+  | 'expert'        // Expert (judiciaire ou amiable)
+  | 'bailiff'       // Commissaire de justice
+  | 'judge'         // Magistrat
+  | 'court'         // Juridiction (personne morale)
+  | 'witness'       // Témoin
+  | 'notary'        // Notaire
+  | 'collaborator'  // Collaborateur du cabinet
+  | 'trainee'       // Stagiaire du cabinet
+  | 'assistant'     // Assistant(e) du cabinet
+  | 'other';        // Autre profession
 
 /** Civilités usuelles (personne physique) */
 export type Civility = 'M.' | 'Mme' | 'Mlle' | 'Me' | 'Pr.' | 'Dr.';

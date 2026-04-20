@@ -500,16 +500,16 @@ interface LinkOption {
 }
 
 const LINK_OPTIONS: LinkOption[] = [
-  { key: 'lawyer',       label: 'Avocat',                 category: 'lawyer',  contactType: 'physical' },
-  { key: 'bailiff',      label: 'Commissaire de justice', category: 'bailiff', contactType: 'physical' },
-  { key: 'expert',       label: 'Expert',                 category: 'expert',  contactType: 'physical' },
-  { key: 'notary',       label: 'Notaire',                category: 'notary',  contactType: 'physical' },
-  { key: 'judge',        label: 'Magistrat',              category: 'judge',   contactType: 'physical' },
-  { key: 'court',        label: 'Juridiction',            category: 'court',   contactType: 'moral' },
-  { key: 'witness',      label: 'Témoin',                 category: 'witness', contactType: 'physical' },
-  { key: 'collaborator', label: 'Collaborateur',                                contactType: 'physical' },
-  { key: 'trainee',      label: 'Stagiaire',                                    contactType: 'physical' },
-  { key: 'assistant',    label: 'Assistant(e)',                                 contactType: 'physical' },
+  { key: 'lawyer',       label: 'Avocat',                 category: 'lawyer',       contactType: 'physical' },
+  { key: 'bailiff',      label: 'Commissaire de justice', category: 'bailiff',      contactType: 'physical' },
+  { key: 'expert',       label: 'Expert',                 category: 'expert',       contactType: 'physical' },
+  { key: 'notary',       label: 'Notaire',                category: 'notary',       contactType: 'physical' },
+  { key: 'judge',        label: 'Magistrat',              category: 'judge',        contactType: 'physical' },
+  { key: 'court',        label: 'Juridiction',            category: 'court',        contactType: 'moral'    },
+  { key: 'witness',      label: 'Témoin',                 category: 'witness',      contactType: 'physical' },
+  { key: 'collaborator', label: 'Collaborateur',          category: 'collaborator', contactType: 'physical' },
+  { key: 'trainee',      label: 'Stagiaire',              category: 'trainee',      contactType: 'physical' },
+  { key: 'assistant',    label: 'Assistant(e)',           category: 'assistant',    contactType: 'physical' },
   { key: 'other',        label: 'Autre' },
 ];
 
