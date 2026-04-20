@@ -948,35 +948,31 @@ function DropSuggestionPopup({
         zIndex: 50,
         display: 'flex',
         alignItems: 'center',
-        gap: 8,
-        padding: '6px 10px',
-        background: 'var(--color-surface)',
-        border: '1.5px solid var(--color-primary)',
-        borderRadius: 8,
-        boxShadow: '0 4px 14px rgba(0,0,0,0.14)',
-        fontSize: 12,
+        gap: 4,
         animation: 'fadeIn 150ms ease-out',
       }}
     >
-      <Users size={14} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
-      <span style={{ color: 'var(--color-text)', fontWeight: 500 }}>
-        « {brickTitle} »
-      </span>
       <button
         type="button"
         onClick={onAccept}
+        title={`Pré-remplir « ${brickTitle} » depuis un intervenant`}
         style={{
-          padding: '4px 10px',
-          borderRadius: 6,
-          border: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '6px 12px',
+          borderRadius: 8,
+          border: '1.5px solid var(--color-primary)',
           background: 'var(--color-primary)',
           color: '#fff',
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: 600,
           cursor: 'pointer',
+          boxShadow: '0 4px 14px rgba(0,0,0,0.14)',
         }}
       >
-        Auto-remplir avec un intervenant
+        <Users size={14} />
+        Intervenant
       </button>
       <button
         type="button"

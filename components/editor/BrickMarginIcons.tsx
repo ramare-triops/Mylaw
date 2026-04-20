@@ -193,12 +193,11 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
   );
 
   // ─── Rendu ───────────────────────────────────────────────────────────────
-  // Seules les briques avec target* + au moins une variable non renseignée
-  // méritent une icône. Les autres disparaissent silencieusement.
+  // Toute brique avec une cible contact affiche son icône en marge, pour
+  // permettre à l'utilisateur de rouvrir le picker à tout moment (même
+  // après avoir fermé la pop-up de drop ou déjà rempli les variables).
   const visible = markers.filter(
-    (m) =>
-      m.unfilledCount > 0 &&
-      (m.targetContactType || m.targetRoles.length > 0)
+    (m) => m.targetContactType || m.targetRoles.length > 0
   );
 
   // Position X : bord gauche du contenu éditeur, moins 32px
@@ -221,9 +220,13 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
             });
           }}
           title={`Pré-remplir « ${m.brickTitle} » depuis un intervenant`}
-          aria-label={`Pré-remplir depuis un intervenant (${m.unfilledCount} champ${
-            m.unfilledCount > 1 ? 's' : ''
-          } à remplir)`}
+          aria-label={
+            m.unfilledCount > 0
+              ? `Pré-remplir depuis un intervenant (${m.unfilledCount} champ${
+                  m.unfilledCount > 1 ? 's' : ''
+                } à remplir)`
+              : 'Pré-remplir depuis un intervenant'
+          }
           style={{
             position: 'fixed',
             top: Math.max(0, m.top - 2),
@@ -255,26 +258,28 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
           }}
         >
           <Users size={13} />
-          <span
-            style={{
-              position: 'absolute',
-              top: -6,
-              right: -6,
-              minWidth: 14,
-              height: 14,
-              padding: '0 3px',
-              borderRadius: 7,
-              background: 'var(--color-primary)',
-              color: '#fff',
-              fontSize: 9,
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {m.unfilledCount}
-          </span>
+          {m.unfilledCount > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: -6,
+                right: -6,
+                minWidth: 14,
+                height: 14,
+                padding: '0 3px',
+                borderRadius: 7,
+                background: 'var(--color-primary)',
+                color: '#fff',
+                fontSize: 9,
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {m.unfilledCount}
+            </span>
+          )}
         </button>
       ))}
 
