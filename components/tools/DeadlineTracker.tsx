@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Clock, Plus, Trash2, AlertTriangle, CheckCircle, Calendar, Bell } from 'lucide-react';
+import { Clock, Plus, Pencil, Trash2, AlertTriangle, CheckCircle, Calendar, Bell } from 'lucide-react';
 import { db, getSetting, setSetting } from '@/lib/db';
 import type { Deadline as DBDeadline, DeadlineType as DBDeadlineType } from '@/types';
 
@@ -96,6 +96,7 @@ const ALERT_STYLES: Record<string, { bg: string; border: string; badge: string; 
 export function DeadlineTracker() {
   const [deadlines, setDeadlines] = useState<Deadline[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [filter, setFilter] = useState<'all' | 'upcoming' | 'done'>('upcoming');
   const [form, setForm] = useState<Omit<Deadline, 'id' | 'done' | 'createdAt'>>({
     title: '',
@@ -158,9 +159,58 @@ export function DeadlineTracker() {
     } catch {}
   }
 
-  async function addDeadline() {
+  function resetForm() {
+    setForm({ title: '', dueDate: new Date(), type: 'autre', folder: '', notes: '' });
+    setEditingId(null);
+    setShowForm(false);
+  }
+
+  function startEdit(dl: Deadline) {
+    if (dl.id == null) return;
+    setEditingId(dl.id);
+    setForm({
+      title: dl.title,
+      dueDate: dl.dueDate,
+      type: dl.type,
+      folder: dl.folder ?? '',
+      notes: dl.notes ?? '',
+    });
+    setShowForm(true);
+  }
+
+  async function submitDeadline() {
     if (!form.title.trim()) return;
     try {
+      if (editingId != null) {
+        // ── Mode édition : on met à jour l'enregistrement existant ──
+        const existing = deadlines.find((d) => d.id === editingId);
+        const patch: Partial<DBDeadline> = {
+          title:   form.title.trim(),
+          dossier: form.folder ?? '',
+          dueDate: form.dueDate,
+          type:    UI_TO_DB_TYPE[form.type],
+          notes:   form.notes || undefined,
+        };
+        await db.deadlines.update(editingId, patch);
+        const updated: Deadline = {
+          id:        editingId,
+          title:     patch.title!,
+          dueDate:   patch.dueDate!,
+          type:      form.type,
+          folder:    patch.dossier,
+          notes:     patch.notes,
+          done:      existing?.done ?? false,
+          createdAt: existing?.createdAt ?? new Date(),
+        };
+        setDeadlines((prev) =>
+          prev
+            .map((d) => (d.id === editingId ? updated : d))
+            .sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())
+        );
+        resetForm();
+        return;
+      }
+      // ── Mode création ──
       const now = new Date();
       const record: Omit<DBDeadline, 'id'> = {
         title:     form.title.trim(),
@@ -185,8 +235,7 @@ export function DeadlineTracker() {
       setDeadlines((prev) =>
         [...prev, deadline].sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())
       );
-      setForm({ title: '', dueDate: new Date(), type: 'autre', folder: '', notes: '' });
-      setShowForm(false);
+      resetForm();
     } catch {}
   }
 
@@ -287,7 +336,11 @@ export function DeadlineTracker() {
             </button>
           ))}
           <button
-            onClick={() => setShowForm(true)}
+            onClick={() => {
+              setEditingId(null);
+              setForm({ title: '', dueDate: new Date(), type: 'autre', folder: '', notes: '' });
+              setShowForm(true);
+            }}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -344,7 +397,7 @@ export function DeadlineTracker() {
               style={{ ...inputStyle, width: '140px' }}
             />
             <button
-              onClick={addDeadline}
+              onClick={submitDeadline}
               style={{
                 padding: '6px 16px',
                 borderRadius: 'var(--radius-sm)',
@@ -354,10 +407,10 @@ export function DeadlineTracker() {
                 fontWeight: 500,
               }}
             >
-              Ajouter
+              {editingId != null ? 'Enregistrer' : 'Ajouter'}
             </button>
             <button
-              onClick={() => setShowForm(false)}
+              onClick={resetForm}
               style={{
                 padding: '6px 12px',
                 borderRadius: 'var(--radius-sm)',
@@ -495,10 +548,21 @@ export function DeadlineTracker() {
                 <Bell size={16} style={{ color: 'var(--color-error)', flexShrink: 0 }} />
               )}
 
+              {/* Edit */}
+              <button
+                onClick={() => startEdit(dl)}
+                aria-label="Modifier le délai"
+                title="Modifier"
+                style={{ flexShrink: 0, color: 'var(--color-text-muted)' }}
+              >
+                <Pencil size={14} />
+              </button>
+
               {/* Delete */}
               <button
                 onClick={() => dl.id && deleteDeadline(dl.id)}
                 aria-label="Supprimer le délai"
+                title="Supprimer"
                 style={{ flexShrink: 0, color: 'var(--color-text-faint)' }}
               >
                 <Trash2 size={14} />

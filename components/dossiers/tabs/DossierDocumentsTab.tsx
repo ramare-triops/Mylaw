@@ -98,26 +98,68 @@ export function DossierDocumentsTab({ dossier }: Props) {
     return db.documents.bulkGet(links.map((l) => l.documentId));
   }, [links]);
 
-  const filteredDocs = (() => {
-    if (!docs) return [];
-    let list = docs;
+  // ─── Liste fusionnée : documents Mylaw + pièces jointes importées ─────────
+  // Les deux types cohabitent dans un seul tableau trié chronologiquement
+  // (plus récent en haut). On distingue la source via `kind` pour adapter
+  // l'ouverture (éditeur interne vs viewer blob) et les colonnes affichées.
+  type UnifiedItem =
+    | { kind: 'doc'; id: number; title: string; updatedAt: Date; category?: string; status?: DocumentStatus; wordCount?: number; doc: MylawDocument }
+    | { kind: 'attachment'; id: number; title: string; updatedAt: Date; mimeType: string; size: number; attachment: Attachment };
+
+  const unified: UnifiedItem[] = (() => {
+    const items: UnifiedItem[] = [];
+    for (const d of docs ?? []) {
+      if (d.id == null) continue;
+      items.push({
+        kind: 'doc',
+        id: d.id,
+        title: d.title,
+        updatedAt: new Date(d.updatedAt),
+        category: d.category,
+        status: d.status,
+        wordCount: d.wordCount,
+        doc: d,
+      });
+    }
+    for (const a of attachments ?? []) {
+      if (a.id == null) continue;
+      items.push({
+        kind: 'attachment',
+        id: a.id,
+        title: a.name,
+        updatedAt: new Date(a.uploadedAt),
+        mimeType: a.mimeType,
+        size: a.size,
+        attachment: a,
+      });
+    }
+    return items;
+  })();
+
+  const filteredItems = (() => {
+    let list = unified;
     if (search) {
       const q = search.toLowerCase();
-      list = list.filter(
-        (d) =>
-          d.title.toLowerCase().includes(q) ||
-          (d.contentRaw ?? '').toLowerCase().includes(q) ||
-          (d.category ?? '').toLowerCase().includes(q) ||
-          d.tags.some((t) => t.toLowerCase().includes(q))
-      );
+      list = list.filter((it) => {
+        if (it.kind === 'doc') {
+          return (
+            it.title.toLowerCase().includes(q) ||
+            (it.doc.contentRaw ?? '').toLowerCase().includes(q) ||
+            (it.category ?? '').toLowerCase().includes(q) ||
+            it.doc.tags.some((t) => t.toLowerCase().includes(q))
+          );
+        }
+        return it.title.toLowerCase().includes(q);
+      });
     }
-    if (statusFilter !== 'all')
-      list = list.filter((d) => (d.status ?? 'draft') === statusFilter);
-    if (categoryFilter !== 'all')
-      list = list.filter((d) => d.category === categoryFilter);
+    if (statusFilter !== 'all') {
+      list = list.filter((it) => it.kind === 'doc' && (it.status ?? 'draft') === statusFilter);
+    }
+    if (categoryFilter !== 'all') {
+      list = list.filter((it) => it.kind === 'doc' && it.category === categoryFilter);
+    }
     return [...list].sort(
-      (a, b) =>
-        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()
     );
   })();
 
@@ -202,6 +244,37 @@ export function DossierDocumentsTab({ dossier }: Props) {
         action: 'download',
       });
     });
+  }
+
+  /**
+   * Ouvre une pièce jointe (Word, PDF, image, etc.) en créant une URL blob
+   * et en l'ouvrant dans un nouvel onglet. Le navigateur gère nativement
+   * les PDF et les images ; les .docx seront proposés au téléchargement par
+   * le navigateur (aucun viewer natif).
+   */
+  function handleOpenAttachment(att: Attachment) {
+    if (att.id == null) return;
+    db.attachments.get(att.id).then((fresh) => {
+      const blob = fresh?.blob ?? att.blob;
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      // Révocation retardée : laisse le temps au nouvel onglet de charger.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      logAudit({
+        dossierId: dossier.id,
+        entityType: 'attachment',
+        entityId: att.id!,
+        action: 'view',
+      });
+    });
+  }
+
+  async function handleDeleteAttachment(e: React.MouseEvent, att: Attachment) {
+    e.stopPropagation();
+    if (att.id == null) return;
+    if (!confirm(`Supprimer la pièce jointe "${att.name}" ?`)) return;
+    await deleteAttachment(att.id);
   }
 
   return (
@@ -323,129 +396,136 @@ export function DossierDocumentsTab({ dossier }: Props) {
           </select>
         </div>
 
-        {/* Documents of the dossier */}
+        {/* Liste unifiée : documents Mylaw et pièces jointes importées */}
         <section>
           <h3 className="text-sm font-semibold mb-2 text-[var(--color-text)]">
-            Documents ({docs?.length ?? 0})
+            Documents ({(docs?.length ?? 0) + (attachments?.length ?? 0)})
           </h3>
           <div className="border border-[var(--color-border)] rounded-md overflow-hidden">
-            <div className="grid grid-cols-[1fr_120px_120px_100px_130px_70px] gap-3 px-4 py-2 text-xs text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+            <div className="grid grid-cols-[1fr_120px_120px_100px_130px_100px] gap-3 px-4 py-2 text-xs text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
               <span>Titre</span>
               <span>Catégorie</span>
               <span>Statut</span>
-              <span className="text-right">Mots</span>
+              <span className="text-right">Taille</span>
               <span className="text-right">Modifié</span>
               <span />
             </div>
-            {filteredDocs.length === 0 ? (
+            {filteredItems.length === 0 ? (
               <div className="py-10 text-center text-sm text-[var(--color-text-muted)]">
                 Aucun document rattaché. Créez-en un, importez des fichiers ou
                 rattachez un document existant.
               </div>
             ) : (
-              filteredDocs.map((d) => (
-                <div
-                  key={d.id}
-                  onClick={() => router.push(`/documents/${d.id}`)}
-                  className="grid grid-cols-[1fr_120px_120px_100px_130px_70px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <FileText className="w-4 h-4 flex-shrink-0 text-[var(--color-text-muted)]" />
-                    <span className="truncate font-medium">{d.title}</span>
-                  </div>
-                  <select
-                    value={d.category ?? ''}
-                    onChange={(e) => handleUpdateCategory(d, e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="text-xs px-2 py-1 rounded bg-transparent border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-primary)] focus:outline-none"
-                  >
-                    <option value="">—</option>
-                    {DOCUMENT_CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={d.status ?? 'draft'}
-                    onChange={(e) =>
-                      handleUpdateStatus(d, e.target.value as DocumentStatus)
-                    }
-                    onClick={(e) => e.stopPropagation()}
-                    className={cn(
-                      'text-xs px-2 py-0.5 rounded border border-transparent font-medium',
-                      DOCUMENT_STATUS_COLORS[d.status ?? 'draft']
-                    )}
-                  >
-                    {Object.entries(DOCUMENT_STATUS_LABELS).map(([v, l]) => (
-                      <option key={v} value={v}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-xs text-right tabular-nums text-[var(--color-text-muted)]">
-                    {d.wordCount ?? 0}
-                  </span>
-                  <span className="text-xs text-right text-[var(--color-text-muted)]">
-                    {formatDateTime(d.updatedAt)}
-                  </span>
-                  <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100">
-                    <button
-                      onClick={(e) => handleDelete(e, d)}
-                      className="p-1 rounded hover:bg-red-100"
-                      title="Supprimer"
+              filteredItems.map((item) => {
+                if (item.kind === 'doc') {
+                  const d = item.doc;
+                  return (
+                    <div
+                      key={`doc-${item.id}`}
+                      onClick={() => router.push(`/documents/${item.id}`)}
+                      className="grid grid-cols-[1fr_120px_120px_100px_130px_100px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
                     >
-                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                    </button>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText className="w-4 h-4 flex-shrink-0 text-[var(--color-text-muted)]" />
+                        <span className="truncate font-medium">{item.title}</span>
+                      </div>
+                      <select
+                        value={item.category ?? ''}
+                        onChange={(e) => handleUpdateCategory(d, e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-xs px-2 py-1 rounded bg-transparent border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-primary)] focus:outline-none"
+                      >
+                        <option value="">—</option>
+                        {DOCUMENT_CATEGORIES.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={item.status ?? 'draft'}
+                        onChange={(e) =>
+                          handleUpdateStatus(d, e.target.value as DocumentStatus)
+                        }
+                        onClick={(e) => e.stopPropagation()}
+                        className={cn(
+                          'text-xs px-2 py-0.5 rounded border border-transparent font-medium',
+                          DOCUMENT_STATUS_COLORS[item.status ?? 'draft']
+                        )}
+                      >
+                        {Object.entries(DOCUMENT_STATUS_LABELS).map(([v, l]) => (
+                          <option key={v} value={v}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-xs text-right tabular-nums text-[var(--color-text-muted)]">
+                        {item.wordCount ?? 0} mots
+                      </span>
+                      <span className="text-xs text-right text-[var(--color-text-muted)]">
+                        {formatDateTime(item.updatedAt)}
+                      </span>
+                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100">
+                        <button
+                          onClick={(e) => handleDelete(e, d)}
+                          className="p-1 rounded hover:bg-red-100"
+                          title="Supprimer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+                // Pièce jointe : clic = ouverture dans un nouvel onglet.
+                const a = item.attachment;
+                return (
+                  <div
+                    key={`att-${item.id}`}
+                    onClick={() => handleOpenAttachment(a)}
+                    className="grid grid-cols-[1fr_120px_120px_100px_130px_100px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Paperclip className="w-4 h-4 flex-shrink-0 text-[var(--color-text-muted)]" />
+                      <span className="truncate font-medium">{item.title}</span>
+                    </div>
+                    <span className="text-xs text-[var(--color-text-muted)] truncate">
+                      Importé
+                    </span>
+                    <span className="text-xs text-[var(--color-text-muted)] truncate">
+                      {item.mimeType || '—'}
+                    </span>
+                    <span className="text-xs text-right tabular-nums text-[var(--color-text-muted)]">
+                      {formatBytes(item.size)}
+                    </span>
+                    <span className="text-xs text-right text-[var(--color-text-muted)]">
+                      {formatDateTime(item.updatedAt)}
+                    </span>
+                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownloadAttachment(item.id, item.title);
+                        }}
+                        className="p-1 rounded hover:bg-[var(--color-border)]"
+                        title="Télécharger"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteAttachment(e, a)}
+                        className="p-1 rounded hover:bg-red-100"
+                        title="Supprimer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </section>
-
-        {/* Attachments */}
-        {attachments && attachments.length > 0 && (
-          <section>
-            <h3 className="text-sm font-semibold mb-2 text-[var(--color-text)]">
-              Pièces jointes importées ({attachments.length})
-            </h3>
-            <div className="border border-[var(--color-border)] rounded-md divide-y divide-[var(--color-border)]">
-              {attachments.map((a) => (
-                <div
-                  key={a.id}
-                  className="flex items-center gap-3 px-4 py-2 text-sm group"
-                >
-                  <Paperclip className="w-4 h-4 text-[var(--color-text-muted)] flex-shrink-0" />
-                  <span className="flex-1 truncate font-medium">{a.name}</span>
-                  <span className="text-xs text-[var(--color-text-muted)] tabular-nums">
-                    {formatBytes(a.size)}
-                  </span>
-                  <span className="text-xs text-[var(--color-text-muted)] w-28 text-right">
-                    {formatDate(a.uploadedAt)}
-                  </span>
-                  <button
-                    onClick={() => handleDownloadAttachment(a.id!, a.name)}
-                    className="p-1 rounded hover:bg-[var(--color-border)]"
-                    title="Télécharger"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (confirm(`Supprimer la pièce jointe "${a.name}" ?`))
-                        deleteAttachment(a.id!);
-                    }}
-                    className="p-1 rounded hover:bg-red-100"
-                    title="Supprimer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
 
         {/* Inter-dossier links */}
         {links && links.length > 0 && (

@@ -228,8 +228,11 @@ async function putTemplateToDexie(tpl: Template): Promise<number> {
 
 async function deleteTemplateFromDexie(id: string): Promise<void> {
   const numericId = Number(id)
-  if (!Number.isFinite(numericId)) return
-  await db.table('templates').delete(numericId)
+  // Garde stricte : un id valide est un entier > 0. Les valeurs falsy
+  // (0, NaN, '') doivent être ignorées sinon Dexie peut interpréter
+  // un appel `.delete(undefined)` / `.delete(0)` de manière inattendue.
+  if (!Number.isInteger(numericId) || numericId <= 0) return
+  await db.table('templates').where(':id').equals(numericId).delete()
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
