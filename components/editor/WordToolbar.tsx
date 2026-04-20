@@ -350,24 +350,6 @@ export function WordToolbar({
 
       <ToolbarButton label="Effacer la mise en forme" onClick={() => editor.chain().focus().clearNodes().unsetAllMarks().run()}><RemoveFormatting className="w-3.5 h-3.5" /></ToolbarButton>
 
-      {/* Bouton Renseigner les informations — poussé à droite sur grand écran, en fin de ligne sinon */}
-      {hasVariables && onFillVariables && (
-        <>
-          <ToolbarDivider />
-          <ToolbarTooltip label="Renseigner les informations du document">
-            <button
-              type="button"
-              onMouseDown={(e) => { e.preventDefault(); onFillVariables() }}
-              className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-[var(--radius-sm)] text-[var(--text-xs)] font-medium text-[var(--color-primary)] bg-[var(--color-primary)]/8 hover:bg-[var(--color-primary)]/16 border border-[var(--color-primary)]/30 hover:border-[var(--color-primary)]/60 transition-all flex-shrink-0"
-              aria-label="Renseigner les informations"
-            >
-              <PencilLine className="w-3.5 h-3.5 flex-shrink-0" />
-              <span className="whitespace-nowrap">Renseigner les informations</span>
-            </button>
-          </ToolbarTooltip>
-        </>
-      )}
-
       {/* ── Séparateur de ligne ── */}
       <div className="w-full h-px bg-[var(--color-divider)] my-0" aria-hidden />
 

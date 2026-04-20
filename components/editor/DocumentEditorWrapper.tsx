@@ -35,6 +35,7 @@ import { Save, Check, Loader2, Wifi, WifiOff, X, ZoomIn, ZoomOut, Settings2 } fr
 import type { Editor } from '@tiptap/react'
 
 import { WordToolbar } from './WordToolbar'
+import { MylawToolsBar } from './MylawToolsBar'
 import { FontSize } from './extensions/FontSize'
 import { VariableField } from './extensions/VariableField'
 import { BrickMarker } from './extensions/BrickMarker'
@@ -162,6 +163,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const [prefs, setPrefs]                             = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS)
   const [variableCount, setVariableCount]             = useState(0)
   const [zoom, setZoom]                               = useState(ZOOM_DEFAULT)
+  // Onglet actif de la barre d'édition : « Traitement de texte » par défaut.
+  // Le second onglet, « Outils Mylaw », expose les actions spécifiques :
+  // renseigner les variables, capture d'écran, enregistrement audio.
+  const [toolbarTab, setToolbarTab]                   = useState<'word' | 'mylaw'>('word')
   const prefsLoaded                                   = useRef(false)
 
   // Expansions de texte chargées depuis db.snippets
@@ -551,15 +556,56 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           </div>
         </div>
 
-        <WordToolbar
-          editor={editor}
-          onInsertLink={handleInsertLink}
-          onInsertImage={handleInsertImage}
-          onFillVariables={() => setShowFillDialog(true)}
-          hasVariables={variableCount > 0}
-          defaultFontFamily={prefs.fontFamily}
-          defaultFontSize={String(prefs.fontSize)}
-        />
+        {/* ── Onglets de la barre d'édition ────────────────────────────── */}
+        <div
+          className="flex items-end gap-1 px-3 pt-1 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex-shrink-0"
+          role="tablist"
+          aria-label="Barres d'outils de l'éditeur"
+        >
+          {([
+            { key: 'word',  label: 'Traitement de texte' },
+            { key: 'mylaw', label: 'Outils Mylaw'        },
+          ] as const).map((t) => {
+            const active = toolbarTab === t.key
+            return (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setToolbarTab(t.key)}
+                className={`px-3 h-7 text-[var(--text-xs)] font-medium border-b-2 -mb-px transition-colors ${
+                  active
+                    ? 'text-[var(--color-primary)] border-[var(--color-primary)]'
+                    : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'
+                }`}
+              >
+                {t.label}
+                {t.key === 'mylaw' && variableCount > 0 && (
+                  <span className="ml-1 text-[10px] opacity-70">({variableCount})</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+
+        {toolbarTab === 'word' ? (
+          <WordToolbar
+            editor={editor}
+            onInsertLink={handleInsertLink}
+            onInsertImage={handleInsertImage}
+            defaultFontFamily={prefs.fontFamily}
+            defaultFontSize={String(prefs.fontSize)}
+          />
+        ) : (
+          <MylawToolsBar
+            editor={editor}
+            dossierId={document.dossierId}
+            documentId={document.id}
+            variableCount={variableCount}
+            onFillVariables={() => setShowFillDialog(true)}
+          />
+        )}
 
         {/* Ligne principale : éditeur + panneau briques */}
         <div className="flex flex-1 overflow-hidden">
