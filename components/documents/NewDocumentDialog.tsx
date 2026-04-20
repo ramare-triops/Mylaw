@@ -1,79 +1,50 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { X, FileText, Scale, Mail, Users, Gavel, FileSignature, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { db } from '@/lib/db';
 
-// ─── Types (mirror de TemplateLibrary) ────────────────────────────────────────────
-interface StoredTemplate {
+// ─── Template tel que stocké dans Dexie ────────────────────────────────────
+// Doit rester aligné avec `Template` défini dans TemplateLibrary.tsx. On le
+// redéfinit ici pour éviter l'import croisé (le dialog est référencé depuis
+// des routes qui ne chargent pas TemplateLibrary).
+export interface DialogTemplate {
   id: string;
   name: string;
   category: string;
   description: string;
   icon: string;
   content: string;
-  fields: unknown[];
   createdAt: string;
   updatedAt: string;
   isCustom?: boolean;
+  documentCategory?: string;
 }
 
-// ─── Modèles par défaut (fallback si localStorage vide) ───────────────────────────
-const DEFAULT_TEMPLATES: StoredTemplate[] = [
-  {
-    id: 'tpl-1', name: 'Mise en demeure', category: 'Contentieux',
-    description: 'Lettre de mise en demeure formelle', icon: 'gavel',
-    content: '<p><strong>[Lieu]</strong>, le <strong>[Date]</strong></p><p>Maître <strong>[Nom de l\'avocat]</strong><br>[Adresse du cabinet]</p><p>À <strong>[Nom du destinataire]</strong><br>[Adresse]</p><h2>Mise en demeure</h2><p>Monsieur / Madame,</p><p>Par la présente, et en ma qualité d\'avocat de <strong>[Nom du client]</strong>, je me vois dans l\'obligation de vous mettre en demeure de <strong>[objet de la mise en demeure]</strong>.</p><p>En effet, <strong>[exposé des faits]</strong>.</p><p>En conséquence, je vous demande de <strong>[demande précise]</strong> dans un délai de <strong>[X jours]</strong> à compter de la réception de la présente.</p><p>Veuillez agréer, Monsieur / Madame, l\'expression de mes salutations distinguées.</p><p>Maître <strong>[Nom]</strong></p>',
-    fields: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', isCustom: false,
-  },
-  {
-    id: 'tpl-2', name: "Convention d'honoraires", category: 'Cabinet',
-    description: "Modèle de convention d'honoraires", icon: 'file-signature',
-    content: '<h1>CONVENTION D\'HONORAIRES</h1><p>Entre les soussignés :</p><p>Maître <strong>[Nom avocat]</strong>, avocat au Barreau de <strong>[Ville barreau]</strong>, dont le cabinet est situé <strong>[Adresse cabinet]</strong>,<br>ci-après dénommé « l\'Avocat ».</p>',
-    fields: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', isCustom: false,
-  },
-  {
-    id: 'tpl-3', name: 'Assignation en référé', category: 'Contentieux',
-    description: "Acte d'assignation devant le juge des référés", icon: 'scale',
-    content: '<h1>ASSIGNATION EN RÉFÉRÉ</h1><p>L\'AN <strong>[année]</strong><br>LE <strong>[date acte]</strong></p>',
-    fields: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', isCustom: false,
-  },
-  {
-    id: 'tpl-4', name: 'Courrier - accusé de réception', category: 'Correspondance',
-    description: 'Accusé de réception de dossier client', icon: 'mail',
-    content: '<p><strong>[lieu]</strong>, le <strong>[date]</strong></p><p>Objet : Accusé de réception — Dossier <strong>[référence dossier]</strong></p>',
-    fields: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', isCustom: false,
-  },
-  {
-    id: 'tpl-5', name: 'Conclusions en réponse', category: 'Contentieux',
-    description: 'Trame de conclusions en réponse', icon: 'file-text',
-    content: '<p style="text-align:center"><strong>TRIBUNAL JUDICIAIRE DE [ville tribunal]</strong></p><h1 style="text-align:center">CONCLUSIONS EN RÉPONSE</h1>',
-    fields: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', isCustom: false,
-  },
-  {
-    id: 'tpl-6', name: 'Procuration', category: 'Cabinet',
-    description: 'Mandat / procuration générale', icon: 'users',
-    content: '<h1 style="text-align:center">PROCURATION</h1><p>Je soussigné(e), <strong>[nom complet mandant]</strong>, né(e) le <strong>[date naissance]</strong></p>',
-    fields: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', isCustom: false,
-  },
-];
-
-const LS_KEY = 'mylaw_templates_v1';
-
-function loadTemplates(): StoredTemplate[] {
-  if (typeof window === 'undefined') return DEFAULT_TEMPLATES;
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return DEFAULT_TEMPLATES;
-    const parsed = JSON.parse(raw) as StoredTemplate[];
-    if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_TEMPLATES;
-    return parsed;
-  } catch {
-    return DEFAULT_TEMPLATES;
-  }
+async function loadTemplatesFromDexie(): Promise<DialogTemplate[]> {
+  const rows = await db
+    .table('templates')
+    .toArray() as Array<Record<string, unknown> & { id: number }>;
+  return rows.map((r) => {
+    const raw = r as unknown as DialogTemplate;
+    return {
+      id: String(r.id),
+      name: raw.name ?? 'Sans titre',
+      category: raw.category ?? 'Cabinet',
+      description: raw.description ?? '',
+      icon: raw.icon ?? 'file-text',
+      content: raw.content ?? '',
+      createdAt: raw.createdAt ?? new Date().toISOString(),
+      updatedAt: raw.updatedAt ?? new Date().toISOString(),
+      isCustom: raw.isCustom,
+      documentCategory: raw.documentCategory,
+    };
+  });
 }
 
-// ─── Convertit JSON TipTap / HTML en texte pour l'aperçu ───────────────────────────
+// ─── Convertit JSON TipTap / HTML en texte pour l'aperçu ──────────────────
 function tiptapNodeToText(node: Record<string, unknown>): string {
   const type = node.type as string;
   const content = (node.content as Record<string, unknown>[] | undefined) ?? [];
@@ -95,7 +66,7 @@ function contentToPreviewText(content: string): string {
   return t.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-// ─── Icônes ───────────────────────────────────────────────────────────────────
+// ─── Icônes ───────────────────────────────────────────────────────────────
 const ICON_MAP: Record<string, React.ElementType> = {
   gavel: Gavel,
   'file-signature': FileSignature,
@@ -109,22 +80,32 @@ function TemplateIcon({ icon }: { icon: string }) {
   return <Icon size={14} />;
 }
 
-// ─── Props ────────────────────────────────────────────────────────────────────────────
+// ─── Props ────────────────────────────────────────────────────────────────
 interface NewDocumentDialogProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (title: string, templateContent: string) => void;
+  /**
+   * Callback de création. Reçoit le titre saisi et le modèle sélectionné
+   * (null pour un document vide). Le modèle porte `documentCategory` qui
+   * sera appliqué par défaut à la catégorie du nouveau document.
+   */
+  onCreate: (title: string, template: DialogTemplate | null) => void;
 }
 
 export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialogProps) {
   const [title, setTitle]                       = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Tous');
-  const [selectedTemplate, setSelectedTemplate] = useState<StoredTemplate | null>(null);
-  const [templates, setTemplates]               = useState<StoredTemplate[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<DialogTemplate | null>(null);
+
+  // Charge les modèles en live depuis Dexie (réagit aux créations/suppressions
+  // faites depuis la bibliothèque pendant que le dialog est ouvert).
+  const templates = useLiveQuery<DialogTemplate[]>(
+    () => (open ? loadTemplatesFromDexie() : Promise.resolve([])),
+    [open],
+  ) ?? [];
 
   useEffect(() => {
     if (open) {
-      setTemplates(loadTemplates());
       setSelectedTemplate(null);
       setTitle('');
       setSelectedCategory('Tous');
@@ -141,7 +122,7 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const finalTitle = title.trim() || (selectedTemplate ? selectedTemplate.name : 'Nouveau document');
-    onCreate(finalTitle, selectedTemplate?.content ?? '');
+    onCreate(finalTitle, selectedTemplate);
     setTitle('');
     setSelectedTemplate(null);
     setSelectedCategory('Tous');
@@ -235,23 +216,25 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
                     style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '8px', padding: '14px', borderRadius: 'var(--radius-md)', border: `2px solid ${isActive ? 'var(--color-primary)' : 'var(--color-border)'}`, background: isActive ? 'var(--color-primary-highlight)' : 'var(--color-bg)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s' }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
-                      {/* Icône — toujours couleur primary */}
                       <div style={{ width: '32px', height: '32px', borderRadius: 'var(--radius-sm)', background: isActive ? 'var(--color-primary)' : 'var(--color-primary-highlight)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: isActive ? '#fff' : 'var(--color-primary)' }}>
                         <TemplateIcon icon={t.icon} />
                       </div>
                       {t.isCustom && (
                         <span style={{ fontSize: '9px', background: 'var(--color-primary-highlight)', color: 'var(--color-primary)', padding: '1px 5px', borderRadius: '10px', fontWeight: 600 }}>Perso</span>
                       )}
+                      {t.documentCategory && (
+                        <span style={{ fontSize: '9px', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', padding: '1px 5px', borderRadius: '10px', fontWeight: 500, border: '1px solid var(--color-border)' }} title="Catégorie appliquée par défaut au nouveau document">
+                          {t.documentCategory}
+                        </span>
+                      )}
                     </div>
                     <div>
                       <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: isActive ? 'var(--color-primary)' : 'var(--color-text)' }}>{t.name}</div>
-                      {/* Catégorie — toujours color-text-muted, sans couleur par catégorie */}
                       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: '1px' }}>{t.category}</div>
                       {t.description && (
                         <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: '2px' }}>{t.description}</div>
                       )}
                     </div>
-                    {/* Mini aperçu texte */}
                     <div style={{ width: '100%', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '7px 9px', marginTop: '2px', fontSize: '9px', color: 'var(--color-text-muted)', lineHeight: 1.5, whiteSpace: 'pre-wrap', overflow: 'hidden', maxHeight: '65px', pointerEvents: 'none', userSelect: 'none' }}>
                       {previewText.slice(0, 220)}
                     </div>

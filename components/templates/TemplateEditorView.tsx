@@ -31,6 +31,7 @@ import { VariableField } from '@/components/editor/extensions/VariableField'
 import { TemplateFieldsPanel, DRAG_FIELD_KEY } from './TemplateFieldsPanel'
 import type { TemplateField } from './TemplateFieldsPanel'
 import type { Template } from './TemplateLibrary'
+import { DOCUMENT_CATEGORIES } from '@/components/dossiers/labels'
 
 interface TemplateEditorViewProps {
   template: Template
@@ -67,6 +68,7 @@ function parseContent(raw: string): Record<string, unknown> | string {
 export function TemplateEditorView({ template, onSave, onClose }: TemplateEditorViewProps) {
   const [title, setTitle]             = useState(template.name)
   const [category, setCategory]       = useState(template.category)
+  const [documentCategory, setDocumentCategory] = useState(template.documentCategory ?? '')
   const [fields, setFields]           = useState<TemplateField[]>(template.fields ?? [])
   const [showFields, setShowFields]   = useState(true)
   const [hasChanges, setHasChanges]   = useState(false)
@@ -165,6 +167,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
       ...template,
       name: title.trim() || 'Modèle sans titre',
       category: category.trim() || 'Cabinet',
+      documentCategory: documentCategory.trim() || undefined,
       content: JSON.stringify(ed.getJSON()),
       fields,
       updatedAt: new Date().toISOString(),
@@ -213,9 +216,21 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
           onFocus={(e) => { (e.target as HTMLInputElement).style.background = 'var(--color-surface-offset)' }}
           onBlur={(e) => { (e.target as HTMLInputElement).style.background = 'transparent' }}
         />
-        <input type="text" value={category} onChange={(e) => { setCategory(e.target.value); setHasChanges(true) }} placeholder="Catégorie"
+        <input type="text" value={category} onChange={(e) => { setCategory(e.target.value); setHasChanges(true) }} placeholder="Bibliothèque"
+          title="Catégorie du modèle (classement de la bibliothèque)"
           style={{ width: '140px', flexShrink: 0, fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '4px 8px', outline: 'none' }}
         />
+        <select
+          value={documentCategory}
+          onChange={(e) => { setDocumentCategory(e.target.value); setHasChanges(true) }}
+          title="Catégorie documentaire appliquée par défaut aux documents créés à partir de ce modèle"
+          style={{ width: '150px', flexShrink: 0, fontSize: 'var(--text-xs)', color: documentCategory ? 'var(--color-text)' : 'var(--color-text-muted)', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '4px 8px', outline: 'none' }}
+        >
+          <option value="">Catégorie doc. —</option>
+          {DOCUMENT_CATEGORIES.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
         {variableCount > 0 && (
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-primary)', background: 'var(--color-primary-highlight)', padding: '3px 9px', borderRadius: 'var(--radius-full)', fontWeight: 500, flexShrink: 0 }}>
             {variableCount} variable{variableCount > 1 ? 's' : ''}

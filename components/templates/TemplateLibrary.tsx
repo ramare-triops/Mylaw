@@ -22,6 +22,13 @@ export interface Template {
   createdAt: string
   updatedAt: string
   isCustom?: boolean
+  /**
+   * Catégorie documentaire (Courrier, Acte, Pièce, Conclusions…) appliquée
+   * automatiquement lors de la création d'un document à partir de ce modèle.
+   * Indépendante de `category` qui classe le modèle lui-même (Contentieux,
+   * Cabinet, Correspondance) pour la bibliothèque.
+   */
+  documentCategory?: string
 }
 
 // ─── Modèles par défaut ───────────────────────────────────────────────────────
@@ -48,6 +55,7 @@ const DEFAULT_TEMPLATES: Template[] = [
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     isCustom: false,
+    documentCategory: 'Courrier',
   },
   {
     id: 'tpl-2',
@@ -72,6 +80,7 @@ const DEFAULT_TEMPLATES: Template[] = [
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     isCustom: false,
+    documentCategory: 'Contrat',
   },
   {
     id: 'tpl-3',
@@ -96,6 +105,7 @@ const DEFAULT_TEMPLATES: Template[] = [
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     isCustom: false,
+    documentCategory: 'Acte',
   },
   {
     id: 'tpl-4',
@@ -113,6 +123,7 @@ const DEFAULT_TEMPLATES: Template[] = [
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     isCustom: false,
+    documentCategory: 'Courrier',
   },
   {
     id: 'tpl-5',
@@ -132,6 +143,7 @@ const DEFAULT_TEMPLATES: Template[] = [
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     isCustom: false,
+    documentCategory: 'Conclusions',
   },
   {
     id: 'tpl-6',
@@ -153,6 +165,7 @@ const DEFAULT_TEMPLATES: Template[] = [
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     isCustom: false,
+    documentCategory: 'Acte',
   },
 ]
 

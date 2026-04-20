@@ -14,6 +14,15 @@ import {
   Download,
   ExternalLink,
   X,
+  FileType,
+  FileSpreadsheet,
+  Presentation,
+  Image as ImageIcon,
+  Music,
+  Video,
+  Archive,
+  File as FileIcon,
+  Scale,
 } from 'lucide-react';
 import {
   db,
@@ -26,7 +35,7 @@ import {
   logAudit,
 } from '@/lib/db';
 import { cn, formatDate, formatDateTime } from '@/lib/utils';
-import { NewDocumentDialog } from '@/components/documents/NewDocumentDialog';
+import { NewDocumentDialog, type DialogTemplate } from '@/components/documents/NewDocumentDialog';
 import {
   DOCUMENT_STATUS_LABELS,
   DOCUMENT_STATUS_COLORS,
@@ -100,6 +109,66 @@ function defaultExtFor(app: OfficeApp, filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase();
   if (ext && OFFICE_EXT[ext] === app) return ext;
   return app === 'word' ? 'docx' : app === 'excel' ? 'xlsx' : 'pptx';
+}
+
+// ─── Icônes par type de fichier ──────────────────────────────────────────────
+// Associe une icône lucide + couleur caractéristique à chaque type de fichier.
+// Pour les documents créés dans Mylaw, on utilise l'icône `Scale` (balance)
+// avec la couleur primary du thème — c'est le marquage "Mylaw".
+
+type FileKind = 'mylaw' | 'word' | 'excel' | 'powerpoint' | 'pdf' | 'image' | 'audio' | 'video' | 'archive' | 'text' | 'other';
+
+const FILE_KIND_BY_EXT: Record<string, FileKind> = {
+  // Word
+  doc: 'word', docx: 'word', dot: 'word', dotx: 'word', docm: 'word', rtf: 'word', odt: 'word',
+  // Excel
+  xls: 'excel', xlsx: 'excel', xlsm: 'excel', xlt: 'excel', xltx: 'excel', csv: 'excel', ods: 'excel',
+  // PowerPoint
+  ppt: 'powerpoint', pptx: 'powerpoint', pps: 'powerpoint', ppsx: 'powerpoint', pptm: 'powerpoint', odp: 'powerpoint',
+  // PDF
+  pdf: 'pdf',
+  // Image
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', svg: 'image', webp: 'image', bmp: 'image', heic: 'image', tiff: 'image',
+  // Audio
+  mp3: 'audio', wav: 'audio', ogg: 'audio', m4a: 'audio', aac: 'audio', flac: 'audio',
+  // Video
+  mp4: 'video', mov: 'video', avi: 'video', mkv: 'video', webm: 'video',
+  // Archive
+  zip: 'archive', rar: 'archive', '7z': 'archive', tar: 'archive', gz: 'archive',
+  // Text
+  txt: 'text', md: 'text', log: 'text', json: 'text', xml: 'text',
+};
+
+function detectFileKind(filename: string, mimeType: string): FileKind {
+  if (mimeType.startsWith('image/'))  return 'image';
+  if (mimeType.startsWith('audio/'))  return 'audio';
+  if (mimeType.startsWith('video/'))  return 'video';
+  if (mimeType === 'application/pdf') return 'pdf';
+  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  return FILE_KIND_BY_EXT[ext] ?? 'other';
+}
+
+interface FileTypeIconProps {
+  kind: FileKind;
+  size?: number;
+  className?: string;
+}
+
+function FileTypeIcon({ kind, size = 16, className }: FileTypeIconProps) {
+  const common = { className: cn('flex-shrink-0', className), style: { width: size, height: size } };
+  switch (kind) {
+    case 'mylaw':      return <Scale {...common} style={{ ...common.style, color: 'var(--color-primary)' }} />;
+    case 'word':       return <FileType {...common} style={{ ...common.style, color: '#2b5797' }} />;
+    case 'excel':      return <FileSpreadsheet {...common} style={{ ...common.style, color: '#1d6f42' }} />;
+    case 'powerpoint': return <Presentation {...common} style={{ ...common.style, color: '#c94f00' }} />;
+    case 'pdf':        return <FileText {...common} style={{ ...common.style, color: '#d32f2f' }} />;
+    case 'image':      return <ImageIcon {...common} style={{ ...common.style, color: '#6d28d9' }} />;
+    case 'audio':      return <Music {...common} style={{ ...common.style, color: '#db2777' }} />;
+    case 'video':      return <Video {...common} style={{ ...common.style, color: '#0891b2' }} />;
+    case 'archive':    return <Archive {...common} style={{ ...common.style, color: '#a16207' }} />;
+    case 'text':       return <FileText {...common} style={{ ...common.style, color: 'var(--color-text-muted)' }} />;
+    default:           return <FileIcon {...common} style={{ ...common.style, color: 'var(--color-text-muted)' }} />;
+  }
 }
 
 /**
@@ -285,9 +354,10 @@ export function DossierDocumentsTab({ dossier }: Props) {
     );
   })();
 
-  async function handleCreate(title: string, templateContent: string) {
+  async function handleCreate(title: string, template: DialogTemplate | null) {
     setNewDocOpen(false);
     const now = new Date();
+    const templateContent = template?.content ?? '';
     const content = templateToEditorContent(templateContent);
     const textForCount = content
       .replace(/<[^>]*>/g, ' ')
@@ -301,6 +371,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
       type: 'draft',
       status: 'draft',
       dossierId: dossier.id!,
+      category: template?.documentCategory,
       content,
       contentRaw: templateContent,
       tags: [],
@@ -490,7 +561,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
                       className="grid grid-cols-[1fr_120px_120px_100px_130px_100px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <FileText className="w-4 h-4 flex-shrink-0 text-[var(--color-text-muted)]" />
+                        <FileTypeIcon kind="mylaw" size={16} />
                         <span className="truncate font-medium">{item.title}</span>
                       </div>
                       <select
@@ -550,7 +621,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
                     className="grid grid-cols-[1fr_120px_120px_100px_130px_100px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <Paperclip className="w-4 h-4 flex-shrink-0 text-[var(--color-text-muted)]" />
+                      <FileTypeIcon kind={detectFileKind(item.title, item.mimeType)} size={16} />
                       <span className="truncate font-medium">{item.title}</span>
                     </div>
                     <span className="text-xs text-[var(--color-text-muted)] truncate">

@@ -136,15 +136,20 @@ export function DocumentList() {
     setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   };
 
-  const handleCreate = async (title: string, templateContent: string) => {
+  const handleCreate = async (
+    title: string,
+    template: import('./NewDocumentDialog').DialogTemplate | null,
+  ) => {
     setDialogOpen(false);
     const now = new Date();
+    const templateContent = template?.content ?? '';
     const content = templateToEditorContent(templateContent);
     const textForCount = content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     const wordCount = textForCount ? textForCount.split(' ').filter(Boolean).length : 0;
     const id = await saveDocument({
       title: title || 'Nouveau document', type: 'draft', content,
       contentRaw: templateContent, tags: [], createdAt: now, updatedAt: now, wordCount,
+      category: template?.documentCategory,
     });
     router.push(`/documents/${id}`);
   };
