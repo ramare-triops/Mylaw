@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { User, Bell, Palette, Shield, Database, RefreshCw, Loader2, Check, FileText } from 'lucide-react';
-import { getSetting, setSetting } from '@/lib/db';
+import { User, Bell, Palette, Shield, Database, RefreshCw, Loader2, Check, FileText, Download, Trash2 } from 'lucide-react';
+import { db, getSetting, setSetting } from '@/lib/db';
 import { DriveSyncSection } from './DriveSyncSection';
 import { useDrive } from '@/components/providers/DriveSyncProvider';
+import { buildBackup } from '@/lib/drive-merge';
 
 const SECTIONS = [
   { id: 'profile',       label: 'Profil',           icon: User },
@@ -391,33 +392,42 @@ export function Settings() {
         )}
 
         {activeSection === 'security' && (
-          <Section title="Sécurité" description="Protégez votre compte">
+          <Section title="Sécurité" description="Gestion du compte Google associé à l'application">
             <div style={cardStyle}>
-              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--color-text)', marginBottom: '4px' }}>Mot de passe</div>
-              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginBottom: '12px' }}>Dernière modification il y a 30 jours</div>
-              <button style={btnOutlineStyle}>Modifier le mot de passe</button>
+              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--color-text)', marginBottom: '4px' }}>Compte Google</div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
+                MyLaw s&apos;appuie sur votre compte Google pour la connexion et le stockage sur Drive.
+                Le mot de passe et la double authentification (2FA) sont gérés directement par Google.
+              </div>
+              <a
+                href="https://myaccount.google.com/security"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ ...btnOutlineStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <Shield size={13} /> Gérer la sécurité Google
+              </a>
             </div>
             <div style={cardStyle}>
-              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--color-text)', marginBottom: '4px' }}>Double authentification</div>
-              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginBottom: '12px' }}>Ajoutez une couche de sécurité supplémentaire</div>
-              <button style={btnOutlineStyle}>Configurer la 2FA</button>
+              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--color-text)', marginBottom: '4px' }}>Révoquer l&apos;accès de MyLaw</div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
+                Retire l&apos;autorisation Drive accordée à l&apos;application. Vos données locales restent intactes ;
+                vous devrez vous reconnecter pour reprendre la synchronisation.
+              </div>
+              <a
+                href="https://myaccount.google.com/permissions"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ ...btnOutlineStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <Shield size={13} /> Autorisations Google
+              </a>
             </div>
           </Section>
         )}
 
         {activeSection === 'data' && (
-          <Section title="Données" description="Exportez ou supprimez vos données">
-            <div style={cardStyle}>
-              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--color-text)', marginBottom: '4px' }}>Exporter mes données</div>
-              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginBottom: '12px' }}>Téléchargez une copie de tous vos documents et paramètres</div>
-              <button style={btnOutlineStyle}>Exporter en JSON</button>
-            </div>
-            <div style={{ ...cardStyle, border: '1px solid var(--color-error)' }}>
-              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--color-error)', marginBottom: '4px' }}>Zone dangereuse</div>
-              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginBottom: '12px' }}>La suppression de votre compte est irréversible</div>
-              <button style={{ ...btnOutlineStyle, borderColor: 'var(--color-error)', color: 'var(--color-error)' }}>Supprimer mon compte</button>
-            </div>
-          </Section>
+          <DataSection />
         )}
 
         {['profile', 'notifications', 'appearance', 'editor'].includes(activeSection) && (
@@ -529,3 +539,165 @@ const cardStyle: React.CSSProperties = {
   padding: '16px', background: 'var(--color-surface)',
   border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
 };
+
+// ─── Data section : export JSON + suppression locale ──────────────────────
+// L'export appelle buildBackup() (même payload que la sync Drive) et déclenche
+// un téléchargement navigateur. La suppression vide toutes les tables Dexie
+// user-editable après double confirmation.
+function DataSection() {
+  const [exporting, setExporting]         = useState(false);
+  const [deleting,  setDeleting]          = useState(false);
+  const [confirmStep, setConfirmStep]     = useState<0 | 1 | 2>(0);
+  const [error, setError]                 = useState<string | null>(null);
+
+  async function handleExport() {
+    if (exporting) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const backup = await buildBackup();
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      a.download = `mylaw-backup-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError(e?.message ?? 'Échec de l’export');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleDeleteAll() {
+    if (deleting) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await Promise.all([
+        db.documents.clear(),
+        db.folders.clear(),
+        db.table('snippets').clear(),
+        db.table('deadlines').clear(),
+        db.table('templates').clear(),
+        db.table('tools').clear(),
+        db.table('aiChats').clear(),
+        db.table('bricks').clear(),
+        db.table('infoLabels').clear(),
+        db.table('sessions').clear(),
+        db.history.clear(),
+      ]);
+      // Supprime aussi les settings utilisateur (mais PAS les flags de sync,
+      // qui seront réinitialisés naturellement).
+      const rows = await db.settings.toArray();
+      const toDelete = rows
+        .map(r => r.key)
+        .filter(k => !['drive_connected', 'last_synced_at', 'last_sync_error', 'last_sync_success_at'].includes(k));
+      await db.settings.bulkDelete(toDelete);
+      setConfirmStep(0);
+      // Recharge la page pour remettre l'interface à zéro proprement
+      if (typeof window !== 'undefined') window.location.reload();
+    } catch (e: any) {
+      setError(e?.message ?? 'Échec de la suppression');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <Section title="Données" description="Exportez ou effacez vos données locales">
+      <div style={cardStyle}>
+        <div style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--color-text)', marginBottom: '4px' }}>
+          Exporter mes données
+        </div>
+        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
+          Télécharge une copie complète (JSON) : documents, dossiers, modèles, briques, étiquettes,
+          échéances, paramètres. Même format que la sauvegarde Drive.
+        </div>
+        <button
+          onClick={handleExport}
+          disabled={exporting}
+          style={{ ...btnOutlineStyle, display: 'inline-flex', alignItems: 'center', gap: '6px', opacity: exporting ? 0.7 : 1, cursor: exporting ? 'wait' : 'pointer' }}
+        >
+          {exporting
+            ? <Loader2 size={13} style={{ animation: 'spin 0.8s linear infinite' }} />
+            : <Download size={13} />}
+          {exporting ? 'Préparation…' : 'Exporter en JSON'}
+        </button>
+      </div>
+
+      <div style={{ ...cardStyle, border: '1px solid var(--color-error)' }}>
+        <div style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--color-error)', marginBottom: '4px' }}>
+          Zone dangereuse
+        </div>
+        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
+          Efface <strong>toutes</strong> vos données locales (documents, briques, échéances, paramètres…).
+          <br />
+          Si la synchronisation Drive est active, elle propagera la suppression sur vos autres appareils.
+          <br />
+          <span style={{ color: 'var(--color-error)' }}>Cette action est irréversible.</span>
+        </div>
+
+        {confirmStep === 0 && (
+          <button
+            onClick={() => setConfirmStep(1)}
+            style={{ ...btnOutlineStyle, borderColor: 'var(--color-error)', color: 'var(--color-error)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Trash2 size={13} /> Supprimer mes données
+          </button>
+        )}
+        {confirmStep === 1 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-error)', fontWeight: 600 }}>
+              Confirmer la suppression ? Avez-vous exporté vos données au préalable ?
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => setConfirmStep(2)}
+                style={{ padding: '6px 14px', fontSize: 'var(--text-xs)', borderRadius: 'var(--radius-sm)', background: 'var(--color-error)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+              >
+                Oui, continuer
+              </button>
+              <button
+                onClick={() => setConfirmStep(0)}
+                style={btnOutlineStyle}
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        )}
+        {confirmStep === 2 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-error)', fontWeight: 600 }}>
+              Dernière confirmation : toutes les données locales vont être effacées.
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={handleDeleteAll}
+                disabled={deleting}
+                style={{ padding: '6px 14px', fontSize: 'var(--text-xs)', borderRadius: 'var(--radius-sm)', background: 'var(--color-error)', color: '#fff', border: 'none', cursor: deleting ? 'wait' : 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px', opacity: deleting ? 0.7 : 1 }}
+              >
+                {deleting && <Loader2 size={13} style={{ animation: 'spin 0.8s linear infinite' }} />}
+                {deleting ? 'Suppression…' : 'Tout supprimer définitivement'}
+              </button>
+              <button onClick={() => setConfirmStep(0)} style={btnOutlineStyle} disabled={deleting}>
+                Annuler
+              </button>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div style={{ marginTop: '10px', fontSize: 'var(--text-xs)', color: 'var(--color-error)' }}>
+            {error}
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}

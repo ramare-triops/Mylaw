@@ -2,20 +2,41 @@
 
 import { useState, useEffect } from 'react';
 import { Clock, Plus, Trash2, AlertTriangle, CheckCircle, Calendar, Bell } from 'lucide-react';
-import { db } from '@/lib/db';
+import { db, getSetting, setSetting } from '@/lib/db';
+import type { Deadline as DBDeadline, DeadlineType as DBDeadlineType } from '@/types';
+
+// UI conserve les libellés avec accents ; mapping vers les clés normalisées
+// stockées en DB (types/index.ts).
+type UIDeadlineType = 'péremption' | 'forclusion' | 'réponse' | 'audience' | 'autre';
+
+const UI_TO_DB_TYPE: Record<UIDeadlineType, DBDeadlineType> = {
+  'péremption': 'peremption',
+  'forclusion': 'forclusion',
+  'réponse':    'reponse',
+  'audience':   'audience',
+  'autre':      'other',
+};
+const DB_TO_UI_TYPE: Record<DBDeadlineType, UIDeadlineType> = {
+  'peremption': 'péremption',
+  'forclusion': 'forclusion',
+  'reponse':    'réponse',
+  'audience':   'audience',
+  'appel':      'autre',
+  'other':      'autre',
+};
 
 interface Deadline {
   id?: number;
   title: string;
   dueDate: Date;
-  type: 'péremption' | 'forclusion' | 'réponse' | 'audience' | 'autre';
+  type: UIDeadlineType;
   folder?: string;
   notes?: string;
   done: boolean;
   createdAt: Date;
 }
 
-const DEADLINE_TYPES = [
+const DEADLINE_TYPES: Array<{ value: UIDeadlineType; label: string; color: string }> = [
   { value: 'péremption', label: 'Péremption', color: 'var(--color-error)' },
   { value: 'forclusion', label: 'Forclusion', color: 'var(--color-error)' },
   { value: 'réponse', label: 'Délai de réponse', color: 'var(--color-warning)' },
@@ -85,23 +106,53 @@ export function DeadlineTracker() {
   });
 
   useEffect(() => {
-    loadDeadlines();
+    void migrateAndLoad();
   }, []);
+
+  /**
+   * Migration one-shot : les anciens délais étaient stockés dans `db.sessions`
+   * avec toolId='deadline-tracker', ce qui empêchait le dashboard de les voir
+   * (il lit `db.deadlines`). On les déplace vers la bonne table puis on
+   * marque la migration comme effectuée pour ne la refaire qu'une fois.
+   */
+  async function migrateAndLoad() {
+    try {
+      const done = await getSetting<boolean>('deadlines_migrated_v1', false);
+      if (!done) {
+        const legacy = await db.table('sessions').where('toolId').equals('deadline-tracker').toArray();
+        if (legacy.length > 0) {
+          const now = new Date();
+          const toAdd: Omit<DBDeadline, 'id'>[] = legacy.map((r: any) => ({
+            title:      r.content?.title     || 'Délai sans titre',
+            dossier:    r.content?.folder    || '',
+            dueDate:    new Date(r.content?.dueDate || now),
+            type:       UI_TO_DB_TYPE[(r.content?.type as UIDeadlineType) ?? 'autre'] ?? 'other',
+            notes:      r.content?.notes     || undefined,
+            done:       Boolean(r.content?.done),
+            createdAt:  new Date(r.date || now),
+          }));
+          await db.deadlines.bulkAdd(toAdd as DBDeadline[]);
+          // On retire les anciennes entrées sessions pour ne pas dupliquer
+          await Promise.all(legacy.map((r: any) => db.table('sessions').delete(r.id)));
+        }
+        await setSetting('deadlines_migrated_v1', true);
+      }
+    } catch {}
+    await loadDeadlines();
+  }
 
   async function loadDeadlines() {
     try {
-      const rows = await db.table('sessions')
-        .where('toolId').equals('deadline-tracker')
-        .toArray();
-      const mapped: Deadline[] = rows.map((r: any) => ({
-        id: r.id,
-        title: r.content?.title || '',
-        dueDate: new Date(r.content?.dueDate || Date.now()),
-        type: r.content?.type || 'autre',
-        folder: r.content?.folder || '',
-        notes: r.content?.notes || '',
-        done: r.content?.done || false,
-        createdAt: new Date(r.date),
+      const rows = await db.deadlines.toArray();
+      const mapped: Deadline[] = rows.map((r) => ({
+        id:        r.id,
+        title:     r.title,
+        dueDate:   new Date(r.dueDate),
+        type:      DB_TO_UI_TYPE[r.type] ?? 'autre',
+        folder:    r.dossier,
+        notes:     r.notes,
+        done:      r.done,
+        createdAt: new Date(r.createdAt),
       }));
       setDeadlines(mapped.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime()));
     } catch {}
@@ -109,15 +160,28 @@ export function DeadlineTracker() {
 
   async function addDeadline() {
     if (!form.title.trim()) return;
-    const deadline: Deadline = { ...form, done: false, createdAt: new Date() };
     try {
-      const id = await db.table('sessions').add({
-        date: new Date(),
-        toolId: 'deadline-tracker',
-        content: { ...form, done: false },
-        tags: [],
-      });
-      deadline.id = id as number;
+      const now = new Date();
+      const record: Omit<DBDeadline, 'id'> = {
+        title:     form.title.trim(),
+        dossier:   form.folder ?? '',
+        dueDate:   form.dueDate,
+        type:      UI_TO_DB_TYPE[form.type],
+        notes:     form.notes || undefined,
+        done:      false,
+        createdAt: now,
+      };
+      const id = await db.deadlines.add(record as DBDeadline);
+      const deadline: Deadline = {
+        id: Number(id),
+        title: record.title,
+        dueDate: record.dueDate,
+        type: form.type,
+        folder: record.dossier,
+        notes: record.notes,
+        done: false,
+        createdAt: now,
+      };
       setDeadlines((prev) =>
         [...prev, deadline].sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())
       );
@@ -131,14 +195,14 @@ export function DeadlineTracker() {
     if (!dl) return;
     const updated = { ...dl, done: !dl.done };
     try {
-      await db.table('sessions').update(id, { content: { title: updated.title, dueDate: updated.dueDate, type: updated.type, folder: updated.folder, notes: updated.notes, done: updated.done } });
+      await db.deadlines.update(id, { done: updated.done });
       setDeadlines((prev) => prev.map((d) => (d.id === id ? updated : d)));
     } catch {}
   }
 
   async function deleteDeadline(id: number) {
     try {
-      await db.table('sessions').delete(id);
+      await db.deadlines.delete(id);
       setDeadlines((prev) => prev.filter((d) => d.id !== id));
     } catch {}
   }

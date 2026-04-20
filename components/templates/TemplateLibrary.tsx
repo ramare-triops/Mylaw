@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { TemplateEditorView } from './TemplateEditorView'
 import type { TemplateField } from './TemplateFieldsPanel'
+import { db, getSetting, setSetting } from '@/lib/db'
 
 export interface Template {
   id: string
@@ -155,29 +156,80 @@ const DEFAULT_TEMPLATES: Template[] = [
   },
 ]
 
-// ─── Persistance localStorage ─────────────────────────────────────────────────
+// ─── Persistance Dexie (avec migration depuis localStorage) ───────────────────
+// Les modèles custom et les défauts sont stockés dans db.templates.
+// L'ID Dexie (numérique auto-incrémenté) est converti en string pour l'UI.
+// Au premier chargement, si localStorage contient d'anciennes données
+// (clé mylaw_templates_v1), on les migre vers Dexie puis on purge.
+
 const LS_KEY = 'mylaw_templates_v1'
 
-function loadTemplates(): Template[] {
-  if (typeof window === 'undefined') return DEFAULT_TEMPLATES
+/**
+ * Migration one-shot : déplace les modèles depuis localStorage vers Dexie,
+ * puis efface la clé localStorage. Idempotent via le flag
+ * `templates_migrated_v1` dans db.settings.
+ */
+async function migrateLocalStorageIfNeeded(): Promise<void> {
+  const done = await getSetting<boolean>('templates_migrated_v1', false)
+  if (done) return
+  if (typeof window === 'undefined') { await setSetting('templates_migrated_v1', true); return }
   try {
     const raw = localStorage.getItem(LS_KEY)
-    if (!raw) return DEFAULT_TEMPLATES
-    const parsed = JSON.parse(raw) as Template[]
-    if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_TEMPLATES
-    return parsed
-  } catch {
-    return DEFAULT_TEMPLATES
+    if (raw) {
+      const parsed = JSON.parse(raw) as Template[]
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        for (const tpl of parsed) {
+          const { id: _ignored, ...rest } = tpl
+          await db.table('templates').add(rest as unknown as Record<string, unknown>)
+        }
+      }
+      localStorage.removeItem(LS_KEY)
+    }
+  } catch { /* migration best-effort */ }
+  await setSetting('templates_migrated_v1', true)
+}
+
+/**
+ * Seed des modèles par défaut dans Dexie (une seule fois). On s'assure qu'ils
+ * ne sont pas ré-insérés si l'utilisateur les a déjà supprimés intentionnellement.
+ */
+async function seedDefaultsIfNeeded(): Promise<void> {
+  const seeded = await getSetting<boolean>('templates_seeded_v1', false)
+  if (seeded) return
+  const count = await db.table('templates').count()
+  if (count === 0) {
+    for (const tpl of DEFAULT_TEMPLATES) {
+      const { id: _ignored, ...rest } = tpl
+      await db.table('templates').add(rest as unknown as Record<string, unknown>)
+    }
   }
+  await setSetting('templates_seeded_v1', true)
 }
 
-function saveTemplates(templates: Template[]) {
-  if (typeof window === 'undefined') return
-  localStorage.setItem(LS_KEY, JSON.stringify(templates))
+async function loadTemplatesFromDexie(): Promise<Template[]> {
+  const rows = await db.table('templates').toArray() as Array<Record<string, unknown> & { id: number }>
+  return rows.map((r) => ({
+    ...(r as unknown as Template),
+    id: String(r.id),
+  }))
 }
 
-function generateId(): string {
-  return `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+/** Sauvegarde un modèle (UI → Dexie). Accepte un id string, convertit en numérique. */
+async function putTemplateToDexie(tpl: Template): Promise<number> {
+  const { id, ...rest } = tpl
+  const numericId = Number(id)
+  if (Number.isFinite(numericId) && numericId > 0) {
+    await db.table('templates').put({ id: numericId, ...rest } as unknown as Record<string, unknown>)
+    return numericId
+  }
+  // Nouveau modèle : Dexie auto-assigne l'id
+  return Number(await db.table('templates').add(rest as unknown as Record<string, unknown>))
+}
+
+async function deleteTemplateFromDexie(id: string): Promise<void> {
+  const numericId = Number(id)
+  if (!Number.isFinite(numericId)) return
+  await db.table('templates').delete(numericId)
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -408,14 +460,20 @@ export function TemplateLibrary() {
   const [menuOpen, setMenuOpen]                 = useState<string | null>(null)
 
   useEffect(() => {
-    const loaded = loadTemplates()
-    setTemplates(loaded)
-    if (loaded.length > 0) setPreviewTemplate(loaded[0])
+    void (async () => {
+      await migrateLocalStorageIfNeeded()
+      await seedDefaultsIfNeeded()
+      const loaded = await loadTemplatesFromDexie()
+      setTemplates(loaded)
+      if (loaded.length > 0) setPreviewTemplate(loaded[0])
+    })()
   }, [])
 
-  const persist = useCallback((tpls: Template[]) => {
-    setTemplates(tpls)
-    saveTemplates(tpls)
+  /** Recharge depuis Dexie et met à jour l'état local (préserve la sélection). */
+  const reload = useCallback(async () => {
+    const loaded = await loadTemplatesFromDexie()
+    setTemplates(loaded)
+    return loaded
   }, [])
 
   const categories = ['Tous', ...Array.from(new Set(templates.map((t) => t.category)))]
@@ -428,9 +486,8 @@ export function TemplateLibrary() {
     return matchSearch && matchCat
   })
 
-  function createNew() {
-    const tpl: Template = {
-      id: generateId(),
+  async function createNew() {
+    const newTpl: Omit<Template, 'id'> = {
       name: 'Nouveau modèle',
       category: 'Cabinet',
       description: '',
@@ -441,7 +498,9 @@ export function TemplateLibrary() {
       updatedAt: new Date().toISOString(),
       isCustom: true,
     }
-    persist([...templates, tpl])
+    const newId = Number(await db.table('templates').add(newTpl as unknown as Record<string, unknown>))
+    const tpl: Template = { ...newTpl, id: String(newId) }
+    await reload()
     setEditingTemplate(tpl)
   }
 
@@ -450,32 +509,34 @@ export function TemplateLibrary() {
     setMenuOpen(null)
   }
 
-  function handleDuplicate(tpl: Template) {
-    const copy: Template = {
-      ...tpl,
-      id: generateId(),
+  async function handleDuplicate(tpl: Template) {
+    const { id: _ignored, ...rest } = tpl
+    const copyBase = {
+      ...rest,
       name: `${tpl.name} (copie)`,
       isCustom: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
-    persist([...templates, copy])
+    await db.table('templates').add(copyBase as unknown as Record<string, unknown>)
+    await reload()
     setMenuOpen(null)
   }
 
-  function handleDelete(id: string) {
+  async function handleDelete(id: string) {
     if (!window.confirm('Supprimer ce modèle ?')) return
-    const next = templates.filter((t) => t.id !== id)
-    persist(next)
+    await deleteTemplateFromDexie(id)
+    const next = await reload()
     if (previewTemplate?.id === id) setPreviewTemplate(next[0] ?? null)
     setMenuOpen(null)
   }
 
-  function handleSave(updated: Template) {
-    const next = templates.map((t) => (t.id === updated.id ? updated : t))
-    persist(next)
-    setEditingTemplate(updated)
-    setPreviewTemplate(updated)
+  async function handleSave(updated: Template) {
+    const stamped: Template = { ...updated, updatedAt: new Date().toISOString() }
+    await putTemplateToDexie(stamped)
+    await reload()
+    setEditingTemplate(stamped)
+    setPreviewTemplate(stamped)
   }
 
   if (editingTemplate) {
