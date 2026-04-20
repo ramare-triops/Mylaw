@@ -340,6 +340,25 @@ export interface Dossier {
 // ─── Contacts / Intervenants ───────────────────────────────────────────────
 export type ContactType = 'physical' | 'moral';
 
+/**
+ * Catégorie professionnelle GLOBALE d'un intervenant — indépendante du
+ * dossier. Sert de filtre aux pickers contextuels : choisir « A pour
+ * avocat » sur une partie ne propose à l'autocomplete que les contacts
+ * dont la `professionalCategory` est `lawyer`. Une même personne peut
+ * tout à fait apparaître dans plusieurs dossiers avec des rôles
+ * dossier-spécifiques différents (`ownCounsel`, `adversaryCounsel`),
+ * mais sa catégorie professionnelle reste la même partout.
+ */
+export type ProfessionalCategory =
+  | 'lawyer'      // Avocat
+  | 'expert'      // Expert (judiciaire ou amiable)
+  | 'bailiff'     // Commissaire de justice
+  | 'judge'       // Magistrat
+  | 'court'       // Juridiction (personne morale)
+  | 'witness'     // Témoin
+  | 'notary'      // Notaire
+  | 'other';      // Autre profession
+
 /** Civilités usuelles (personne physique) */
 export type Civility = 'M.' | 'Mme' | 'Mlle' | 'Me' | 'Pr.' | 'Dr.';
 
@@ -406,6 +425,12 @@ export interface Contact {
   fileRef?: string;
   /** Avocat désigné (ID d'un autre Contact, rôle ownCounsel/adversaryCounsel). */
   counselId?: number;
+  /**
+   * Catégorie professionnelle globale de l'intervenant. Utilisée pour
+   * filtrer les autocomplete contextuels (ex. « A pour avocat » →
+   * uniquement les contacts dont la catégorie est `lawyer`).
+   */
+  professionalCategory?: ProfessionalCategory;
   notes?: string;
   tags: string[];
   createdAt: Date;

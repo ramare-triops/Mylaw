@@ -28,6 +28,7 @@ import {
   DOSSIER_ROLE_LABELS,
   CONTACT_TYPE_LABELS,
   PERMISSION_LABELS,
+  PROFESSIONAL_CATEGORY_LABELS,
 } from '../labels';
 import type {
   Dossier,
@@ -37,6 +38,7 @@ import type {
   ContactType,
   DossierContact,
   Civility,
+  ProfessionalCategory,
 } from '@/types';
 import {
   StructuredAddressFields,
@@ -104,16 +106,18 @@ export function DossierContactsTab({ dossier }: Props) {
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
   // ── Création d'un lien hiérarchique (+ sur une ligne) ──────────────────
-  // linkParent : DossierContact source sur lequel on clique "+".
-  // linkRole   : rôle choisi dans le menu déroulant (ex. 'adversaryCounsel').
-  // plusMenuFor: id de la ligne dont le menu "+" est ouvert.
-  // newLinkedRole : quand on clique "Créer nouveau", on pré-sélectionne ce rôle
-  //   dans le ContactDialog et on attache le nouveau contact comme enfant.
+  // linkParent  : DossierContact source sur lequel on clique "+".
+  // linkOption  : option choisie dans le menu (ex. { key: 'lawyer', … }).
+  // plusMenuFor : id de la ligne dont le menu "+" est ouvert.
+  // pending*    : sauvegarde du contexte quand on clique "Créer nouveau",
+  //               pour que le ContactDialog puisse pré-remplir type / rôle /
+  //               catégorie professionnelle et attacher comme enfant à la
+  //               sauvegarde.
   const [linkParent, setLinkParent] = useState<DossierContact | null>(null);
-  const [linkRole, setLinkRole] = useState<DossierRole | null>(null);
+  const [linkOption, setLinkOption] = useState<LinkOption | null>(null);
   const [plusMenuFor, setPlusMenuFor] = useState<number | null>(null);
   const [pendingLinkParent, setPendingLinkParent] = useState<DossierContact | null>(null);
-  const [pendingLinkRole, setPendingLinkRole] = useState<DossierRole | null>(null);
+  const [pendingLinkOption, setPendingLinkOption] = useState<LinkOption | null>(null);
 
   const dossierContacts = useLiveQuery<DossierContact[]>(
     () =>
@@ -149,7 +153,7 @@ export function DossierContactsTab({ dossier }: Props) {
     setContactDialogOpen(false);
     setEditingContact(null);
     setPendingLinkParent(null);
-    setPendingLinkRole(null);
+    setPendingLinkOption(null);
   }
 
   async function handleDeleteContact(c: Contact) {
@@ -392,10 +396,10 @@ export function DossierContactsTab({ dossier }: Props) {
                             </button>
                             {plusMenuFor === dc.id && (
                               <RoleLinkMenu
-                                onPick={(role) => {
+                                onPick={(opt) => {
                                   setPlusMenuFor(null);
                                   setLinkParent(dc);
-                                  setLinkRole(role);
+                                  setLinkOption(opt);
                                 }}
                                 onClose={() => setPlusMenuFor(null)}
                               />
@@ -416,13 +420,18 @@ export function DossierContactsTab({ dossier }: Props) {
         open={contactDialogOpen}
         initial={editingContact ?? undefined}
         requireRole={!editingContact}
-        presetRole={pendingLinkRole ?? undefined}
-        presetType={pendingLinkRole ? defaultTypeForRole(pendingLinkRole) : undefined}
+        presetRole={
+          pendingLinkOption && pendingLinkParent
+            ? resolveLinkRole(pendingLinkOption, pendingLinkParent)
+            : undefined
+        }
+        presetType={pendingLinkOption?.contactType}
+        presetCategory={pendingLinkOption?.category}
         onClose={() => {
           setContactDialogOpen(false);
           setEditingContact(null);
           setPendingLinkParent(null);
-          setPendingLinkRole(null);
+          setPendingLinkOption(null);
         }}
         onSave={handleSaveContact}
         onDelete={
@@ -438,34 +447,33 @@ export function DossierContactsTab({ dossier }: Props) {
       />
 
       <LinkContactDialog
-        open={linkParent != null && linkRole != null}
+        open={linkParent != null && linkOption != null}
         parent={linkParent}
-        role={linkRole}
-        dossierId={dossier.id!}
+        option={linkOption}
         existingContactIds={contactIds}
         onClose={() => {
           setLinkParent(null);
-          setLinkRole(null);
+          setLinkOption(null);
         }}
         onLinkExisting={async (contactId) => {
-          if (linkParent?.id == null || !linkRole) return;
+          if (linkParent?.id == null || !linkOption) return;
           await attachContactToDossier(
             dossier.id!,
             contactId,
-            linkRole,
+            resolveLinkRole(linkOption, linkParent),
             ['read'],
             linkParent.id,
           );
           setLinkParent(null);
-          setLinkRole(null);
+          setLinkOption(null);
         }}
         onCreateNew={() => {
           // Sauvegarde du contexte puis ouverture du ContactDialog en mode
-          // création avec le rôle et le type pré-remplis.
+          // création avec rôle, type ET catégorie pré-remplis.
           setPendingLinkParent(linkParent);
-          setPendingLinkRole(linkRole);
+          setPendingLinkOption(linkOption);
           setLinkParent(null);
-          setLinkRole(null);
+          setLinkOption(null);
           setEditingContact(null);
           setContactDialogOpen(true);
         }}
@@ -473,39 +481,68 @@ export function DossierContactsTab({ dossier }: Props) {
     </>
   );
 }
-
-/**
- * Type de contact par défaut pour un rôle donné (utilisé lors de la création
- * d'un intervenant "lié" depuis le bouton +). La plupart des rôles (avocat,
- * expert, commissaire de justice, témoin…) désignent des personnes physiques.
- * Seule la juridiction est par défaut une personne morale.
- */
-function defaultTypeForRole(role: DossierRole): ContactType {
-  return role === 'court' ? 'moral' : 'physical';
+// ─── Options du menu + (« A pour… ») ──────────────────────────────────────
+// Chaque entrée porte :
+//   - `label`         : libellé affiché dans le menu et le picker
+//   - `category`      : catégorie professionnelle GLOBALE utilisée pour filtrer
+//                       les contacts existants ET pré-remplir le formulaire de
+//                       création (ex. "Avocat" => lawyer)
+//   - `contactType`   : 'physical' ou 'moral' (par défaut physical)
+//
+// Le `DossierRole` à rattacher au DossierContact créé n'est pas figé ici :
+// pour l'option "Avocat", il dépend du contexte (côté adverse vs côté
+// client) — voir resolveLinkRole().
+interface LinkOption {
+  key: string;
+  label: string;
+  category?: ProfessionalCategory;
+  contactType?: ContactType;
 }
 
-// ─── RoleLinkMenu : popup des rôles disponibles pour un lien ──────────────
-// Les rôles primaires (client, adversary) ne sont pas proposés car ils
-// correspondent à des intervenants racines plutôt qu'à des liens.
-const LINK_ROLES: DossierRole[] = [
-  'adversaryCounsel',
-  'ownCounsel',
-  'bailiff',
-  'expert',
-  'witness',
-  'judge',
-  'court',
-  'collaborator',
-  'trainee',
-  'assistant',
-  'other',
+const LINK_OPTIONS: LinkOption[] = [
+  { key: 'lawyer',       label: 'Avocat',                 category: 'lawyer',  contactType: 'physical' },
+  { key: 'bailiff',      label: 'Commissaire de justice', category: 'bailiff', contactType: 'physical' },
+  { key: 'expert',       label: 'Expert',                 category: 'expert',  contactType: 'physical' },
+  { key: 'notary',       label: 'Notaire',                category: 'notary',  contactType: 'physical' },
+  { key: 'judge',        label: 'Magistrat',              category: 'judge',   contactType: 'physical' },
+  { key: 'court',        label: 'Juridiction',            category: 'court',   contactType: 'moral' },
+  { key: 'witness',      label: 'Témoin',                 category: 'witness', contactType: 'physical' },
+  { key: 'collaborator', label: 'Collaborateur',                                contactType: 'physical' },
+  { key: 'trainee',      label: 'Stagiaire',                                    contactType: 'physical' },
+  { key: 'assistant',    label: 'Assistant(e)',                                 contactType: 'physical' },
+  { key: 'other',        label: 'Autre' },
 ];
+
+/**
+ * Calcule le `DossierRole` à assigner au DossierContact créé via le menu +
+ * en fonction de l'option choisie ET du parent. L'option "Avocat" est la
+ * seule contextuelle : confrère adverse si le parent est côté adverse,
+ * avocat du cabinet sinon.
+ */
+function resolveLinkRole(option: LinkOption, parent: DossierContact): DossierRole {
+  switch (option.key) {
+    case 'lawyer': {
+      const sec = ROLE_TO_SECTION[parent.role];
+      return sec === 'PARTIE ADVERSE' ? 'adversaryCounsel' : 'ownCounsel';
+    }
+    case 'bailiff':      return 'bailiff';
+    case 'expert':       return 'expert';
+    case 'notary':       return 'other';
+    case 'judge':        return 'judge';
+    case 'court':        return 'court';
+    case 'witness':      return 'witness';
+    case 'collaborator': return 'collaborator';
+    case 'trainee':      return 'trainee';
+    case 'assistant':    return 'assistant';
+    default:             return 'other';
+  }
+}
 
 function RoleLinkMenu({
   onPick,
   onClose,
 }: {
-  onPick: (role: DossierRole) => void;
+  onPick: (option: LinkOption) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -528,14 +565,14 @@ function RoleLinkMenu({
       <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
         A pour…
       </div>
-      {LINK_ROLES.map((r) => (
+      {LINK_OPTIONS.map((opt) => (
         <button
-          key={r}
+          key={opt.key}
           type="button"
-          onClick={() => onPick(r)}
+          onClick={() => onPick(opt)}
           className="w-full text-left px-3 py-1.5 text-sm hover:bg-[var(--color-surface-raised)]"
         >
-          {DOSSIER_ROLE_LABELS[r]}
+          {opt.label}
         </button>
       ))}
     </div>
@@ -543,11 +580,13 @@ function RoleLinkMenu({
 }
 
 // ─── LinkContactDialog : recherche/création d'un intervenant lié ────────────
+// Filtre par catégorie professionnelle (ex. "Avocat" => lawyer) avec un
+// fallback sur le champ libre `profession` pour ne pas exclure les contacts
+// historiques qui n'ont pas encore de catégorie assignée.
 function LinkContactDialog({
   open,
   parent,
-  role,
-  dossierId,
+  option,
   existingContactIds,
   onClose,
   onLinkExisting,
@@ -555,8 +594,7 @@ function LinkContactDialog({
 }: {
   open: boolean;
   parent: DossierContact | null;
-  role: DossierRole | null;
-  dossierId: number;
+  option: LinkOption | null;
   existingContactIds: number[];
   onClose: () => void;
   onLinkExisting: (contactId: number) => void;
@@ -568,12 +606,25 @@ function LinkContactDialog({
     () => (open ? db.contacts.toArray() : Promise.resolve([] as Contact[])),
     [open],
   );
-  if (!open || !parent || !role) return null;
+  if (!open || !parent || !option) return null;
 
-  const filterType = defaultTypeForRole(role);
+  const requiredType = option.contactType;
+  const requiredCategory = option.category;
+  const labelLower = option.label.toLowerCase();
+
   const q = search.trim().toLowerCase();
   const matches = (all ?? [])
-    .filter((c) => c.type === filterType)
+    .filter((c) => !requiredType || c.type === requiredType)
+    .filter((c) => {
+      if (!requiredCategory) return true;
+      // Match prioritaire : catégorie professionnelle assignée explicitement.
+      if (c.professionalCategory === requiredCategory) return true;
+      // Fallback rétrocompat : `profession` libre contient le nom de la
+      // catégorie (ex. "Avocat associé"). Permet aux contacts historiques
+      // saisis avant cette feature de rester visibles.
+      const prof = (c.profession ?? '').toLowerCase();
+      return prof.includes(labelLower);
+    })
     .filter((c) => {
       if (!q) return true;
       return (
@@ -599,7 +650,7 @@ function LinkContactDialog({
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)]">
           <h3 className="text-sm font-semibold">
-            Lier un <span className="text-[var(--color-primary)]">{DOSSIER_ROLE_LABELS[role].toLowerCase()}</span>
+            Lier un <span className="text-[var(--color-primary)]">{labelLower}</span>
           </h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-[var(--color-surface-raised)]">
             <X className="w-4 h-4" />
@@ -607,6 +658,11 @@ function LinkContactDialog({
         </div>
 
         <div className="p-4 flex flex-col gap-3 overflow-hidden flex-1">
+          {requiredCategory && (
+            <p className="text-[11px] text-[var(--color-text-muted)] -mt-1">
+              Seuls les intervenants enregistrés en tant que <strong>{labelLower}</strong> sont proposés.
+            </p>
+          )}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-muted)] pointer-events-none" />
             <input
@@ -614,7 +670,7 @@ function LinkContactDialog({
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Rechercher dans l'annuaire…"
+              placeholder={`Rechercher un ${labelLower}…`}
               className={cn(
                 'w-full pl-9 pr-3 py-2 text-sm rounded-md',
                 'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
@@ -626,7 +682,7 @@ function LinkContactDialog({
           <div className="flex-1 overflow-auto border border-[var(--color-border)] rounded-md divide-y divide-[var(--color-border)]">
             {matches.length === 0 ? (
               <div className="text-sm text-center py-6 text-[var(--color-text-muted)]">
-                Aucun intervenant trouvé.
+                Aucun {labelLower} trouvé.
               </div>
             ) : (
               matches.map((c) => {
@@ -670,7 +726,7 @@ function LinkContactDialog({
             )}
           >
             <Plus className="w-3.5 h-3.5" />
-            Créer un nouveau {DOSSIER_ROLE_LABELS[role].toLowerCase()}
+            Créer un nouveau {labelLower}
           </button>
         </div>
       </div>
@@ -685,6 +741,7 @@ function ContactDialog({
   requireRole,
   presetRole,
   presetType,
+  presetCategory,
   onClose,
   onSave,
   onDelete,
@@ -694,6 +751,7 @@ function ContactDialog({
   requireRole?: boolean;
   presetRole?: DossierRole;
   presetType?: ContactType;
+  presetCategory?: ProfessionalCategory;
   onClose: () => void;
   onSave: (c: Contact, role?: DossierRole) => void;
   onDelete?: () => void;
@@ -725,6 +783,7 @@ function ContactDialog({
   const [fileRef, setFileRef] = useState('');
   const [notes, setNotes] = useState('');
   const [role, setRole] = useState<DossierRole>('client');
+  const [professionalCategory, setProfessionalCategory] = useState<ProfessionalCategory | ''>('');
 
   useEffect(() => {
     if (!open) return;
@@ -763,6 +822,7 @@ function ContactDialog({
       });
       setFileRef(initial.fileRef ?? '');
       setNotes(initial.notes ?? '');
+      setProfessionalCategory(initial.professionalCategory ?? '');
     } else {
       setType(presetType ?? 'physical');
       setCivility('');
@@ -788,8 +848,9 @@ function ContactDialog({
       setFileRef('');
       setNotes('');
       setRole(presetRole ?? 'client');
+      setProfessionalCategory(presetCategory ?? '');
     }
-  }, [open, initial, presetRole, presetType]);
+  }, [open, initial, presetRole, presetType, presetCategory]);
 
   if (!open) return null;
 
@@ -843,6 +904,7 @@ function ContactDialog({
       address: composedAddress || undefined,
       fileRef: fileRef.trim() || undefined,
       notes: notes.trim() || undefined,
+      professionalCategory: professionalCategory || undefined,
       tags: initial?.tags ?? [],
       createdAt: initial?.createdAt ?? now,
       updatedAt: now,
@@ -900,6 +962,22 @@ function ContactDialog({
               </Field>
             )}
           </div>
+
+          <Field label="Catégorie professionnelle (globale)">
+            <select
+              value={professionalCategory}
+              onChange={(e) =>
+                setProfessionalCategory(e.target.value as ProfessionalCategory | '')
+              }
+              className={inputCls}
+              title="Catégorie utilisée pour filtrer les autocomplete (« A pour avocat » ne suggère que les contacts en catégorie Avocat)"
+            >
+              <option value="">— non spécifiée —</option>
+              {Object.entries(PROFESSIONAL_CATEGORY_LABELS).map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </select>
+          </Field>
 
           {type === 'physical' ? (
             <>

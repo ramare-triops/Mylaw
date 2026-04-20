@@ -12,6 +12,7 @@ import type {
   InvoiceStatus,
   ContactType,
   DossierPermission,
+  ProfessionalCategory,
 } from '@/types';
 
 export const DOSSIER_TYPE_LABELS: Record<DossierType, string> = {
@@ -70,6 +71,17 @@ export const DOCUMENT_ROLE_LABELS: Record<DocumentRole, string> = {
   adversaryRecipient: 'Destinataire adverse',
   charge: 'En charge du suivi',
   other: 'Autre',
+};
+
+export const PROFESSIONAL_CATEGORY_LABELS: Record<ProfessionalCategory, string> = {
+  lawyer:  'Avocat',
+  expert:  'Expert',
+  bailiff: 'Commissaire de justice',
+  judge:   'Magistrat',
+  court:   'Juridiction',
+  witness: 'Témoin',
+  notary:  'Notaire',
+  other:   'Autre',
 };
 
 export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
