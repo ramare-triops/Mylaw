@@ -104,10 +104,16 @@ function defaultExtFor(app: OfficeApp, filename: string): string {
 
 /**
  * Upload la pièce jointe vers un endpoint temporaire et déclenche le
- * protocole Office correspondant. Lance une exception si l'upload échoue,
- * ce qui permet à l'appelant de retomber sur un téléchargement classique.
+ * protocole Office correspondant. Retourne une Promise qui se résout à
+ * `true` si on détecte qu'Office a pris la main (la fenêtre perd le focus
+ * rapidement), ou à `false` si Office n'a pas répondu — ce qui permet à
+ * l'appelant de déclencher un téléchargement de secours.
  */
-async function openInOfficeApp(blob: Blob, name: string, app: OfficeApp): Promise<void> {
+async function openInOfficeApp(
+  blob: Blob,
+  name: string,
+  app: OfficeApp,
+): Promise<boolean> {
   const form = new FormData();
   form.append('file', blob, name);
   form.append('name', name);
@@ -135,12 +141,43 @@ async function openInOfficeApp(blob: Blob, name: string, app: OfficeApp): Promis
   iframe.style.display = 'none';
   iframe.setAttribute('src', schemeUrl);
   document.body.appendChild(iframe);
-  // On retire l'iframe après quelques secondes : le handler OS aura déjà pris
-  // la main (ou non, auquel cas le fallback est délégué à l'appelant qui
-  // peut afficher un lien de téléchargement si besoin).
+
+  // Heuristique de détection de succès : si Office prend la main, le
+  // navigateur perd le focus (blur) ou devient caché (visibilitychange).
+  // À l'inverse, si on reste focus pendant ~2.5 s, c'est que Word a
+  // soit refusé (ex : URL HTTP localhost bloquée), soit affiché une erreur
+  // que l'utilisateur a fermée immédiatement. On considère alors l'échec.
+  const launched = await new Promise<boolean>((resolve) => {
+    let resolved = false;
+    const succeed = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(true);
+    };
+    const fail = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(false);
+    };
+    const onBlur = () => succeed();
+    const onVisibility = () => { if (document.hidden) succeed(); };
+    const cleanup = () => {
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onVisibility);
+    setTimeout(fail, 2500);
+  });
+
+  // Retrait de l'iframe après coup.
   setTimeout(() => {
     if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
   }, 4000);
+
+  return launched;
 }
 
 export function DossierDocumentsTab({ dossier }: Props) {
@@ -357,10 +394,15 @@ export function DossierDocumentsTab({ dossier }: Props) {
     const office = detectOfficeApp(att.name, att.mimeType);
     if (office) {
       try {
-        await openInOfficeApp(blob, att.name, office);
-        return;
+        const launched = await openInOfficeApp(blob, att.name, office);
+        if (!launched) {
+          // Office n'a pas pris la main dans les 2.5 s (typique : HTTP
+          // localhost bloqué par la politique de sécurité Office). On
+          // déclenche un téléchargement automatique, l'utilisateur peut
+          // alors ouvrir le fichier d'un clic depuis sa barre d'onglets.
+          handleDownloadAttachment(att.id, att.name);
+        }
       } catch {
-        // Fallback transparent : on télécharge si l'upload temporaire échoue.
         handleDownloadAttachment(att.id, att.name);
       }
       return;
