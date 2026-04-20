@@ -163,10 +163,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const [prefs, setPrefs]                             = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS)
   const [variableCount, setVariableCount]             = useState(0)
   const [zoom, setZoom]                               = useState(ZOOM_DEFAULT)
-  // Onglet actif de la barre d'édition : « Traitement de texte » par défaut.
-  // Le second onglet, « Outils Mylaw », expose les actions spécifiques :
-  // renseigner les variables, capture d'écran, enregistrement audio.
-  const [toolbarTab, setToolbarTab]                   = useState<'word' | 'mylaw'>('word')
   const prefsLoaded                                   = useRef(false)
 
   // Expansions de texte chargées depuis db.snippets
@@ -556,56 +552,31 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           </div>
         </div>
 
-        {/* ── Onglets de la barre d'édition ────────────────────────────── */}
-        <div
-          className="flex items-end gap-1 px-3 pt-1 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex-shrink-0"
-          role="tablist"
-          aria-label="Barres d'outils de l'éditeur"
-        >
-          {([
-            { key: 'word',  label: 'Traitement de texte' },
-            { key: 'mylaw', label: 'Outils Mylaw'        },
-          ] as const).map((t) => {
-            const active = toolbarTab === t.key
-            return (
-              <button
-                key={t.key}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setToolbarTab(t.key)}
-                className={`px-3 h-7 text-[var(--text-xs)] font-medium border-b-2 -mb-px transition-colors ${
-                  active
-                    ? 'text-[var(--color-primary)] border-[var(--color-primary)]'
-                    : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'
-                }`}
-              >
-                {t.label}
-                {t.key === 'mylaw' && variableCount > 0 && (
-                  <span className="ml-1 text-[10px] opacity-70">({variableCount})</span>
-                )}
-              </button>
-            )
-          })}
-        </div>
-
-        {toolbarTab === 'word' ? (
-          <WordToolbar
-            editor={editor}
-            onInsertLink={handleInsertLink}
-            onInsertImage={handleInsertImage}
-            defaultFontFamily={prefs.fontFamily}
-            defaultFontSize={String(prefs.fontSize)}
-          />
-        ) : (
-          <MylawToolsBar
-            editor={editor}
-            dossierId={document.dossierId}
-            documentId={document.id}
-            variableCount={variableCount}
-            onFillVariables={() => setShowFillDialog(true)}
-          />
-        )}
+        {/* ── Top bar : deux sections visibles en permanence ─────────────
+            Section 1 : Traitement de texte (WordToolbar)
+            Section 2 : Outils Mylaw (renseigner / capture / micro)
+            Chaque section porte un petit en-tête identifiant pour
+            que la séparation soit immédiatement lisible. */}
+        <ToolbarSectionHeader label="Traitement de texte" />
+        <WordToolbar
+          editor={editor}
+          onInsertLink={handleInsertLink}
+          onInsertImage={handleInsertImage}
+          defaultFontFamily={prefs.fontFamily}
+          defaultFontSize={String(prefs.fontSize)}
+        />
+        <ToolbarSectionHeader
+          label="Outils Mylaw"
+          badge={variableCount > 0 ? String(variableCount) : undefined}
+          badgeTitle={variableCount > 0 ? `${variableCount} champ${variableCount > 1 ? 's' : ''} à renseigner` : undefined}
+        />
+        <MylawToolsBar
+          editor={editor}
+          dossierId={document.dossierId}
+          documentId={document.id}
+          variableCount={variableCount}
+          onFillVariables={() => setShowFillDialog(true)}
+        />
 
         {/* Ligne principale : éditeur + panneau briques */}
         <div className="flex flex-1 overflow-hidden">
@@ -960,4 +931,38 @@ function formatRelativeTime(date: Date): string {
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `il y a ${hours}h`
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
+}
+
+/**
+ * Petit en-tête de section pour découper visuellement la top bar de
+ * l'éditeur en blocs (« Traitement de texte », « Outils Mylaw »…).
+ * Affiche un libellé en majuscules très discrètes au-dessus du toolbar
+ * correspondant, avec un séparateur fin pour matérialiser la frontière
+ * entre sections sans alourdir l'interface.
+ */
+function ToolbarSectionHeader({
+  label,
+  badge,
+  badgeTitle,
+}: {
+  label: string
+  badge?: string
+  badgeTitle?: string
+}) {
+  return (
+    <div className="flex items-center gap-2 px-3 pt-1.5 pb-0.5 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex-shrink-0">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
+        {label}
+      </span>
+      {badge && (
+        <span
+          className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-[var(--color-primary)]/10 text-[9px] font-semibold text-[var(--color-primary)]"
+          title={badgeTitle}
+        >
+          {badge}
+        </span>
+      )}
+      <span className="flex-1 h-px bg-[var(--color-divider)]" aria-hidden />
+    </div>
+  )
 }
