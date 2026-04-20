@@ -553,30 +553,36 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         </div>
 
         {/* ── Top bar : deux sections visibles en permanence ─────────────
-            Section 1 : Traitement de texte (WordToolbar)
-            Section 2 : Outils Mylaw (renseigner / capture / micro)
+            Section 1 (gauche, 2/3) : Traitement de texte (WordToolbar)
+            Section 2 (droite, 1/3) : Outils Mylaw (renseigner / capture / micro)
             Chaque section porte un petit en-tête identifiant pour
             que la séparation soit immédiatement lisible. */}
-        <ToolbarSectionHeader label="Traitement de texte" />
-        <WordToolbar
-          editor={editor}
-          onInsertLink={handleInsertLink}
-          onInsertImage={handleInsertImage}
-          defaultFontFamily={prefs.fontFamily}
-          defaultFontSize={String(prefs.fontSize)}
-        />
-        <ToolbarSectionHeader
-          label="Outils Mylaw"
-          badge={variableCount > 0 ? String(variableCount) : undefined}
-          badgeTitle={variableCount > 0 ? `${variableCount} champ${variableCount > 1 ? 's' : ''} à renseigner` : undefined}
-        />
-        <MylawToolsBar
-          editor={editor}
-          dossierId={document.dossierId}
-          documentId={document.id}
-          variableCount={variableCount}
-          onFillVariables={() => setShowFillDialog(true)}
-        />
+        <div className="flex items-stretch flex-shrink-0 border-b border-[var(--color-border)]">
+          <div className="w-2/3 min-w-0 flex flex-col border-r border-[var(--color-border)]">
+            <ToolbarSectionHeader label="Traitement de texte" />
+            <WordToolbar
+              editor={editor}
+              onInsertLink={handleInsertLink}
+              onInsertImage={handleInsertImage}
+              defaultFontFamily={prefs.fontFamily}
+              defaultFontSize={String(prefs.fontSize)}
+            />
+          </div>
+          <div className="w-1/3 min-w-0 flex flex-col">
+            <ToolbarSectionHeader
+              label="Outils Mylaw"
+              badge={variableCount > 0 ? String(variableCount) : undefined}
+              badgeTitle={variableCount > 0 ? `${variableCount} champ${variableCount > 1 ? 's' : ''} à renseigner` : undefined}
+            />
+            <MylawToolsBar
+              editor={editor}
+              dossierId={document.dossierId}
+              documentId={document.id}
+              variableCount={variableCount}
+              onFillVariables={() => setShowFillDialog(true)}
+            />
+          </div>
+        </div>
 
         {/* Ligne principale : éditeur + panneau briques */}
         <div className="flex flex-1 overflow-hidden">
