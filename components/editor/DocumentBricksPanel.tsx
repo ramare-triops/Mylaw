@@ -1208,9 +1208,15 @@ interface DocumentBricksPanelProps {
   onDragStart?: (brick: Brick) => void
   /** Dossier rattaché au document courant ; utilisé pour filtrer les intervenants éligibles à une brique. */
   dossierId?: number
+  /**
+   * Masque le bouton "intervenant" des briques (utilisé dans l'éditeur de
+   * modèles, où remplir les variables depuis un contact concret n'a pas de
+   * sens : un modèle doit rester générique).
+   */
+  disableIntervenantPicker?: boolean
 }
 
-export function DocumentBricksPanel({ onInsertBrick, dossierId }: DocumentBricksPanelProps) {
+export function DocumentBricksPanel({ onInsertBrick, dossierId, disableIntervenantPicker }: DocumentBricksPanelProps) {
   const [groups,         setGroups]         = useState<BrickGroup[]>([])
   const [allCategories,  setAllCategories]  = useState<CategoryDef[]>([...SYSTEM_CATEGORIES.map(c => ({ ...c, iconName: c.id === 'parties' ? 'users' : c.id === 'structure' ? 'align-left' : c.id === 'formules' ? 'file-text' : 'blocks' }))])
   const [tab,            setTab]            = useState<'library' | 'custom'>('library')
@@ -1402,7 +1408,7 @@ export function DocumentBricksPanel({ onInsertBrick, dossierId }: DocumentBricks
                 key={g.id}
                 group={g}
                 onInsert={b => onInsertBrick(brickContentToHtml(b.content), b)}
-                onOpenPicker={handleOpenPicker}
+                onOpenPicker={disableIntervenantPicker ? undefined : handleOpenPicker}
                 defaultOpen={i === 0}
               />
             ))}
@@ -1422,7 +1428,7 @@ export function DocumentBricksPanel({ onInsertBrick, dossierId }: DocumentBricks
                 key={b.id}
                 brick={b}
                 onInsert={() => onInsertBrick(brickContentToHtml(b.content), b)}
-                onOpenPicker={handleOpenPicker}
+                onOpenPicker={disableIntervenantPicker ? undefined : handleOpenPicker}
               />
             ))}
           </div>

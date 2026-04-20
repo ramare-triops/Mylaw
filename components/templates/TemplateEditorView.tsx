@@ -22,12 +22,19 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import CharacterCount from '@tiptap/extension-character-count'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Save, Tag, ArrowLeft } from 'lucide-react'
+import { Save, Tag, ArrowLeft, Blocks } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
 
 import { WordToolbar } from '@/components/editor/WordToolbar'
 import { FontSize } from '@/components/editor/extensions/FontSize'
 import { VariableField } from '@/components/editor/extensions/VariableField'
+import { BrickMarker } from '@/components/editor/extensions/BrickMarker'
+import {
+  DocumentBricksPanel,
+  DRAG_BRICK_KEY,
+  brickContentToHtml,
+} from '@/components/editor/DocumentBricksPanel'
+import type { Brick } from '@/components/editor/DocumentBricksPanel'
 import { TemplateFieldsPanel, DRAG_FIELD_KEY } from './TemplateFieldsPanel'
 import type { TemplateField } from './TemplateFieldsPanel'
 import type { Template } from './TemplateLibrary'
@@ -71,6 +78,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
   const [documentCategory, setDocumentCategory] = useState(template.documentCategory ?? '')
   const [fields, setFields]           = useState<TemplateField[]>(template.fields ?? [])
   const [showFields, setShowFields]   = useState(true)
+  const [showBricks, setShowBricks]   = useState(true)
   const [hasChanges, setHasChanges]   = useState(false)
   const [variableCount, setVariableCount] = useState(0)
   const [saved, setSaved]             = useState(false)
@@ -97,6 +105,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
       CharacterCount,
       Placeholder.configure({ placeholder: 'Rédigez votre modèle ici… Glissez ou cliquez sur un champ pour l\'insérer.' }),
       VariableField.configure({ onVariableClick: undefined, HTMLAttributes: {} }),
+      BrickMarker,
     ],
     content: initialContent,
     editorProps: {
@@ -124,9 +133,23 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
     setTimeout(() => setVariableCount(countVariables(ed)), 50)
   }, [])
 
+  // ── Insertion d'une brique au curseur
+  // Dans l'éditeur de modèles, on insère la brique sans marqueur d'intervenant :
+  // un modèle doit rester générique, les variables seront remplies lors de
+  // l'utilisation dans un document.
+  const handleInsertBrick = useCallback((brickHtml: string, _brick?: Brick) => {
+    const ed = editorRef.current
+    if (!ed) return
+    ed.chain().focus().insertContent(brickHtml).run()
+    setHasChanges(true)
+    setSaved(false)
+    setTimeout(() => setVariableCount(countVariables(ed)), 50)
+  }, [])
+
   // ── Drag & drop
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes(DRAG_FIELD_KEY)) return
+    const types = e.dataTransfer.types
+    if (!types.includes(DRAG_FIELD_KEY) && !types.includes(DRAG_BRICK_KEY)) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
     setDropTarget(true)
@@ -138,6 +161,27 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     setDropTarget(false)
+
+    // 1) Drop de brique
+    const brickRaw = e.dataTransfer.getData(DRAG_BRICK_KEY)
+    if (brickRaw) {
+      e.preventDefault()
+      try {
+        const brick: Brick = JSON.parse(brickRaw)
+        const ed = editorRef.current
+        if (!ed) return
+        const html = brickContentToHtml(brick.content)
+        const pos = ed.view.posAtCoords({ left: e.clientX, top: e.clientY })
+        if (pos) ed.chain().focus().insertContentAt(pos.pos, html).run()
+        else ed.chain().focus().insertContent(html).run()
+        setHasChanges(true)
+        setSaved(false)
+        setTimeout(() => setVariableCount(countVariables(ed)), 50)
+      } catch { /* drop invalide : on ignore */ }
+      return
+    }
+
+    // 2) Drop de champ (variable)
     const raw = e.dataTransfer.getData(DRAG_FIELD_KEY)
     if (!raw) return
     e.preventDefault()
@@ -240,6 +284,10 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
           style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: showFields ? 'var(--color-primary-highlight)' : 'transparent', color: showFields ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: showFields ? 600 : 400, cursor: 'pointer', flexShrink: 0, transition: 'all 0.12s' }}>
           <Tag size={12} /> Champs
         </button>
+        <button onClick={() => setShowBricks((v) => !v)}
+          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: showBricks ? 'var(--color-primary-highlight)' : 'transparent', color: showBricks ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: showBricks ? 600 : 400, cursor: 'pointer', flexShrink: 0, transition: 'all 0.12s' }}>
+          <Blocks size={12} /> Briques
+        </button>
         {saved && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-success)', flexShrink: 0 }}>✓ Enregistré</span>}
         {hasChanges && !saved && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-warning)', flexShrink: 0 }}>● Non enregistré</span>}
         <button onClick={handleSave}
@@ -273,6 +321,13 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
             fields={fields}
             onChange={(f) => { setFields(f); setHasChanges(true) }}
             onInsertVariable={handleInsertVariable}
+          />
+        )}
+
+        {showBricks && (
+          <DocumentBricksPanel
+            onInsertBrick={handleInsertBrick}
+            disableIntervenantPicker
           />
         )}
       </div>

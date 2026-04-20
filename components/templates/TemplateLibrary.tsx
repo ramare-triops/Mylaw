@@ -274,7 +274,7 @@ const DEFAULT_TEMPLATES: Template[] = [
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     isCustom: false,
-    documentCategory: 'Contrat',
+    documentCategory: 'Convention d’honoraire',
     optionalClauses: [
       {
         id: 'resultat',
@@ -411,6 +411,28 @@ export async function migrateDocumentCategoryIfNeeded(): Promise<void> {
     }
   } catch { /* migration best-effort */ }
   await setSetting('templates_doc_category_migrated_v1', true)
+
+  // Resync v2 : pour les modèles par défaut dont la catégorie documentaire
+  // canonique a changé entre deux versions (ex. tpl-7 passé de 'Contrat' à
+  // 'Convention d'honoraire'), on aligne la DB sur DEFAULT_TEMPLATES. On ne
+  // touche toujours pas aux modèles custom de l'utilisateur.
+  const resyncDone = await getSetting<boolean>('templates_doc_category_resync_v2', false)
+  if (resyncDone) return
+  try {
+    const rowsV2 = await db.table('templates').toArray() as Array<Record<string, unknown> & { id: number; name?: string; documentCategory?: string; isCustom?: boolean }>
+    const byNameV2 = new Map<string, string>()
+    for (const def of DEFAULT_TEMPLATES) {
+      if (def.documentCategory) byNameV2.set(def.name, def.documentCategory)
+    }
+    for (const row of rowsV2) {
+      if (row.isCustom) continue
+      const expected = byNameV2.get(row.name ?? '')
+      if (!expected) continue
+      if (row.documentCategory === expected) continue
+      await db.table('templates').update(row.id, { documentCategory: expected })
+    }
+  } catch { /* resync best-effort */ }
+  await setSetting('templates_doc_category_resync_v2', true)
 }
 
 async function loadTemplatesFromDexie(): Promise<Template[]> {

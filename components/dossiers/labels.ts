@@ -113,6 +113,7 @@ export const DOCUMENT_CATEGORIES = [
   'Pièce',
   'Conclusions',
   'Contrat',
+  'Convention d’honoraire',
   'Email',
   'Note interne',
   'Pièce adverse',
