@@ -219,6 +219,34 @@ async function seedDefaultsIfNeeded(): Promise<void> {
   await setSetting('templates_seeded_v1', true)
 }
 
+/**
+ * Migration v2 : pour les modèles par défaut seedés avant l'introduction du
+ * champ `documentCategory`, on patche en place en faisant un match par nom
+ * avec les valeurs canoniques de DEFAULT_TEMPLATES. On NE touche PAS aux
+ * modèles custom de l'utilisateur (il doit les éditer manuellement via le
+ * nouveau sélecteur dans l'éditeur).
+ */
+export async function migrateDocumentCategoryIfNeeded(): Promise<void> {
+  const done = await getSetting<boolean>('templates_doc_category_migrated_v1', false)
+  if (done) return
+  try {
+    const rows = await db.table('templates').toArray() as Array<Record<string, unknown> & { id: number; name?: string; documentCategory?: string; isCustom?: boolean }>
+    const byName = new Map<string, string>()
+    for (const def of DEFAULT_TEMPLATES) {
+      if (def.documentCategory) byName.set(def.name, def.documentCategory)
+    }
+    for (const row of rows) {
+      if (row.documentCategory) continue
+      // On limite aux modèles non-customs (les défauts d'origine), repérés par nom.
+      if (row.isCustom) continue
+      const expected = byName.get(row.name ?? '')
+      if (!expected) continue
+      await db.table('templates').update(row.id, { documentCategory: expected })
+    }
+  } catch { /* migration best-effort */ }
+  await setSetting('templates_doc_category_migrated_v1', true)
+}
+
 async function loadTemplatesFromDexie(): Promise<Template[]> {
   const rows = await db.table('templates').toArray() as Array<Record<string, unknown> & { id: number }>
   return rows.map((r) => ({
@@ -479,6 +507,7 @@ export function TemplateLibrary() {
     void (async () => {
       await migrateLocalStorageIfNeeded()
       await seedDefaultsIfNeeded()
+      await migrateDocumentCategoryIfNeeded()
       const loaded = await loadTemplatesFromDexie()
       setTemplates(loaded)
       if (loaded.length > 0) setPreviewTemplate(loaded[0])

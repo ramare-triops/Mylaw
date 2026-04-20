@@ -5,6 +5,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { X, FileText, Scale, Mail, Users, Gavel, FileSignature, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { db } from '@/lib/db';
+import { migrateDocumentCategoryIfNeeded } from '@/components/templates/TemplateLibrary';
 
 // ─── Template tel que stocké dans Dexie ────────────────────────────────────
 // Doit rester aligné avec `Template` défini dans TemplateLibrary.tsx. On le
@@ -24,6 +25,10 @@ export interface DialogTemplate {
 }
 
 async function loadTemplatesFromDexie(): Promise<DialogTemplate[]> {
+  // Garantit que les modèles par défaut historiques disposent du champ
+  // `documentCategory` même si l'utilisateur n'a jamais ouvert la
+  // bibliothèque depuis l'ajout de cette fonctionnalité.
+  await migrateDocumentCategoryIfNeeded();
   const rows = await db
     .table('templates')
     .toArray() as Array<Record<string, unknown> & { id: number }>;

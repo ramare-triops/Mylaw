@@ -253,9 +253,16 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   }, [hasUnsavedChanges])
 
   const performClose = useCallback(() => {
-    if (onClose) onClose()
-    else router.push('/documents')
-  }, [onClose, router])
+    if (onClose) { onClose(); return }
+    // Si le document est rattaché à un dossier, on retourne au dossier
+    // plutôt qu'à la bibliothèque générale — l'utilisateur reste dans
+    // son contexte de travail.
+    if (document.dossierId != null) {
+      router.push(`/dossiers/${document.dossierId}`)
+    } else {
+      router.push('/documents')
+    }
+  }, [onClose, router, document.dossierId])
 
   const handleCloseRequest = useCallback(() => {
     if (hasUnsavedChanges) setShowCloseDialog(true)
