@@ -365,7 +365,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
   return (
     <>
       <div
-        className="p-6 space-y-6"
+        className="flex h-full min-h-0"
         onDragOver={(e) => {
           e.preventDefault();
           setDragActive(true);
@@ -388,27 +388,8 @@ export function DossierDocumentsTab({ dossier }: Props) {
           </div>
         )}
 
-        {/* Action bar */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => setNewDocOpen(true)}
-            className={cn(
-              'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium',
-              'bg-[var(--color-primary)] text-white hover:opacity-90'
-            )}
-          >
-            <Plus className="w-4 h-4" /> Nouveau document
-          </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className={cn(
-              'flex items-center gap-2 px-4 py-2 rounded-md text-sm',
-              'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-              'hover:bg-[var(--color-border)]'
-            )}
-          >
-            <Upload className="w-4 h-4" /> Importer des fichiers
-          </button>
+        {/* ─── Zone principale : liste des documents ─── */}
+        <div className="flex-1 min-w-0 overflow-auto p-6 space-y-6">
           <input
             ref={fileInputRef}
             type="file"
@@ -419,69 +400,8 @@ export function DossierDocumentsTab({ dossier }: Props) {
               e.currentTarget.value = '';
             }}
           />
-          <button
-            onClick={() => setAttachOpen(true)}
-            className={cn(
-              'flex items-center gap-2 px-4 py-2 rounded-md text-sm',
-              'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-              'hover:bg-[var(--color-border)]'
-            )}
-          >
-            <FileText className="w-4 h-4" /> Rattacher un document
-          </button>
-          <button
-            onClick={() => setLinkOpen(true)}
-            className={cn(
-              'flex items-center gap-2 px-4 py-2 rounded-md text-sm',
-              'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-              'hover:bg-[var(--color-border)]'
-            )}
-          >
-            <LinkIcon className="w-4 h-4" /> Lien inter-dossiers
-          </button>
 
-          <div className="flex-1 min-w-[180px] relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
-            <input
-              type="text"
-              placeholder="Rechercher dans ce dossier…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className={cn(
-                'w-full pl-9 pr-4 py-2 text-sm rounded-md',
-                'bg-[var(--color-surface-raised)] border border-[var(--color-border)]'
-              )}
-            />
-          </div>
-          <select
-            value={statusFilter}
-            onChange={(e) =>
-              setStatusFilter(e.target.value as DocumentStatus | 'all')
-            }
-            className="px-3 py-2 text-sm rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
-          >
-            <option value="all">Tous les statuts</option>
-            {Object.entries(DOCUMENT_STATUS_LABELS).map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </select>
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="px-3 py-2 text-sm rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
-          >
-            <option value="all">Toutes catégories</option>
-            {DOCUMENT_CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Liste unifiée : documents Mylaw et pièces jointes importées */}
+          {/* Liste unifiée : documents Mylaw et pièces jointes importées */}
         <section>
           <h3 className="text-sm font-semibold mb-2 text-[var(--color-text)]">
             Documents ({(docs?.length ?? 0) + (attachments?.length ?? 0)})
@@ -657,6 +577,116 @@ export function DossierDocumentsTab({ dossier }: Props) {
             </div>
           </section>
         )}
+        </div>
+
+        {/* ─── Volet latéral droit : actions, recherche, filtres ─── */}
+        <aside
+          className="flex flex-col flex-shrink-0 w-[280px] border-l border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden"
+          aria-label="Actions et filtres"
+        >
+          <div className="px-4 pt-3 pb-2 border-b border-[var(--color-border)] flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <FileText className="w-3.5 h-3.5 text-[var(--color-primary)]" />
+              <span className="text-sm font-semibold text-[var(--color-text)]">
+                Actions
+              </span>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            {/* Section : Ajouter */}
+            <div className="space-y-1.5">
+              <h4 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)] mb-2">
+                Ajouter
+              </h4>
+              <button
+                onClick={() => setNewDocOpen(true)}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium',
+                  'bg-[var(--color-primary)] text-white hover:opacity-90'
+                )}
+              >
+                <Plus className="w-4 h-4" /> Nouveau document
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm',
+                  'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+                  'hover:bg-[var(--color-border)]'
+                )}
+              >
+                <Upload className="w-4 h-4" /> Importer des fichiers
+              </button>
+              <button
+                onClick={() => setAttachOpen(true)}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm',
+                  'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+                  'hover:bg-[var(--color-border)]'
+                )}
+              >
+                <FileText className="w-4 h-4" /> Rattacher un document
+              </button>
+              <button
+                onClick={() => setLinkOpen(true)}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm',
+                  'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+                  'hover:bg-[var(--color-border)]'
+                )}
+              >
+                <LinkIcon className="w-4 h-4" /> Lien inter-dossiers
+              </button>
+            </div>
+
+            {/* Section : Recherche & filtres */}
+            <div className="space-y-2 pt-2 border-t border-[var(--color-border)]">
+              <h4 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)] mb-2">
+                Recherche & filtres
+              </h4>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
+                <input
+                  type="text"
+                  placeholder="Rechercher dans ce dossier…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className={cn(
+                    'w-full pl-9 pr-3 py-2 text-sm rounded-md',
+                    'bg-[var(--color-surface-raised)] border border-[var(--color-border)]'
+                  )}
+                />
+              </div>
+              <select
+                value={statusFilter}
+                onChange={(e) =>
+                  setStatusFilter(e.target.value as DocumentStatus | 'all')
+                }
+                className="w-full px-3 py-2 text-sm rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+              >
+                <option value="all">Tous les statuts</option>
+                {Object.entries(DOCUMENT_STATUS_LABELS).map(([v, l]) => (
+                  <option key={v} value={v}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+              >
+                <option value="all">Toutes catégories</option>
+                {DOCUMENT_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </aside>
       </div>
 
       <NewDocumentDialog
