@@ -95,6 +95,13 @@ function detectOfficeApp(filename: string, mimeType: string): OfficeApp | null {
   return OFFICE_EXT[ext] ?? null;
 }
 
+/** Extension canonique pour l'URL publique (Office refuse les URL sans extension). */
+function defaultExtFor(app: OfficeApp, filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  if (ext && OFFICE_EXT[ext] === app) return ext;
+  return app === 'word' ? 'docx' : app === 'excel' ? 'xlsx' : 'pptx';
+}
+
 /**
  * Upload la pièce jointe vers un endpoint temporaire et déclenche le
  * protocole Office correspondant. Lance une exception si l'upload échoue,
@@ -110,20 +117,30 @@ async function openInOfficeApp(blob: Blob, name: string, app: OfficeApp): Promis
   if (!token) throw new Error('missing_token');
 
   const scheme = app === 'word' ? 'ms-word' : app === 'excel' ? 'ms-excel' : 'ms-powerpoint';
-  const httpUrl = `${window.location.origin}/api/open-office/${token}`;
-  // `ofe` = Open For Editing. Word/Excel/PowerPoint ouvrent le fichier depuis
-  // l'URL. Sur macOS/Windows/Linux, le handler du scheme fait le relais.
+  const ext = defaultExtFor(app, name);
+  // Nom d'URL safe — Office parse le path pour détecter l'extension. On évite
+  // les espaces / caractères exotiques qui pourraient casser la reconnaissance.
+  const safeName = name.replace(/[^A-Za-z0-9._-]/g, '_');
+  const namePart = safeName.toLowerCase().endsWith(`.${ext}`) ? safeName : `${safeName}.${ext}`;
+  const httpUrl = `${window.location.origin}/api/open-office/${token}/${encodeURIComponent(namePart)}`;
+  // `ofe` = Open For Editing. Les `|` doivent rester littéraux (pas encodés),
+  // sans quoi Word répond « Office ne reconnaît pas la commande ».
   const schemeUrl = `${scheme}:ofe|u|${httpUrl}`;
 
-  // Le click sur un anchor est plus fiable que window.location.href pour
-  // déclencher un handler de protocole personnalisé sans perdre la page actuelle.
-  const a = document.createElement('a');
-  a.href = schemeUrl;
-  a.rel = 'noopener';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  // On utilise une iframe cachée plutôt que `a.click()` : certains navigateurs
+  // normalisent l'URL en encodant les `|` en `%7C` quand on affecte `a.href`,
+  // ce qui empêche Office de parser les paramètres. Une iframe dont on règle
+  // `src` directement passe la chaîne telle quelle au handler OS.
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  iframe.setAttribute('src', schemeUrl);
+  document.body.appendChild(iframe);
+  // On retire l'iframe après quelques secondes : le handler OS aura déjà pris
+  // la main (ou non, auquel cas le fallback est délégué à l'appelant qui
+  // peut afficher un lien de téléchargement si besoin).
+  setTimeout(() => {
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+  }, 4000);
 }
 
 export function DossierDocumentsTab({ dossier }: Props) {
