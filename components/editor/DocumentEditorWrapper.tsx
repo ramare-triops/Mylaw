@@ -694,6 +694,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         editor={editor}
         pageRef={pageRef}
         dossierId={document.dossierId}
+        suppressedBrickId={dropSuggestion?.brickId ?? null}
       />
 
       {/* Popup de suggestion posé au point de drop d'une brique éligible */}
@@ -948,31 +949,52 @@ function DropSuggestionPopup({
         zIndex: 50,
         display: 'flex',
         alignItems: 'center',
-        gap: 4,
+        gap: 8,
+        padding: '6px 10px',
+        background: 'var(--color-surface)',
+        border: '1.5px solid var(--color-primary)',
+        borderRadius: 8,
+        boxShadow: '0 4px 14px rgba(0,0,0,0.14)',
         animation: 'fadeIn 150ms ease-out',
       }}
     >
+      <Users size={14} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
       <button
         type="button"
         onClick={onAccept}
         title={`Pré-remplir « ${brickTitle} » depuis un intervenant`}
         style={{
           display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '6px 12px',
-          borderRadius: 8,
-          border: '1.5px solid var(--color-primary)',
-          background: 'var(--color-primary)',
-          color: '#fff',
-          fontSize: 12,
-          fontWeight: 600,
+          flexDirection: 'column',
+          alignItems: 'flex-start',
+          lineHeight: 1.1,
+          padding: '2px 4px',
+          border: 'none',
+          background: 'transparent',
           cursor: 'pointer',
-          boxShadow: '0 4px 14px rgba(0,0,0,0.14)',
         }}
       >
-        <Users size={14} />
-        Intervenant
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 500,
+            color: 'var(--color-text-muted)',
+            letterSpacing: 0.2,
+          }}
+        >
+          Auto-remplir
+        </span>
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 700,
+            color: 'var(--color-primary)',
+            textDecoration: 'underline',
+            textUnderlineOffset: 2,
+          }}
+        >
+          Intervenant
+        </span>
       </button>
       <button
         type="button"

@@ -43,12 +43,22 @@ interface MarkerInfo {
 
 interface Props {
   editor: Editor | null;
-  /** Élément de page (div.mylex-editor-content ancêtre) utilisé pour aligner la colonne d'icônes sur sa marge gauche. */
+  /** Élément de page (div.mylex-editor-content ancêtre) utilisé pour aligner la colonne d'icônes sur sa marge droite. */
   pageRef: React.RefObject<HTMLDivElement | null>;
   dossierId?: number;
+  /**
+   * Identifiant d'une brique pour laquelle l'icône de marge doit être masquée
+   * (ex. : la pop-up de suggestion est encore affichée pour cette brique).
+   */
+  suppressedBrickId?: string | null;
 }
 
-export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
+export function BrickMarginIcons({
+  editor,
+  pageRef,
+  dossierId,
+  suppressedBrickId,
+}: Props) {
   const [markers, setMarkers] = useState<MarkerInfo[]>([]);
   const [picker, setPicker] = useState<{
     marker: MarkerInfo;
@@ -196,13 +206,20 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
   // Toute brique avec une cible contact affiche son icône en marge, pour
   // permettre à l'utilisateur de rouvrir le picker à tout moment (même
   // après avoir fermé la pop-up de drop ou déjà rempli les variables).
+  // On masque cependant l'icône de la brique dont la pop-up de suggestion
+  // est encore visible (évite le doublon d'entrées UI).
   const visible = markers.filter(
-    (m) => m.targetContactType || m.targetRoles.length > 0
+    (m) =>
+      (m.targetContactType || m.targetRoles.length > 0) &&
+      m.brickId !== suppressedBrickId
   );
 
-  // Position X : bord gauche du contenu éditeur, moins 32px
+  // Position X : bord droit du contenu éditeur, + 8px (dans la marge
+  // grise, juste à l'extérieur de la page blanche).
   const pageRect = pageRef.current?.getBoundingClientRect();
-  const iconLeft = pageRect ? Math.max(8, pageRect.left - 32) : 8;
+  const iconLeft = pageRect
+    ? Math.min(window.innerWidth - 34, pageRect.right + 8)
+    : 8;
 
   return (
     <>
