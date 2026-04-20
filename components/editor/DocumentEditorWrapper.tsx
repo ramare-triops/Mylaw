@@ -726,25 +726,47 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           onPick={(contact) => {
             const ed = editorRef.current
             if (!ed) { setPickerFromDrop(null); return }
-            // Retrouver le marqueur fraîchement posé et sa plage, puis
-            // remplacer les variables connues par les valeurs du contact.
-            const markerEl = (ed.view.dom as HTMLElement).querySelector<HTMLElement>(
-              `[data-mylaw-brick-id="${pickerFromDrop.brickId}"]`,
-            )
-            if (!markerEl) { setPickerFromDrop(null); return }
-            const allMarkers = Array.from(
-              (ed.view.dom as HTMLElement).querySelectorAll<HTMLElement>('[data-mylaw-brick-id]'),
-            )
-            const idx = allMarkers.indexOf(markerEl)
-            let startPos = 0, endPos = ed.state.doc.content.size
-            try { startPos = ed.view.posAtDOM(markerEl, 0) } catch {}
-            const nextEl = allMarkers[idx + 1]
-            if (nextEl) {
-              try { endPos = ed.view.posAtDOM(nextEl, 0) } catch {}
+            // Retrouve la plage du marqueur via la doc ProseMirror plutôt
+            // que via le DOM : insensible aux aléas d'insertion (spans vides
+            // strippés, etc.). On cherche le brickMarker dont l'attribut
+            // brickId correspond à celui que nous venons d'insérer.
+            const { doc } = ed.state
+            let markerPos: number | null = null
+            const markerPositions: number[] = []
+            doc.descendants((node, pos) => {
+              if (node.type.name !== 'brickMarker') return true
+              markerPositions.push(pos)
+              if (node.attrs.brickId === pickerFromDrop.brickId) {
+                markerPos = pos
+              }
+              return false
+            })
+            if (markerPos == null) {
+              // Marqueur introuvable (cas très improbable après la correction
+              // ZWSP). On remplit quand même : on considère tout le doc.
+              const replacements: Array<{ pos: number; value: string }> = []
+              doc.descendants((node, pos) => {
+                if (node.type.name !== 'variableField') return true
+                const name = node.attrs.name as string
+                if (!name) return false
+                const v = contactVariableValue(contact, name)
+                if (v != null && v !== '') replacements.push({ pos, value: v })
+                return false
+              })
+              replacements.sort((a, b) => b.pos - a.pos).forEach((r) => {
+                ed.commands.replaceVariable(r.pos, r.value)
+              })
+              setPickerFromDrop(null)
+              setTimeout(() => {
+                const c = editorRef.current ? countVariables(editorRef.current) : 0
+                setVariableCount(c)
+              }, 50)
+              return
             }
-            // Parcours des variableField et remplacement.
+            // Plage [markerPos, nextMarkerPos ou fin du doc]
+            const endPos = markerPositions.find((p) => p > (markerPos as number)) ?? doc.content.size
             const replacements: Array<{ pos: number; value: string }> = []
-            ed.state.doc.nodesBetween(startPos, endPos, (node, pos) => {
+            doc.nodesBetween(markerPos, endPos, (node, pos) => {
               if (node.type.name !== 'variableField') return true
               const name = node.attrs.name as string
               if (!name) return false

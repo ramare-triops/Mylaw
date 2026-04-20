@@ -56,83 +56,78 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
   } | null>(null);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ─── Scan du DOM pour retrouver les marqueurs + unfilled vars ────────────
+  // ─── Scan ProseMirror → liste des marqueurs + unfilled vars ─────────────
+  // On parcourt le doc plutôt que le DOM pour ne pas dépendre du rendu
+  // HTML (les spans vides peuvent être strippés par certains parcours).
   const scan = useCallback(() => {
     if (!editor) {
       setMarkers([]);
       return;
     }
-    const editorEl = editor.view.dom as HTMLElement;
-    const markerNodes = Array.from(
-      editorEl.querySelectorAll<HTMLElement>('[data-mylaw-brick-id]')
-    );
-    if (markerNodes.length === 0) {
+    const { doc } = editor.state;
+
+    // 1. Collecte toutes les positions des marqueurs
+    type RawMarker = {
+      pos: number;
+      brickId: string;
+      brickTitle: string;
+      targetContactType?: ContactType;
+      targetRoles: DossierRole[];
+    };
+    const rawMarkers: RawMarker[] = [];
+    doc.descendants((node, pos) => {
+      if (node.type.name !== 'brickMarker') return true;
+      const brickId = (node.attrs.brickId as string) ?? '';
+      const brickTitle = (node.attrs.brickTitle as string) ?? '';
+      const targetType =
+        (node.attrs.targetContactType as ContactType | null) ?? undefined;
+      const rolesStr = (node.attrs.targetRoles as string | null) ?? '';
+      const targetRoles = rolesStr
+        ? (rolesStr.split(',').filter(Boolean) as DossierRole[])
+        : [];
+      rawMarkers.push({
+        pos,
+        brickId,
+        brickTitle,
+        targetContactType: targetType,
+        targetRoles,
+      });
+      return false;
+    });
+
+    if (rawMarkers.length === 0) {
       setMarkers([]);
       return;
     }
 
-    // Pour chaque marqueur : position PM, rect, unfilled count jusqu'au
-    // prochain marqueur.
-    const infos: MarkerInfo[] = [];
-    for (let i = 0; i < markerNodes.length; i++) {
-      const el = markerNodes[i];
-      const brickId = el.getAttribute('data-mylaw-brick-id') ?? '';
-      const brickTitle = el.getAttribute('data-brick-title') ?? '';
-      const targetType =
-        (el.getAttribute('data-brick-target-type') as ContactType | null) ??
-        undefined;
-      const rolesStr = el.getAttribute('data-brick-target-roles') ?? '';
-      const targetRoles = rolesStr
-        ? (rolesStr.split(',').filter(Boolean) as DossierRole[])
-        : [];
-
-      // Position PM du marqueur (le nœud courant)
-      let domPos = 0;
-      try {
-        domPos = editor.view.posAtDOM(el, 0);
-      } catch {
-        domPos = 0;
-      }
-      const nextEl = markerNodes[i + 1];
-      let nextDomPos = editor.state.doc.content.size;
-      if (nextEl) {
-        try {
-          nextDomPos = editor.view.posAtDOM(nextEl, 0);
-        } catch {
-          nextDomPos = editor.state.doc.content.size;
-        }
-      }
-
-      // Compte les [data-variable-field] dans la plage [el, nextEl)
+    // 2. Pour chaque marqueur, calcule la plage jusqu'au suivant, compte
+    //    les variables restantes et récupère la coordonnée viewport.
+    const infos: MarkerInfo[] = rawMarkers.map((m, i) => {
+      const next = rawMarkers[i + 1];
+      const endPos = next ? next.pos : doc.content.size;
       let unfilled = 0;
-      const range = document.createRange();
-      range.setStartAfter(el);
-      if (nextEl) range.setEndBefore(nextEl);
-      else {
-        range.setEndAfter(editorEl);
-      }
-      const frag = range.cloneContents();
-      unfilled =
-        frag.querySelectorAll('[data-variable-field]').length;
-
-      // Rect du marqueur (on prend la ligne du parent si le marqueur est width:0)
-      const probe =
-        el.getBoundingClientRect().height === 0
-          ? (el.parentElement ?? el)
-          : el;
-      const rect = probe.getBoundingClientRect();
-
-      infos.push({
-        brickId,
-        brickTitle,
-        targetContactType: targetType ?? undefined,
-        targetRoles,
-        domPos,
-        nextDomPos,
-        unfilledCount: unfilled,
-        top: rect.top,
+      doc.nodesBetween(m.pos, endPos, (node) => {
+        if (node.type.name === 'variableField') unfilled += 1;
+        return true;
       });
-    }
+      let top = 0;
+      try {
+        const coords = editor.view.coordsAtPos(m.pos);
+        top = coords.top;
+      } catch {
+        top = 0;
+      }
+      return {
+        brickId: m.brickId,
+        brickTitle: m.brickTitle,
+        targetContactType: m.targetContactType,
+        targetRoles: m.targetRoles,
+        domPos: m.pos,
+        nextDomPos: endPos,
+        unfilledCount: unfilled,
+        top,
+      };
+    });
 
     setMarkers(infos);
   }, [editor]);
@@ -231,19 +226,19 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
           } à remplir)`}
           style={{
             position: 'fixed',
-            top: m.top,
+            top: Math.max(0, m.top - 2),
             left: iconLeft,
-            width: 24,
-            height: 24,
+            width: 26,
+            height: 26,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            borderRadius: 6,
+            borderRadius: 4,
             border: '1.5px solid var(--color-primary)',
             background: 'var(--color-surface)',
             color: 'var(--color-primary)',
             cursor: 'pointer',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.10)',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.12)',
             zIndex: 40,
             transition: 'transform 0.12s, background 0.12s',
           }}
@@ -333,7 +328,9 @@ export function wrapBrickHtmlWithMarker(
     'style="display:inline-block;width:0;height:0;overflow:hidden;user-select:none;"',
     'aria-hidden="true"'
   );
-  const marker = `<span ${attrs.join(' ')}></span>`;
+  // Le ZWSP (\u200B) garantit que le span ne soit pas considéré comme vide
+  // par DOMParser → évite la suppression silencieuse lors de l'insertion.
+  const marker = `<span ${attrs.join(' ')}>\u200B</span>`;
   // On insère le marker au début du premier paragraphe si possible (sinon
   // au tout début du fragment) pour qu'il appartienne au même block.
   if (html.startsWith('<p>')) {

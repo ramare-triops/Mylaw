@@ -42,6 +42,12 @@ export function BrickIntervenantPicker({
   onClose,
 }: Props) {
   const [search, setSearch] = useState('');
+  /**
+   * Par défaut on ne montre que les intervenants liés au dossier courant.
+   * L'utilisateur peut cocher « Étendre la recherche à tous les intervenants »
+   * pour élargir à l'ensemble de la base contacts du cabinet.
+   */
+  const [extendAll, setExtendAll] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
   // ─── Ferme au clic extérieur ─────────────────────────────────────────────
@@ -89,13 +95,17 @@ export function BrickIntervenantPicker({
   );
 
   // ─── Filtrage ────────────────────────────────────────────────────────────
+  // Base par défaut = intervenants du dossier courant.
+  // Si `extendAll` ou aucun dossier → toute la base contacts.
   const rows: ContactRow[] = (() => {
-    const base: Contact[] =
+    const dossierScope: Contact[] =
       dossierId && dossierContacts
         ? (allContacts ?? []).filter((c) =>
             relevantContactIds.includes(c.id!)
           )
-        : allContacts ?? [];
+        : [];
+    const base: Contact[] =
+      extendAll || !dossierId ? allContacts ?? [] : dossierScope;
 
     const typeFiltered = brick.targetContactType
       ? base.filter((c) => c.type === brick.targetContactType)
@@ -187,7 +197,7 @@ export function BrickIntervenantPicker({
         </button>
       </div>
 
-      <div className="px-3 py-2 border-b border-[var(--color-border)]">
+      <div className="px-3 py-2 border-b border-[var(--color-border)] space-y-2">
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-muted)]" />
           <input
@@ -199,16 +209,49 @@ export function BrickIntervenantPicker({
             className="w-full pl-7 pr-2 py-1.5 text-xs rounded bg-[var(--color-surface-raised)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)]"
           />
         </div>
+
+        {/* Toggle : étendre la recherche à tous les intervenants du cabinet */}
+        {dossierId && (
+          <label
+            className={cn(
+              'flex items-center gap-2 cursor-pointer select-none',
+              'text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={extendAll}
+              onChange={(e) => setExtendAll(e.target.checked)}
+              className="sr-only peer"
+            />
+            <span
+              className={cn(
+                'w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center flex-shrink-0',
+                'border-[var(--color-border)] bg-[var(--color-surface)]',
+                'peer-checked:border-[var(--color-primary)] peer-checked:bg-[var(--color-primary)]',
+                'transition-colors'
+              )}
+            >
+              <span
+                className={cn(
+                  'w-1.5 h-1.5 rounded-full bg-white transition-opacity',
+                  extendAll ? 'opacity-100' : 'opacity-0'
+                )}
+              />
+            </span>
+            <span>Étendre la recherche à tous les intervenants</span>
+          </label>
+        )}
       </div>
 
       <div className="flex-1 overflow-auto">
         {rows.length === 0 ? (
           <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
-            {!dossierId && brick.targetRoles && brick.targetRoles.length > 0 ? (
+            {dossierId && !extendAll ? (
               <>
-                Ce document n&apos;est rattaché à aucun dossier.
+                Aucun intervenant compatible dans ce dossier.
                 <br />
-                Rattachez-le d&apos;abord pour filtrer les intervenants par rôle.
+                Cochez « Étendre la recherche » pour voir toute la base.
               </>
             ) : brick.targetContactType === 'physical' ? (
               <>Aucune personne physique disponible.</>

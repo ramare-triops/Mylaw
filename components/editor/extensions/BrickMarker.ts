@@ -71,6 +71,10 @@ export const BrickMarker = Node.create({
   },
 
   renderHTML({ HTMLAttributes }) {
+    // On met un caractère zéro-largeur à l'intérieur du span pour éviter
+    // que l'HTML re-parsé par TipTap (DOMParser) ne le considère vide et
+    // ne le strippe lors d'un `insertContent(html)`. Sans ce caractère, le
+    // marqueur disparaît silencieusement du doc.
     return [
       'span',
       mergeAttributes(HTMLAttributes, {
@@ -79,6 +83,7 @@ export const BrickMarker = Node.create({
           'display:inline-block;width:0;height:0;overflow:hidden;user-select:none;',
         'aria-hidden': 'true',
       }),
+      '\u200B',
     ];
   },
 });
