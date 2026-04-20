@@ -31,7 +31,7 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import CharacterCount from '@tiptap/extension-character-count'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Save, Check, Loader2, Wifi, WifiOff, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { Save, Check, Loader2, Wifi, WifiOff, X, ZoomIn, ZoomOut, Settings2 } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
 
 import { WordToolbar } from './WordToolbar'
@@ -42,6 +42,7 @@ import { VariablePopup } from './VariablePopup'
 import { FillAllVariablesDialog } from './FillAllVariablesDialog'
 import { DocumentBricksPanel, DRAG_BRICK_KEY, brickContentToHtml } from './DocumentBricksPanel'
 import type { Brick } from './DocumentBricksPanel'
+import { DocumentPropertiesDialog } from '@/components/documents/DocumentPropertiesDialog'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
 import { getSetting, db } from '@/lib/db'
 import type { Document } from '@/lib/db'
@@ -147,6 +148,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const router = useRouter()
   const [showCloseDialog, setShowCloseDialog]         = useState(false)
   const [showFillDialog, setShowFillDialog]           = useState(false)
+  const [showPropsDialog, setShowPropsDialog]         = useState(false)
   const [isOnline, setIsOnline]                       = useState(true)
   const [prefs, setPrefs]                             = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS)
   const [variableCount, setVariableCount]             = useState(0)
@@ -473,6 +475,15 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
             </span>
             <button
               type="button"
+              onClick={() => setShowPropsDialog(true)}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium border border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
+              title="Propriétés du document (dossier, statut, intervenants, versions)"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              <span>Propriétés</span>
+            </button>
+            <button
+              type="button"
               onClick={() => { const ed = editorRef.current; if (ed) saveNow(JSON.stringify(ed.getJSON())) }}
               disabled={isSaving || isSaved}
               className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-text-inverse)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -626,6 +637,12 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         anchorEl={popupAnchor}
         onConfirm={handleVariableConfirm}
         onClose={handleVariableClose}
+      />
+
+      <DocumentPropertiesDialog
+        open={showPropsDialog}
+        document={document}
+        onClose={() => setShowPropsDialog(false)}
       />
 
       <style jsx global>{`

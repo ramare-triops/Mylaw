@@ -36,6 +36,8 @@ import type {
   Dossier,
   Document as MylawDocument,
   DocumentStatus,
+  Attachment,
+  DocumentLink,
 } from '@/types';
 
 interface Props {
@@ -67,7 +69,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const docs = useLiveQuery(
+  const docs = useLiveQuery<MylawDocument[]>(
     () =>
       db.documents
         .where('dossierId')
@@ -75,7 +77,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
         .toArray(),
     [dossier.id]
   );
-  const attachments = useLiveQuery(
+  const attachments = useLiveQuery<Attachment[]>(
     () =>
       db.attachments
         .where('dossierId')
@@ -83,7 +85,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
         .toArray(),
     [dossier.id]
   );
-  const links = useLiveQuery(
+  const links = useLiveQuery<DocumentLink[]>(
     () =>
       db.documentLinks
         .where('dossierId')
@@ -91,7 +93,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
         .toArray(),
     [dossier.id]
   );
-  const linkedDocs = useLiveQuery(async () => {
+  const linkedDocs = useLiveQuery<(MylawDocument | undefined)[]>(async () => {
     if (!links || links.length === 0) return [];
     return db.documents.bulkGet(links.map((l) => l.documentId));
   }, [links]);
@@ -524,13 +526,13 @@ function AttachExistingDialog({
   onClose: () => void;
 }) {
   const [search, setSearch] = useState('');
-  const candidates = useLiveQuery(
+  const candidates = useLiveQuery<MylawDocument[]>(
     () =>
       open
         ? db.documents
             .filter((d) => d.dossierId !== dossierId)
             .toArray()
-        : Promise.resolve([]),
+        : Promise.resolve([] as MylawDocument[]),
     [open, dossierId]
   );
 
@@ -619,8 +621,8 @@ function LinkDocumentDialog({
   const [search, setSearch] = useState('');
   const [note, setNote] = useState('');
   const [selected, setSelected] = useState<MylawDocument | null>(null);
-  const all = useLiveQuery(
-    () => (open ? db.documents.toArray() : Promise.resolve([])),
+  const all = useLiveQuery<MylawDocument[]>(
+    () => (open ? db.documents.toArray() : Promise.resolve([] as MylawDocument[])),
     [open]
   );
 

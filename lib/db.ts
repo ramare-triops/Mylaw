@@ -1,4 +1,6 @@
 import Dexie, { type Table } from 'dexie';
+// Re-export `Document` so legacy imports `from '@/lib/db'` continue to work.
+export type { Document } from '@/types';
 import type {
   Document,
   DocumentVersion,

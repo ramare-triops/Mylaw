@@ -82,7 +82,7 @@ async function mergeTable<T extends { id?: number }>(
   const toDelete: number[] = [];
 
   // Parcours local : gestion des collisions + détection des suppressions distantes
-  for (const [id, l] of localById) {
+  for (const [id, l] of Array.from(localById.entries())) {
     const r = remoteById.get(id);
     if (r) {
       // Les deux existent : on garde celui au timestamp le plus récent.
@@ -101,7 +101,7 @@ async function mergeTable<T extends { id?: number }>(
   }
 
   // Parcours distant : on ajoute les records absents localement.
-  for (const [id, r] of remoteById) {
+  for (const [id, r] of Array.from(remoteById.entries())) {
     if (!localById.has(id)) toPut.push(r);
   }
 

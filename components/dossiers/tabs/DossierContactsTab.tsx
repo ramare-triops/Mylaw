@@ -46,7 +46,7 @@ export function DossierContactsTab({ dossier }: Props) {
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
 
-  const dossierContacts = useLiveQuery(
+  const dossierContacts = useLiveQuery<DossierContact[]>(
     () =>
       db.dossierContacts
         .where('dossierId')
@@ -56,7 +56,7 @@ export function DossierContactsTab({ dossier }: Props) {
   );
 
   const contactIds = dossierContacts?.map((dc) => dc.contactId) ?? [];
-  const contacts = useLiveQuery(
+  const contacts = useLiveQuery<(Contact | undefined)[]>(
     () =>
       contactIds.length > 0
         ? db.contacts.bulkGet(contactIds)
@@ -469,8 +469,8 @@ function AttachContactDialog({
 }) {
   const [search, setSearch] = useState('');
   const [role, setRole] = useState<DossierRole>('client');
-  const all = useLiveQuery(
-    () => (open ? db.contacts.toArray() : Promise.resolve([])),
+  const all = useLiveQuery<Contact[]>(
+    () => (open ? db.contacts.toArray() : Promise.resolve([] as Contact[])),
     [open]
   );
 
