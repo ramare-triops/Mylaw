@@ -52,6 +52,17 @@ export function DossierContactsTab({ dossier }: Props) {
   const [contactDialogOpen, setContactDialogOpen] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
+  // ── Création d'un lien hiérarchique (+ sur une ligne) ──────────────────
+  // linkParent : DossierContact source sur lequel on clique "+".
+  // linkRole   : rôle choisi dans le menu déroulant (ex. 'adversaryCounsel').
+  // plusMenuFor: id de la ligne dont le menu "+" est ouvert.
+  // newLinkedRole : quand on clique "Créer nouveau", on pré-sélectionne ce rôle
+  //   dans le ContactDialog et on attache le nouveau contact comme enfant.
+  const [linkParent, setLinkParent] = useState<DossierContact | null>(null);
+  const [linkRole, setLinkRole] = useState<DossierRole | null>(null);
+  const [plusMenuFor, setPlusMenuFor] = useState<number | null>(null);
+  const [pendingLinkParent, setPendingLinkParent] = useState<DossierContact | null>(null);
+  const [pendingLinkRole, setPendingLinkRole] = useState<DossierRole | null>(null);
 
   const dossierContacts = useLiveQuery<DossierContact[]>(
     () =>
@@ -74,10 +85,20 @@ export function DossierContactsTab({ dossier }: Props) {
   async function handleSaveContact(c: Contact, role?: DossierRole) {
     const id = await saveContact(c);
     if (!c.id && role) {
-      await attachContactToDossier(dossier.id!, id, role, ['read']);
+      // Si on est en train de créer un contact "lié" (flot depuis le bouton +),
+      // on rattache avec le parent ; sinon attachement racine classique.
+      await attachContactToDossier(
+        dossier.id!,
+        id,
+        role,
+        ['read'],
+        pendingLinkParent?.id,
+      );
     }
     setContactDialogOpen(false);
     setEditingContact(null);
+    setPendingLinkParent(null);
+    setPendingLinkRole(null);
   }
 
   async function handleDeleteContact(c: Contact) {
@@ -126,7 +147,7 @@ export function DossierContactsTab({ dossier }: Props) {
         </div>
 
         <div className="border border-[var(--color-border)] rounded-md overflow-hidden">
-          <div className="grid grid-cols-[32px_1fr_180px_160px_120px_70px] gap-3 px-4 py-2 text-xs text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+          <div className="grid grid-cols-[32px_1fr_180px_160px_120px_96px] gap-3 px-4 py-2 text-xs text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
             <span />
             <span>Nom / Raison sociale</span>
             <span>Rôle</span>
@@ -134,116 +155,160 @@ export function DossierContactsTab({ dossier }: Props) {
             <span>Droits</span>
             <span />
           </div>
-          {!dossierContacts || dossierContacts.length === 0 ? (
-            <div className="py-10 text-center text-sm text-[var(--color-text-muted)]">
-              Aucun intervenant sur ce dossier.
-            </div>
-          ) : (
-            dossierContacts.map((dc, idx) => {
-              const c = contacts?.[idx];
-              if (!c) return null;
+          {(() => {
+            if (!dossierContacts || dossierContacts.length === 0) {
               return (
-                <div
-                  key={dc.id}
-                  className="grid grid-cols-[32px_1fr_180px_160px_120px_70px] gap-3 px-4 py-3 items-center border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-raised)]"
-                >
-                  <div className="flex-shrink-0">
-                    {c.type === 'physical' ? (
-                      <User className="w-4 h-4 text-[var(--color-text-muted)]" />
-                    ) : (
-                      <Building2 className="w-4 h-4 text-[var(--color-text-muted)]" />
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium truncate">
-                      {contactDisplayName(c)}
-                    </div>
-                    {c.fileRef && (
-                      <div className="text-xs text-[var(--color-text-muted)]">
-                        Réf. : {c.fileRef}
-                      </div>
-                    )}
-                    <ContactRelationLine
-                      label="Avocat"
-                      contactId={c.counselId}
-                    />
-                    <ContactRelationLine
-                      label="Représenté par"
-                      contactId={c.representativeContactId}
-                    />
-                  </div>
-                  <select
-                    value={dc.role}
-                    onChange={(e) =>
-                      handleUpdateDossierContact(dc, {
-                        role: e.target.value as DossierRole,
-                      })
-                    }
-                    className="text-xs px-2 py-1 rounded bg-transparent border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-primary)] focus:outline-none"
-                  >
-                    {Object.entries(DOSSIER_ROLE_LABELS).map(([v, l]) => (
-                      <option key={v} value={v}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="flex flex-col gap-0.5 min-w-0">
-                    {c.email && (
-                      <div className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] truncate">
-                        <Mail className="w-3 h-3" /> {c.email}
-                      </div>
-                    )}
-                    {c.phone && (
-                      <div className="flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
-                        <Phone className="w-3 h-3" /> {c.phone}
-                      </div>
-                    )}
-                    {c.address && (
-                      <div className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] truncate">
-                        <MapPin className="w-3 h-3" /> {c.address}
-                      </div>
-                    )}
-                  </div>
-                  <select
-                    value={dc.permissions[0] ?? 'read'}
-                    onChange={(e) =>
-                      handleUpdateDossierContact(dc, {
-                        permissions: [
-                          e.target.value as DossierPermission,
-                        ],
-                      })
-                    }
-                    className="text-xs px-2 py-1 rounded bg-transparent border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-primary)] focus:outline-none"
-                  >
-                    {Object.entries(PERMISSION_LABELS).map(([v, l]) => (
-                      <option key={v} value={v}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="flex justify-end gap-1">
-                    <button
-                      onClick={() => {
-                        setEditingContact(c);
-                        setContactDialogOpen(true);
-                      }}
-                      className="p-1 rounded hover:bg-[var(--color-border)]"
-                      title="Modifier"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => detachContactFromDossier(dc.id!)}
-                      className="p-1 rounded hover:bg-red-100"
-                      title="Retirer du dossier"
-                    >
-                      <X className="w-3.5 h-3.5 text-red-500" />
-                    </button>
-                  </div>
+                <div className="py-10 text-center text-sm text-[var(--color-text-muted)]">
+                  Aucun intervenant sur ce dossier.
                 </div>
               );
-            })
-          )}
+            }
+            // Index contact par id pour résolution rapide.
+            const contactById = new Map<number, Contact>();
+            (contacts ?? []).forEach((c, i) => {
+              if (c) contactById.set(dossierContacts[i].contactId, c);
+            });
+            // Construction de l'arbre par parentDossierContactId.
+            type Row = { dc: DossierContact; contact: Contact; depth: number };
+            const byParent = new Map<number | 'root', DossierContact[]>();
+            for (const dc of dossierContacts) {
+              const key = dc.parentDossierContactId ?? ('root' as const);
+              if (!byParent.has(key)) byParent.set(key, []);
+              byParent.get(key)!.push(dc);
+            }
+            const ordered: Row[] = [];
+            function walk(parentKey: number | 'root', depth: number) {
+              const children = byParent.get(parentKey) ?? [];
+              for (const dc of children) {
+                const contact = contactById.get(dc.contactId);
+                if (!contact) continue;
+                ordered.push({ dc, contact, depth });
+                if (dc.id != null) walk(dc.id, depth + 1);
+              }
+            }
+            walk('root', 0);
+
+            return ordered.map(({ dc, contact: c, depth }) => (
+              <div
+                key={dc.id}
+                className="grid grid-cols-[32px_1fr_180px_160px_120px_96px] gap-3 px-4 py-3 items-center border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-raised)]"
+                style={{ paddingLeft: `${16 + depth * 20}px` }}
+              >
+                <div className="flex-shrink-0 flex items-center gap-1">
+                  {depth > 0 && (
+                    <span
+                      aria-hidden
+                      className="text-[var(--color-text-faint)] select-none"
+                      style={{ fontSize: 14, lineHeight: 1 }}
+                    >
+                      └
+                    </span>
+                  )}
+                  {c.type === 'physical' ? (
+                    <User className="w-4 h-4 text-[var(--color-text-muted)]" />
+                  ) : (
+                    <Building2 className="w-4 h-4 text-[var(--color-text-muted)]" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">
+                    {contactDisplayName(c)}
+                  </div>
+                  {c.fileRef && (
+                    <div className="text-xs text-[var(--color-text-muted)]">
+                      Réf. : {c.fileRef}
+                    </div>
+                  )}
+                </div>
+                <select
+                  value={dc.role}
+                  onChange={(e) =>
+                    handleUpdateDossierContact(dc, {
+                      role: e.target.value as DossierRole,
+                    })
+                  }
+                  className="text-xs px-2 py-1 rounded bg-transparent border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-primary)] focus:outline-none"
+                >
+                  {Object.entries(DOSSIER_ROLE_LABELS).map(([v, l]) => (
+                    <option key={v} value={v}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  {c.email && (
+                    <div className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] truncate">
+                      <Mail className="w-3 h-3" /> {c.email}
+                    </div>
+                  )}
+                  {c.phone && (
+                    <div className="flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
+                      <Phone className="w-3 h-3" /> {c.phone}
+                    </div>
+                  )}
+                  {c.address && (
+                    <div className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] truncate">
+                      <MapPin className="w-3 h-3" /> {c.address}
+                    </div>
+                  )}
+                </div>
+                <select
+                  value={dc.permissions[0] ?? 'read'}
+                  onChange={(e) =>
+                    handleUpdateDossierContact(dc, {
+                      permissions: [e.target.value as DossierPermission],
+                    })
+                  }
+                  className="text-xs px-2 py-1 rounded bg-transparent border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-primary)] focus:outline-none"
+                >
+                  {Object.entries(PERMISSION_LABELS).map(([v, l]) => (
+                    <option key={v} value={v}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex justify-end gap-1 relative">
+                  <button
+                    onClick={() =>
+                      setPlusMenuFor(plusMenuFor === dc.id ? null : dc.id!)
+                    }
+                    className="p-1 rounded hover:bg-[var(--color-border)]"
+                    title="Lier un intervenant"
+                    aria-label="Ajouter un intervenant lié"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                  {plusMenuFor === dc.id && (
+                    <RoleLinkMenu
+                      onPick={(role) => {
+                        setPlusMenuFor(null);
+                        setLinkParent(dc);
+                        setLinkRole(role);
+                      }}
+                      onClose={() => setPlusMenuFor(null)}
+                    />
+                  )}
+                  <button
+                    onClick={() => {
+                      setEditingContact(c);
+                      setContactDialogOpen(true);
+                    }}
+                    className="p-1 rounded hover:bg-[var(--color-border)]"
+                    title="Modifier"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => detachContactFromDossier(dc.id!)}
+                    className="p-1 rounded hover:bg-red-100"
+                    title="Retirer du dossier"
+                  >
+                    <X className="w-3.5 h-3.5 text-red-500" />
+                  </button>
+                </div>
+              </div>
+            ));
+          })()}
         </div>
       </div>
 
@@ -251,9 +316,13 @@ export function DossierContactsTab({ dossier }: Props) {
         open={contactDialogOpen}
         initial={editingContact ?? undefined}
         requireRole={!editingContact}
+        presetRole={pendingLinkRole ?? undefined}
+        presetType={pendingLinkRole ? defaultTypeForRole(pendingLinkRole) : undefined}
         onClose={() => {
           setContactDialogOpen(false);
           setEditingContact(null);
+          setPendingLinkParent(null);
+          setPendingLinkRole(null);
         }}
         onSave={handleSaveContact}
         onDelete={
@@ -267,7 +336,245 @@ export function DossierContactsTab({ dossier }: Props) {
         excludedIds={contactIds}
         onClose={() => setAttachOpen(false)}
       />
+
+      <LinkContactDialog
+        open={linkParent != null && linkRole != null}
+        parent={linkParent}
+        role={linkRole}
+        dossierId={dossier.id!}
+        existingContactIds={contactIds}
+        onClose={() => {
+          setLinkParent(null);
+          setLinkRole(null);
+        }}
+        onLinkExisting={async (contactId) => {
+          if (linkParent?.id == null || !linkRole) return;
+          await attachContactToDossier(
+            dossier.id!,
+            contactId,
+            linkRole,
+            ['read'],
+            linkParent.id,
+          );
+          setLinkParent(null);
+          setLinkRole(null);
+        }}
+        onCreateNew={() => {
+          // Sauvegarde du contexte puis ouverture du ContactDialog en mode
+          // création avec le rôle et le type pré-remplis.
+          setPendingLinkParent(linkParent);
+          setPendingLinkRole(linkRole);
+          setLinkParent(null);
+          setLinkRole(null);
+          setEditingContact(null);
+          setContactDialogOpen(true);
+        }}
+      />
     </>
+  );
+}
+
+/**
+ * Type de contact par défaut pour un rôle donné (utilisé lors de la création
+ * d'un intervenant "lié" depuis le bouton +). La plupart des rôles (avocat,
+ * expert, commissaire de justice, témoin…) désignent des personnes physiques.
+ * Seule la juridiction est par défaut une personne morale.
+ */
+function defaultTypeForRole(role: DossierRole): ContactType {
+  return role === 'court' ? 'moral' : 'physical';
+}
+
+// ─── RoleLinkMenu : popup des rôles disponibles pour un lien ──────────────
+// Les rôles primaires (client, adversary) ne sont pas proposés car ils
+// correspondent à des intervenants racines plutôt qu'à des liens.
+const LINK_ROLES: DossierRole[] = [
+  'adversaryCounsel',
+  'ownCounsel',
+  'bailiff',
+  'expert',
+  'witness',
+  'judge',
+  'court',
+  'collaborator',
+  'trainee',
+  'assistant',
+  'other',
+];
+
+function RoleLinkMenu({
+  onPick,
+  onClose,
+}: {
+  onPick: (role: DossierRole) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest('[data-role-link-menu]')) onClose();
+    };
+    // Délai pour ne pas capter le click d'ouverture.
+    const id = setTimeout(() => document.addEventListener('mousedown', h), 0);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener('mousedown', h);
+    };
+  }, [onClose]);
+  return (
+    <div
+      data-role-link-menu
+      className="absolute right-0 top-full mt-1 z-20 min-w-[220px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg py-1"
+    >
+      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
+        A pour…
+      </div>
+      {LINK_ROLES.map((r) => (
+        <button
+          key={r}
+          type="button"
+          onClick={() => onPick(r)}
+          className="w-full text-left px-3 py-1.5 text-sm hover:bg-[var(--color-surface-raised)]"
+        >
+          {DOSSIER_ROLE_LABELS[r]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── LinkContactDialog : recherche/création d'un intervenant lié ────────────
+function LinkContactDialog({
+  open,
+  parent,
+  role,
+  dossierId,
+  existingContactIds,
+  onClose,
+  onLinkExisting,
+  onCreateNew,
+}: {
+  open: boolean;
+  parent: DossierContact | null;
+  role: DossierRole | null;
+  dossierId: number;
+  existingContactIds: number[];
+  onClose: () => void;
+  onLinkExisting: (contactId: number) => void;
+  onCreateNew: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  useEffect(() => { if (open) setSearch(''); }, [open]);
+  const all = useLiveQuery<Contact[]>(
+    () => (open ? db.contacts.toArray() : Promise.resolve([] as Contact[])),
+    [open],
+  );
+  if (!open || !parent || !role) return null;
+
+  const filterType = defaultTypeForRole(role);
+  const q = search.trim().toLowerCase();
+  const matches = (all ?? [])
+    .filter((c) => c.type === filterType)
+    .filter((c) => {
+      if (!q) return true;
+      return (
+        contactDisplayName(c).toLowerCase().includes(q) ||
+        (c.email ?? '').toLowerCase().includes(q) ||
+        (c.lastName ?? '').toLowerCase().includes(q) ||
+        (c.companyName ?? '').toLowerCase().includes(q)
+      );
+    })
+    .slice(0, 20);
+
+  const alreadyLinked = new Set(existingContactIds);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.45)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="relative flex flex-col rounded-xl shadow-2xl w-[540px] max-w-[calc(100vw-32px)] max-h-[80vh]"
+        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)]">
+          <h3 className="text-sm font-semibold">
+            Lier un <span className="text-[var(--color-primary)]">{DOSSIER_ROLE_LABELS[role].toLowerCase()}</span>
+          </h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--color-surface-raised)]">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-4 flex flex-col gap-3 overflow-hidden flex-1">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-muted)] pointer-events-none" />
+            <input
+              autoFocus
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Rechercher dans l'annuaire…"
+              className={cn(
+                'w-full pl-9 pr-3 py-2 text-sm rounded-md',
+                'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+                'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
+              )}
+            />
+          </div>
+
+          <div className="flex-1 overflow-auto border border-[var(--color-border)] rounded-md divide-y divide-[var(--color-border)]">
+            {matches.length === 0 ? (
+              <div className="text-sm text-center py-6 text-[var(--color-text-muted)]">
+                Aucun intervenant trouvé.
+              </div>
+            ) : (
+              matches.map((c) => {
+                const isLinked = alreadyLinked.has(c.id!);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => onLinkExisting(c.id!)}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--color-surface-raised)]"
+                  >
+                    {c.type === 'physical' ? (
+                      <User className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+                    ) : (
+                      <Building2 className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+                    )}
+                    <span className="flex-1 truncate">{contactDisplayName(c)}</span>
+                    {c.email && (
+                      <span className="text-xs text-[var(--color-text-muted)] truncate">
+                        {c.email}
+                      </span>
+                    )}
+                    {isLinked && (
+                      <span className="text-[10px] text-[var(--color-text-muted)] bg-[var(--color-surface-raised)] px-1.5 py-0.5 rounded">
+                        déjà au dossier
+                      </span>
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={onCreateNew}
+            className={cn(
+              'flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-md font-medium',
+              'border border-dashed border-[var(--color-primary)] text-[var(--color-primary)]',
+              'hover:bg-[var(--color-primary)]/10',
+            )}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Créer un nouveau {DOSSIER_ROLE_LABELS[role].toLowerCase()}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -276,6 +583,8 @@ function ContactDialog({
   open,
   initial,
   requireRole,
+  presetRole,
+  presetType,
   onClose,
   onSave,
   onDelete,
@@ -283,6 +592,8 @@ function ContactDialog({
   open: boolean;
   initial?: Contact;
   requireRole?: boolean;
+  presetRole?: DossierRole;
+  presetType?: ContactType;
   onClose: () => void;
   onSave: (c: Contact, role?: DossierRole) => void;
   onDelete?: () => void;
@@ -304,8 +615,6 @@ function ContactDialog({
   const [rcsCity, setRcsCity] = useState('');
   const [representative, setRepresentative] = useState('');
   const [representativeRole, setRepresentativeRole] = useState('');
-  const [representativeContactId, setRepresentativeContactId] = useState<number | undefined>(undefined);
-  const [counselId, setCounselId] = useState<number | undefined>(undefined);
 
   const [email, setEmail] = useState('');
   const [additionalEmails, setAdditionalEmails] = useState<string[]>([]);
@@ -340,8 +649,6 @@ function ContactDialog({
       setRcsCity(initial.rcsCity ?? '');
       setRepresentative(initial.representative ?? '');
       setRepresentativeRole(initial.representativeRole ?? '');
-      setRepresentativeContactId(initial.representativeContactId);
-      setCounselId(initial.counselId);
       setEmail(initial.email ?? '');
       setAdditionalEmails(initial.additionalEmails ?? []);
       setPhone(initial.phone ?? '');
@@ -357,7 +664,7 @@ function ContactDialog({
       setFileRef(initial.fileRef ?? '');
       setNotes(initial.notes ?? '');
     } else {
-      setType('physical');
+      setType(presetType ?? 'physical');
       setCivility('');
       setFirstName('');
       setLastName('');
@@ -373,8 +680,6 @@ function ContactDialog({
       setRcsCity('');
       setRepresentative('');
       setRepresentativeRole('');
-      setRepresentativeContactId(undefined);
-      setCounselId(undefined);
       setEmail('');
       setAdditionalEmails([]);
       setPhone('');
@@ -382,9 +687,9 @@ function ContactDialog({
       setAddress({});
       setFileRef('');
       setNotes('');
-      setRole('client');
+      setRole(presetRole ?? 'client');
     }
-  }, [open, initial]);
+  }, [open, initial, presetRole, presetType]);
 
   if (!open) return null;
 
@@ -425,8 +730,6 @@ function ContactDialog({
       rcsCity: rcsCity.trim() || undefined,
       representative: representative.trim() || undefined,
       representativeRole: representativeRole.trim() || undefined,
-      representativeContactId,
-      counselId,
       email: email.trim() || undefined,
       additionalEmails: additionalEmails.map((e) => e.trim()).filter(Boolean),
       phone: phone.trim() || undefined,
@@ -654,7 +957,7 @@ function ContactDialog({
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Représentant légal (libre)">
+                <Field label="Représentant légal">
                   <input
                     type="text"
                     value={representative}
@@ -673,29 +976,8 @@ function ContactDialog({
                   />
                 </Field>
               </div>
-
-              <Field label="Représenté par (lien intervenant)">
-                <ContactPicker
-                  value={representativeContactId}
-                  onChange={setRepresentativeContactId}
-                  filterType="physical"
-                  excludeId={initial?.id}
-                  placeholder="Rechercher la personne physique représentante…"
-                />
-              </Field>
             </>
           )}
-
-          {/* "A pour avocat" — disponible pour les deux types (physique/morale) */}
-          <Field label="A pour avocat">
-            <ContactPicker
-              value={counselId}
-              onChange={setCounselId}
-              filterType="physical"
-              excludeId={initial?.id}
-              placeholder="Rechercher l'avocat dans l'annuaire…"
-            />
-          </Field>
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Adresses e-mail">
@@ -995,144 +1277,3 @@ function MultiInput({
   );
 }
 
-// ─── ContactRelationLine : ligne d'affichage d'une relation (avocat / représentant) ─
-function ContactRelationLine({
-  label,
-  contactId,
-}: {
-  label: string;
-  contactId?: number;
-}) {
-  const target = useLiveQuery<Contact | undefined>(
-    () => (contactId != null ? db.contacts.get(contactId) : Promise.resolve(undefined)),
-    [contactId],
-  );
-  if (!contactId || !target) return null;
-  return (
-    <div className="text-xs text-[var(--color-text-muted)] truncate">
-      {label} : <span className="text-[var(--color-text)]">{contactDisplayName(target)}</span>
-    </div>
-  );
-}
-
-// ─── ContactPicker : typeahead pour lier un contact à un autre ──────────────
-// Permet de chercher dans l'annuaire et de sélectionner un contact existant.
-// Optionnellement filtré par type (ex. uniquement personnes physiques pour
-// un avocat). Affiche le contact sélectionné comme une "puce" cliquable
-// pour détacher.
-function ContactPicker({
-  value,
-  onChange,
-  filterType,
-  excludeId,
-  placeholder = 'Rechercher un intervenant…',
-}: {
-  value: number | undefined;
-  onChange: (id: number | undefined) => void;
-  filterType?: ContactType;
-  excludeId?: number;
-  placeholder?: string;
-}) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const all = useLiveQuery<Contact[]>(() => db.contacts.toArray(), []);
-  const selected = useLiveQuery<Contact | undefined>(
-    () => (value != null ? db.contacts.get(value) : Promise.resolve(undefined)),
-    [value],
-  );
-
-  // Si un contact est sélectionné, on affiche une puce (chip) au lieu du
-  // champ de recherche — un clic sur la croix le détache.
-  if (selected) {
-    return (
-      <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)]">
-        {selected.type === 'physical' ? (
-          <User className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        ) : (
-          <Building2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        )}
-        <span className="flex-1 text-sm truncate">{contactDisplayName(selected)}</span>
-        <button
-          type="button"
-          onClick={() => onChange(undefined)}
-          aria-label="Détacher"
-          className="text-[var(--color-text-muted)] hover:text-[var(--color-error)]"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    );
-  }
-
-  const q = query.trim().toLowerCase();
-  const matches = (all ?? [])
-    .filter((c) => c.id !== excludeId)
-    .filter((c) => !filterType || c.type === filterType)
-    .filter((c) => {
-      if (!q) return true;
-      const name = contactDisplayName(c).toLowerCase();
-      return (
-        name.includes(q) ||
-        (c.email ?? '').toLowerCase().includes(q) ||
-        (c.companyName ?? '').toLowerCase().includes(q) ||
-        (c.lastName ?? '').toLowerCase().includes(q) ||
-        (c.firstName ?? '').toLowerCase().includes(q)
-      );
-    })
-    .slice(0, 8);
-
-  return (
-    <div className="relative">
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-muted)] pointer-events-none" />
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder={placeholder}
-          className={cn(
-            'w-full pl-9 pr-3 py-2 text-sm rounded-md',
-            'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-            'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
-          )}
-        />
-      </div>
-      {open && matches.length > 0 && (
-        <div className="absolute z-10 left-0 right-0 mt-1 max-h-60 overflow-y-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
-          {matches.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                onChange(c.id);
-                setQuery('');
-                setOpen(false);
-              }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--color-surface-raised)]"
-            >
-              {c.type === 'physical' ? (
-                <User className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
-              ) : (
-                <Building2 className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
-              )}
-              <span className="flex-1 truncate">{contactDisplayName(c)}</span>
-              {c.email && (
-                <span className="text-xs text-[var(--color-text-muted)] truncate ml-2">
-                  {c.email}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-      {open && q.length > 0 && matches.length === 0 && (
-        <div className="absolute z-10 left-0 right-0 mt-1 px-3 py-2 text-xs text-[var(--color-text-muted)] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
-          Aucun intervenant trouvé. Créez-le d&apos;abord depuis « Nouvel intervenant ».
-        </div>
-      )}
-    </div>
-  );
-}

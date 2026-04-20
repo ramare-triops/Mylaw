@@ -427,15 +427,22 @@ export async function attachContactToDossier(
   contactId: number,
   role: DossierContact['role'],
   permissions: DossierContact['permissions'] = ['read'],
+  parentDossierContactId?: number,
 ): Promise<number> {
   const existing = await db.dossierContacts
     .where('[dossierId+contactId]').equals([dossierId, contactId]).first();
   if (existing?.id) {
-    await db.dossierContacts.put({ ...existing, role, permissions });
+    // Si le contact est déjà rattaché au dossier avec un rôle racine et
+    // qu'on demande un rattachement à un parent, on met à jour le lien.
+    await db.dossierContacts.put({
+      ...existing, role, permissions,
+      parentDossierContactId: parentDossierContactId ?? existing.parentDossierContactId,
+    });
     return existing.id;
   }
   const id = await db.dossierContacts.add({
     dossierId, contactId, role, permissions,
+    parentDossierContactId,
     createdAt: new Date(),
   } as DossierContact);
   await logAudit({
@@ -443,7 +450,7 @@ export async function attachContactToDossier(
     entityType: 'contact',
     entityId: contactId,
     action: 'attach',
-    details: JSON.stringify({ role }),
+    details: JSON.stringify({ role, parentDossierContactId }),
   });
   return Number(id);
 }

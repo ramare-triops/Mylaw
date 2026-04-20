@@ -51,7 +51,7 @@ export const DOSSIER_ROLE_LABELS: Record<DossierRole, string> = {
   trainee: 'Stagiaire',
   assistant: 'Assistant(e)',
   expert: 'Expert',
-  bailiff: 'Huissier',
+  bailiff: 'Commissaire de justice',
   judge: 'Magistrat',
   court: 'Juridiction',
   witness: 'Témoin',
@@ -120,7 +120,7 @@ export const TIME_ACTIVITY_LABELS: Record<TimeActivity, string> = {
 };
 
 export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
-  bailiff: 'Huissier',
+  bailiff: 'Commissaire de justice',
   signification: 'Signification',
   translation: 'Traduction',
   clerk: 'Greffe',

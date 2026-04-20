@@ -406,13 +406,6 @@ export interface Contact {
   fileRef?: string;
   /** Avocat désigné (ID d'un autre Contact, rôle ownCounsel/adversaryCounsel). */
   counselId?: number;
-  /**
-   * Représentant légal de la personne morale, lié à un autre Contact
-   * (généralement une personne physique). Remplace le champ libre
-   * `representative` quand on souhaite un vrai lien navigable et
-   * pré-rempli automatiquement.
-   */
-  representativeContactId?: number;
   notes?: string;
   tags: string[];
   createdAt: Date;
@@ -442,6 +435,14 @@ export interface DossierContact {
   contactId: number;
   role: DossierRole;
   permissions: DossierPermission[];
+  /**
+   * Lien hiérarchique : si défini, cet intervenant est rattaché à un autre
+   * intervenant du même dossier (son « parent »). Exemple : un
+   * « confrère adverse » rattaché à la « partie adverse » ; un « expert »
+   * rattaché au « client », etc. L'UI affiche les enfants indentés sous
+   * leur parent.
+   */
+  parentDossierContactId?: number;
   notes?: string;
   createdAt: Date;
 }
