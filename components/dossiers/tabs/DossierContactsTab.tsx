@@ -163,6 +163,14 @@ export function DossierContactsTab({ dossier }: Props) {
                         Réf. : {c.fileRef}
                       </div>
                     )}
+                    <ContactRelationLine
+                      label="Avocat"
+                      contactId={c.counselId}
+                    />
+                    <ContactRelationLine
+                      label="Représenté par"
+                      contactId={c.representativeContactId}
+                    />
                   </div>
                   <select
                     value={dc.role}
@@ -296,6 +304,8 @@ function ContactDialog({
   const [rcsCity, setRcsCity] = useState('');
   const [representative, setRepresentative] = useState('');
   const [representativeRole, setRepresentativeRole] = useState('');
+  const [representativeContactId, setRepresentativeContactId] = useState<number | undefined>(undefined);
+  const [counselId, setCounselId] = useState<number | undefined>(undefined);
 
   const [email, setEmail] = useState('');
   const [additionalEmails, setAdditionalEmails] = useState<string[]>([]);
@@ -330,6 +340,8 @@ function ContactDialog({
       setRcsCity(initial.rcsCity ?? '');
       setRepresentative(initial.representative ?? '');
       setRepresentativeRole(initial.representativeRole ?? '');
+      setRepresentativeContactId(initial.representativeContactId);
+      setCounselId(initial.counselId);
       setEmail(initial.email ?? '');
       setAdditionalEmails(initial.additionalEmails ?? []);
       setPhone(initial.phone ?? '');
@@ -361,6 +373,8 @@ function ContactDialog({
       setRcsCity('');
       setRepresentative('');
       setRepresentativeRole('');
+      setRepresentativeContactId(undefined);
+      setCounselId(undefined);
       setEmail('');
       setAdditionalEmails([]);
       setPhone('');
@@ -411,6 +425,8 @@ function ContactDialog({
       rcsCity: rcsCity.trim() || undefined,
       representative: representative.trim() || undefined,
       representativeRole: representativeRole.trim() || undefined,
+      representativeContactId,
+      counselId,
       email: email.trim() || undefined,
       additionalEmails: additionalEmails.map((e) => e.trim()).filter(Boolean),
       phone: phone.trim() || undefined,
@@ -638,7 +654,7 @@ function ContactDialog({
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Représentant légal">
+                <Field label="Représentant légal (libre)">
                   <input
                     type="text"
                     value={representative}
@@ -657,8 +673,29 @@ function ContactDialog({
                   />
                 </Field>
               </div>
+
+              <Field label="Représenté par (lien intervenant)">
+                <ContactPicker
+                  value={representativeContactId}
+                  onChange={setRepresentativeContactId}
+                  filterType="physical"
+                  excludeId={initial?.id}
+                  placeholder="Rechercher la personne physique représentante…"
+                />
+              </Field>
             </>
           )}
+
+          {/* "A pour avocat" — disponible pour les deux types (physique/morale) */}
+          <Field label="A pour avocat">
+            <ContactPicker
+              value={counselId}
+              onChange={setCounselId}
+              filterType="physical"
+              excludeId={initial?.id}
+              placeholder="Rechercher l'avocat dans l'annuaire…"
+            />
+          </Field>
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Adresses e-mail">
@@ -954,6 +991,148 @@ function MultiInput({
           </button>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─── ContactRelationLine : ligne d'affichage d'une relation (avocat / représentant) ─
+function ContactRelationLine({
+  label,
+  contactId,
+}: {
+  label: string;
+  contactId?: number;
+}) {
+  const target = useLiveQuery<Contact | undefined>(
+    () => (contactId != null ? db.contacts.get(contactId) : Promise.resolve(undefined)),
+    [contactId],
+  );
+  if (!contactId || !target) return null;
+  return (
+    <div className="text-xs text-[var(--color-text-muted)] truncate">
+      {label} : <span className="text-[var(--color-text)]">{contactDisplayName(target)}</span>
+    </div>
+  );
+}
+
+// ─── ContactPicker : typeahead pour lier un contact à un autre ──────────────
+// Permet de chercher dans l'annuaire et de sélectionner un contact existant.
+// Optionnellement filtré par type (ex. uniquement personnes physiques pour
+// un avocat). Affiche le contact sélectionné comme une "puce" cliquable
+// pour détacher.
+function ContactPicker({
+  value,
+  onChange,
+  filterType,
+  excludeId,
+  placeholder = 'Rechercher un intervenant…',
+}: {
+  value: number | undefined;
+  onChange: (id: number | undefined) => void;
+  filterType?: ContactType;
+  excludeId?: number;
+  placeholder?: string;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const all = useLiveQuery<Contact[]>(() => db.contacts.toArray(), []);
+  const selected = useLiveQuery<Contact | undefined>(
+    () => (value != null ? db.contacts.get(value) : Promise.resolve(undefined)),
+    [value],
+  );
+
+  // Si un contact est sélectionné, on affiche une puce (chip) au lieu du
+  // champ de recherche — un clic sur la croix le détache.
+  if (selected) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+        {selected.type === 'physical' ? (
+          <User className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+        ) : (
+          <Building2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+        )}
+        <span className="flex-1 text-sm truncate">{contactDisplayName(selected)}</span>
+        <button
+          type="button"
+          onClick={() => onChange(undefined)}
+          aria-label="Détacher"
+          className="text-[var(--color-text-muted)] hover:text-[var(--color-error)]"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    );
+  }
+
+  const q = query.trim().toLowerCase();
+  const matches = (all ?? [])
+    .filter((c) => c.id !== excludeId)
+    .filter((c) => !filterType || c.type === filterType)
+    .filter((c) => {
+      if (!q) return true;
+      const name = contactDisplayName(c).toLowerCase();
+      return (
+        name.includes(q) ||
+        (c.email ?? '').toLowerCase().includes(q) ||
+        (c.companyName ?? '').toLowerCase().includes(q) ||
+        (c.lastName ?? '').toLowerCase().includes(q) ||
+        (c.firstName ?? '').toLowerCase().includes(q)
+      );
+    })
+    .slice(0, 8);
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-muted)] pointer-events-none" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder={placeholder}
+          className={cn(
+            'w-full pl-9 pr-3 py-2 text-sm rounded-md',
+            'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+            'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
+          )}
+        />
+      </div>
+      {open && matches.length > 0 && (
+        <div className="absolute z-10 left-0 right-0 mt-1 max-h-60 overflow-y-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
+          {matches.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onChange(c.id);
+                setQuery('');
+                setOpen(false);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--color-surface-raised)]"
+            >
+              {c.type === 'physical' ? (
+                <User className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+              ) : (
+                <Building2 className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+              )}
+              <span className="flex-1 truncate">{contactDisplayName(c)}</span>
+              {c.email && (
+                <span className="text-xs text-[var(--color-text-muted)] truncate ml-2">
+                  {c.email}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+      {open && q.length > 0 && matches.length === 0 && (
+        <div className="absolute z-10 left-0 right-0 mt-1 px-3 py-2 text-xs text-[var(--color-text-muted)] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
+          Aucun intervenant trouvé. Créez-le d&apos;abord depuis « Nouvel intervenant ».
+        </div>
+      )}
     </div>
   );
 }

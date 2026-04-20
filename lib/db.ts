@@ -322,6 +322,31 @@ export async function logAudit(entry: Omit<AuditEntry, 'id' | 'timestamp'> & { t
 }
 
 // ─── Dossier helpers ──────────────────────────────────────────────────────
+
+/**
+ * Calcule la prochaine référence libre pour un dossier au format `YYNNN`,
+ * où YY = deux derniers chiffres de l'année et NNN = compteur séquentiel
+ * (3 chiffres minimum, plus si nécessaire). On prend le max des références
+ * existantes pour l'année donnée et on incrémente — les anciennes références
+ * dans d'autres formats (ex. `2026-1234`) sont ignorées par le filtre regex.
+ *
+ * Exemples : 26001, 26002, 26003, …, 26999, 261000.
+ */
+export async function nextDossierReference(year: number = new Date().getFullYear()): Promise<string> {
+  const yy = String(year % 100).padStart(2, '0');
+  const re = new RegExp(`^${yy}(\\d+)$`);
+  const all = await db.dossiers.toArray();
+  let maxN = 0;
+  for (const d of all) {
+    const m = (d.reference ?? '').match(re);
+    if (!m) continue;
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > maxN) maxN = n;
+  }
+  const next = maxN + 1;
+  return `${yy}${String(next).padStart(3, '0')}`;
+}
+
 export async function saveDossier(dossier: Dossier): Promise<number> {
   const now = new Date();
   const payload: Dossier = {

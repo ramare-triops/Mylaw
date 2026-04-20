@@ -8,6 +8,7 @@ import {
   DOSSIER_TYPE_LABELS,
   DOSSIER_STATUS_LABELS,
 } from './labels';
+import { nextDossierReference } from '@/lib/db';
 
 interface NewDossierDialogProps {
   open: boolean;
@@ -41,15 +42,20 @@ export function NewDossierDialog({
       setDescription(initial.description ?? '');
       setTagsInput((initial.tags ?? []).join(', '));
     } else {
-      const year = new Date().getFullYear();
-      const suggested = `${year}-${Math.floor(Math.random() * 9000 + 1000)}`;
-      setReference(suggested);
+      // Suggestion immédiate (placeholder optimiste) puis valeur exacte
+      // récupérée depuis Dexie via nextDossierReference().
+      setReference('');
       setName('');
       setType('judiciary');
       setStatus('open');
       setClientName('');
       setDescription('');
       setTagsInput('');
+      let cancelled = false;
+      void nextDossierReference().then((ref) => {
+        if (!cancelled) setReference(ref);
+      });
+      return () => { cancelled = true; };
     }
   }, [open, initial]);
 
@@ -114,7 +120,7 @@ export function NewDossierDialog({
                 type="text"
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
-                placeholder="2026-0123"
+                placeholder="26001"
                 className={inputCls}
                 autoFocus
               />

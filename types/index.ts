@@ -406,6 +406,13 @@ export interface Contact {
   fileRef?: string;
   /** Avocat désigné (ID d'un autre Contact, rôle ownCounsel/adversaryCounsel). */
   counselId?: number;
+  /**
+   * Représentant légal de la personne morale, lié à un autre Contact
+   * (généralement une personne physique). Remplace le champ libre
+   * `representative` quand on souhaite un vrai lien navigable et
+   * pré-rempli automatiquement.
+   */
+  representativeContactId?: number;
   notes?: string;
   tags: string[];
   createdAt: Date;
