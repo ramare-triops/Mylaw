@@ -989,7 +989,7 @@ function DropSuggestionPopup({
             fontSize: 13,
             fontWeight: 700,
             color: '#fff',
-            background: '#2563eb',
+            background: 'var(--color-primary)',
             padding: '2px 8px',
             borderRadius: 6,
             marginTop: 2,
