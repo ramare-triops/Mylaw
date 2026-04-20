@@ -35,7 +35,13 @@ import type {
   DossierPermission,
   ContactType,
   DossierContact,
+  Civility,
 } from '@/types';
+import {
+  StructuredAddressFields,
+  composeAddress,
+  type StructuredAddress,
+} from '../StructuredAddressFields';
 
 interface Props {
   dossier: Dossier;
@@ -273,12 +279,27 @@ function ContactDialog({
   onDelete?: () => void;
 }) {
   const [type, setType] = useState<ContactType>('physical');
+  const [civility, setCivility] = useState<Civility | ''>('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [birthDate, setBirthDate] = useState('');
+  const [birthPlace, setBirthPlace] = useState('');
+  const [nationality, setNationality] = useState('');
+  const [profession, setProfession] = useState('');
+
   const [companyName, setCompanyName] = useState('');
+  const [legalForm, setLegalForm] = useState('');
+  const [capital, setCapital] = useState('');
+  const [siret, setSiret] = useState('');
+  const [rcs, setRcs] = useState('');
+  const [rcsCity, setRcsCity] = useState('');
+  const [representative, setRepresentative] = useState('');
+  const [representativeRole, setRepresentativeRole] = useState('');
+
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState('');
+  const [address, setAddress] = useState<StructuredAddress>({});
+
   const [fileRef, setFileRef] = useState('');
   const [notes, setNotes] = useState('');
   const [role, setRole] = useState<DossierRole>('client');
@@ -287,22 +308,56 @@ function ContactDialog({
     if (!open) return;
     if (initial) {
       setType(initial.type);
+      setCivility(initial.civility ?? '');
       setFirstName(initial.firstName ?? '');
       setLastName(initial.lastName ?? '');
+      setBirthDate(
+        initial.birthDate
+          ? new Date(initial.birthDate).toISOString().slice(0, 10)
+          : ''
+      );
+      setBirthPlace(initial.birthPlace ?? '');
+      setNationality(initial.nationality ?? '');
+      setProfession(initial.profession ?? '');
       setCompanyName(initial.companyName ?? '');
+      setLegalForm(initial.legalForm ?? '');
+      setCapital(initial.capital != null ? String(initial.capital) : '');
+      setSiret(initial.siret ?? '');
+      setRcs(initial.rcs ?? '');
+      setRcsCity(initial.rcsCity ?? '');
+      setRepresentative(initial.representative ?? '');
+      setRepresentativeRole(initial.representativeRole ?? '');
       setEmail(initial.email ?? '');
       setPhone(initial.phone ?? '');
-      setAddress(initial.address ?? '');
+      setAddress({
+        addressNumber: initial.addressNumber,
+        addressStreet: initial.addressStreet,
+        addressComplement: initial.addressComplement,
+        addressPostalCode: initial.addressPostalCode,
+        addressCity: initial.addressCity,
+      });
       setFileRef(initial.fileRef ?? '');
       setNotes(initial.notes ?? '');
     } else {
       setType('physical');
+      setCivility('');
       setFirstName('');
       setLastName('');
+      setBirthDate('');
+      setBirthPlace('');
+      setNationality('');
+      setProfession('');
       setCompanyName('');
+      setLegalForm('');
+      setCapital('');
+      setSiret('');
+      setRcs('');
+      setRcsCity('');
+      setRepresentative('');
+      setRepresentativeRole('');
       setEmail('');
       setPhone('');
-      setAddress('');
+      setAddress({});
       setFileRef('');
       setNotes('');
       setRole('client');
@@ -314,15 +369,48 @@ function ContactDialog({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const now = new Date();
+    // Normalisations classiques : nom en MAJUSCULES, prénom en Title case.
+    const normalizedLast = lastName.trim().toUpperCase();
+    const normalizedFirst = firstName
+      .trim()
+      .toLowerCase()
+      .split(/\s+|-/)
+      .map((w, i, arr) => {
+        if (!w) return w;
+        const cap = w.charAt(0).toUpperCase() + w.slice(1);
+        // On préserve les traits d'union (-) en reconstruisant plus bas.
+        return cap;
+      })
+      .join(' ')
+      .replace(/\bDe\b/g, 'de')
+      .replace(/\bDu\b/g, 'du');
+    const composedAddress = composeAddress(address);
     const payload: Contact = {
       ...(initial ?? {}),
       type,
-      firstName: firstName.trim() || undefined,
-      lastName: lastName.trim() || undefined,
+      civility: civility || undefined,
+      firstName: normalizedFirst || undefined,
+      lastName: normalizedLast || undefined,
+      birthDate: birthDate ? new Date(birthDate) : undefined,
+      birthPlace: birthPlace.trim() || undefined,
+      nationality: nationality.trim() || undefined,
+      profession: profession.trim() || undefined,
       companyName: companyName.trim() || undefined,
+      legalForm: legalForm.trim() || undefined,
+      capital: capital.trim() ? Number(capital.replace(/\s/g, '')) : undefined,
+      siret: siret.trim() || undefined,
+      rcs: rcs.trim() || undefined,
+      rcsCity: rcsCity.trim() || undefined,
+      representative: representative.trim() || undefined,
+      representativeRole: representativeRole.trim() || undefined,
       email: email.trim() || undefined,
       phone: phone.trim() || undefined,
-      address: address.trim() || undefined,
+      addressNumber: address.addressNumber || undefined,
+      addressStreet: address.addressStreet || undefined,
+      addressComplement: address.addressComplement || undefined,
+      addressPostalCode: address.addressPostalCode || undefined,
+      addressCity: address.addressCity || undefined,
+      address: composedAddress || undefined,
       fileRef: fileRef.trim() || undefined,
       notes: notes.trim() || undefined,
       tags: initial?.tags ?? [],
@@ -330,8 +418,6 @@ function ContactDialog({
       updatedAt: now,
     };
     onSave(payload, requireRole ? role : undefined);
-    setFirstName(''); setLastName(''); setCompanyName('');
-    setEmail(''); setPhone(''); setAddress(''); setFileRef(''); setNotes('');
   }
 
   const inputCls = cn(
@@ -386,31 +472,194 @@ function ContactDialog({
           </div>
 
           {type === 'physical' ? (
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Prénom">
-                <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className={inputCls} />
-              </Field>
-              <Field label="Nom">
-                <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputCls} />
-              </Field>
-            </div>
+            <>
+              <div className="grid grid-cols-[110px_1fr_1fr] gap-3">
+                <Field label="Civilité">
+                  <select
+                    value={civility}
+                    onChange={(e) =>
+                      setCivility(e.target.value as Civility | '')
+                    }
+                    className={inputCls}
+                  >
+                    <option value="">—</option>
+                    <option value="M.">M.</option>
+                    <option value="Mme">Mme</option>
+                    <option value="Mlle">Mlle</option>
+                    <option value="Me">Me (Maître)</option>
+                    <option value="Pr.">Pr.</option>
+                    <option value="Dr.">Dr.</option>
+                  </select>
+                </Field>
+                <Field label="Prénom">
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="François"
+                    className={inputCls}
+                    autoComplete="given-name"
+                  />
+                </Field>
+                <Field label="Nom">
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) =>
+                      setLastName(e.target.value.toUpperCase())
+                    }
+                    placeholder="DUPONT"
+                    className={cn(inputCls, 'uppercase')}
+                    autoComplete="family-name"
+                  />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Date de naissance">
+                  <input
+                    type="date"
+                    value={birthDate}
+                    onChange={(e) => setBirthDate(e.target.value)}
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Lieu de naissance">
+                  <input
+                    type="text"
+                    value={birthPlace}
+                    onChange={(e) => setBirthPlace(e.target.value)}
+                    placeholder="Lyon"
+                    className={inputCls}
+                  />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Nationalité">
+                  <input
+                    type="text"
+                    value={nationality}
+                    onChange={(e) => setNationality(e.target.value)}
+                    placeholder="française"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Profession">
+                  <input
+                    type="text"
+                    value={profession}
+                    onChange={(e) => setProfession(e.target.value)}
+                    placeholder="cadre"
+                    className={inputCls}
+                  />
+                </Field>
+              </div>
+            </>
           ) : (
-            <Field label="Raison sociale">
-              <input type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} className={inputCls} />
-            </Field>
+            <>
+              <Field label="Raison sociale">
+                <input
+                  type="text"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  placeholder="SCI Martin"
+                  className={inputCls}
+                />
+              </Field>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Forme juridique">
+                  <input
+                    type="text"
+                    value={legalForm}
+                    onChange={(e) => setLegalForm(e.target.value)}
+                    placeholder="SAS"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Capital social (€)">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={capital}
+                    onChange={(e) =>
+                      setCapital(e.target.value.replace(/[^\d]/g, ''))
+                    }
+                    placeholder="10000"
+                    className={inputCls}
+                  />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="SIRET">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={siret}
+                    onChange={(e) =>
+                      setSiret(e.target.value.replace(/\s/g, ''))
+                    }
+                    placeholder="12345678900012"
+                    maxLength={14}
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="RCS">
+                  <div className="grid grid-cols-[1fr_110px] gap-2">
+                    <input
+                      type="text"
+                      value={rcs}
+                      onChange={(e) => setRcs(e.target.value)}
+                      placeholder="123 456 789"
+                      className={inputCls}
+                    />
+                    <input
+                      type="text"
+                      value={rcsCity}
+                      onChange={(e) => setRcsCity(e.target.value)}
+                      placeholder="Paris"
+                      className={inputCls}
+                    />
+                  </div>
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Représentant légal">
+                  <input
+                    type="text"
+                    value={representative}
+                    onChange={(e) => setRepresentative(e.target.value)}
+                    placeholder="M. Jean DUPONT"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Qualité du représentant">
+                  <input
+                    type="text"
+                    value={representativeRole}
+                    onChange={(e) => setRepresentativeRole(e.target.value)}
+                    placeholder="Président"
+                    className={inputCls}
+                  />
+                </Field>
+              </div>
+            </>
           )}
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Email">
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} autoComplete="email" />
             </Field>
             <Field label="Téléphone">
-              <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} />
+              <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} autoComplete="tel" />
             </Field>
           </div>
 
           <Field label="Adresse postale">
-            <textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={2} className={cn(inputCls, 'resize-none')} />
+            <StructuredAddressFields value={address} onChange={(patch) => setAddress((prev) => ({ ...prev, ...patch }))} />
           </Field>
 
           <Field label="Référence dossier (interne)">

@@ -263,6 +263,17 @@ export interface Brick {
   tags: string[];
   /** Référence à une étiquette structurée (optionnel) */
   infoLabelId?: number;
+  /**
+   * Type de contact attendu pour remplir les variables de cette brique.
+   * Si défini, un bouton "Depuis un intervenant" apparaît et ne propose
+   * que les contacts du type correspondant.
+   */
+  targetContactType?: ContactType;
+  /**
+   * Rôles dossier requis (intersection avec targetContactType).
+   * Si vide/absent, tous les rôles sont acceptés.
+   */
+  targetRoles?: DossierRole[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -329,16 +340,60 @@ export interface Dossier {
 // ─── Contacts / Intervenants ───────────────────────────────────────────────
 export type ContactType = 'physical' | 'moral';
 
+/** Civilités usuelles (personne physique) */
+export type Civility = 'M.' | 'Mme' | 'Mlle' | 'Me' | 'Pr.' | 'Dr.';
+
 export interface Contact {
   id?: number;
   type: ContactType;
+
+  // ── Identité (personne physique) ─────────────────────────────
+  civility?: Civility;
   firstName?: string;
   lastName?: string;
+  birthDate?: Date;
+  birthPlace?: string;
+  nationality?: string;
+  profession?: string;
+
+  // ── Identité (personne morale) ───────────────────────────────
   /** Raison sociale pour une personne morale. */
   companyName?: string;
+  /** Forme juridique (SARL, SAS, SCI, SA…). */
+  legalForm?: string;
+  /** Capital social en euros. */
+  capital?: number;
+  /** Numéro SIRET (14 chiffres). */
+  siret?: string;
+  /** Numéro RCS (sans la ville). */
+  rcs?: string;
+  /** Ville du RCS (ex. Paris B). */
+  rcsCity?: string;
+  /** Représentant légal — libellé libre (ex. "M. Jean DUPONT, Président"). */
+  representative?: string;
+  /** Qualité du représentant (Président, Gérant…). */
+  representativeRole?: string;
+
+  // ── Coordonnées ─────────────────────────────────────────────
   email?: string;
   phone?: string;
+
+  /** Adresse libre (compat + affichage groupé). Reste synchronisée avec les champs structurés. */
   address?: string;
+  /** Numéro de voie (12, 12bis…). */
+  addressNumber?: string;
+  /** Nom de la rue / voie. */
+  addressStreet?: string;
+  /** Complément d'adresse (bâtiment, étage, résidence…). */
+  addressComplement?: string;
+  /** Code postal (5 chiffres en France). */
+  addressPostalCode?: string;
+  /** Commune / ville. */
+  addressCity?: string;
+  /** Pays (par défaut implicite FR). */
+  addressCountry?: string;
+
+  // ── Métadonnées cabinet ─────────────────────────────────────
   /** Référence dossier mail (interne au cabinet). */
   fileRef?: string;
   /** Avocat désigné (ID d'un autre Contact, rôle ownCounsel/adversaryCounsel). */

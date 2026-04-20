@@ -9,7 +9,9 @@ import {
   Bold, Underline, Italic, CaseSensitive, ListFilter, FolderPlus,
 } from 'lucide-react'
 import { db, getSetting, setSetting } from '@/lib/db'
-import type { Brick as DBBrick, InfoLabel } from '@/types'
+import type { Brick as DBBrick, InfoLabel, ContactType, DossierRole, Contact } from '@/types'
+import { BrickIntervenantPicker } from './BrickIntervenantPicker'
+import { applyContactToBrickContent } from '@/lib/contact-variables'
 
 // ─── Types UI ────────────────────────────────────────────────────────────────
 
@@ -20,6 +22,10 @@ export interface Brick {
   category: string   // id de la catégorie (système ou custom)
   icon: string
   color: string
+  /** Si défini, cette brique peut être "remplie depuis un intervenant" du type correspondant. */
+  targetContactType?: ContactType
+  /** Si défini, rôles dossier éligibles pour la pré-sélection. */
+  targetRoles?: DossierRole[]
 }
 
 export interface BrickGroup {
@@ -62,9 +68,9 @@ const COLOR_OPTIONS = [
 // ─── Briques pré-installées (seed) ───────────────────────────────────────────
 
 const SEED_BRICKS: Omit<DBBrick, 'id'>[] = [
-  { title: 'Personne physique', content: '[M/Mme] **[Nom] [Prénom]**, [né/née] le [Date de naissance] à [Lieu de naissance], de nationalité [Nationalité], demeurant au [Adresse]', category: 'clause', tags: ['parties', 'user', '#01696f'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Personne morale', content: 'La société **[Nom de la société]**, [Forme juridique] au capital de [Capital social] euros, immatriculée au RCS de [Ville RCS] sous le numéro [Numéro RCS], dont le siège social est sis [Adresse du siège], représentée par [Représentant légal], en sa qualité de [Qualité du représentant]', category: 'clause', tags: ['parties', 'building', '#7c3aed'], createdAt: new Date(), updatedAt: new Date() },
-  { title: 'Ayant pour avocat', content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]", category: 'clause', tags: ['parties', 'scale', '#be185d'], createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Personne physique', content: '[M/Mme] **[Nom] [Prénom]**, [né/née] le [Date de naissance] à [Lieu de naissance], de nationalité [Nationalité], demeurant au [Adresse]', category: 'clause', tags: ['parties', 'user', '#01696f'], targetContactType: 'physical', createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Personne morale', content: 'La société **[Nom de la société]**, [Forme juridique] au capital de [Capital social] euros, immatriculée au RCS de [Ville RCS] sous le numéro [Numéro RCS], dont le siège social est sis [Adresse du siège], représentée par [Représentant légal], en sa qualité de [Qualité du représentant]', category: 'clause', tags: ['parties', 'building', '#7c3aed'], targetContactType: 'moral', createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Ayant pour avocat', content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]", category: 'clause', tags: ['parties', 'scale', '#be185d'], targetContactType: 'physical', targetRoles: ['ownCounsel', 'adversaryCounsel'], createdAt: new Date(), updatedAt: new Date() },
   { title: 'Représentant / mandataire', content: "Représenté(e) par **[Nom du mandataire]**, [Qualité], en vertu d'un pouvoir en date du [Date du pouvoir]", category: 'clause', tags: ['parties', 'briefcase', '#c2410c'], createdAt: new Date(), updatedAt: new Date() },
   { title: 'Faits et procédure', content: '^^FAITS ET PROCÉDURE^^', category: 'introduction', tags: ['structure', 'file-text', '#4f46e5'], createdAt: new Date(), updatedAt: new Date() },
   { title: 'Plaise au Tribunal', content: '^^PLAISE AU TRIBUNAL DE [Nom du tribunal]^^', category: 'introduction', tags: ['structure', 'gavel', '#4f46e5'], createdAt: new Date(), updatedAt: new Date() },
@@ -85,7 +91,12 @@ function dbBrickToUI(b: DBBrick & { id: number }): Brick {
   const uiCategory = b.tags[0] ?? 'custom'
   const icon       = b.tags[1] ?? 'file-text'
   const color      = b.tags[2] ?? SYSTEM_CATEGORIES.find(c => c.id === uiCategory)?.color ?? '#6b7280'
-  return { id: String(b.id), label: b.title, content: b.content, category: uiCategory, icon, color }
+  return {
+    id: String(b.id), label: b.title, content: b.content,
+    category: uiCategory, icon, color,
+    targetContactType: b.targetContactType,
+    targetRoles: b.targetRoles,
+  }
 }
 
 function bricksToGroups(
@@ -202,8 +213,19 @@ function BrickIcon({ name, size = 11, color }: { name: string; size?: number; co
 
 // ─── BrickChip ────────────────────────────────────────────────────────────────
 
-function BrickChip({ brick, onInsert }: { brick: Brick; onInsert: () => void }) {
+function BrickChip({
+  brick,
+  onInsert,
+  onOpenPicker,
+}: {
+  brick: Brick
+  onInsert: () => void
+  onOpenPicker?: (b: Brick, rect: DOMRect) => void
+}) {
   const [hovered, setHovered] = useState(false)
+  const chipRef = useRef<HTMLDivElement>(null)
+  const hasTarget = !!(brick.targetContactType || (brick.targetRoles && brick.targetRoles.length > 0))
+
   function handleDragStart(e: React.DragEvent) {
     e.dataTransfer.effectAllowed = 'copy'
     e.dataTransfer.setData(DRAG_BRICK_KEY, JSON.stringify(brick))
@@ -214,23 +236,67 @@ function BrickChip({ brick, onInsert }: { brick: Brick; onInsert: () => void }) 
     e.dataTransfer.setDragImage(ghost, 0, 0)
     setTimeout(() => ghost.remove(), 0)
   }
+
+  function handlePickerClick(e: React.MouseEvent) {
+    e.stopPropagation()
+    e.preventDefault()
+    if (!chipRef.current || !onOpenPicker) return
+    const rect = chipRef.current.getBoundingClientRect()
+    onOpenPicker(brick, rect)
+  }
+
   return (
-    <div draggable onDragStart={handleDragStart}
-      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-      title={`Cliquer pour insérer · Glisser dans le document\n\n${brick.content}`}
+    <div
+      ref={chipRef}
+      draggable
+      onDragStart={handleDragStart}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title={`Cliquer pour insérer · Glisser dans le document${hasTarget ? '\nIcône intervenant : pré-remplir depuis un intervenant' : ''}\n\n${brick.content}`}
       style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 8px', borderRadius: 'var(--radius-md)', border: `1.5px solid ${hovered ? brick.color : brick.color + '50'}`, background: hovered ? brick.color + '18' : brick.color + '0c', cursor: 'grab', userSelect: 'none', transition: 'all 0.12s ease', marginBottom: '4px' }}
     >
       <BrickIcon name={brick.icon} size={11} color={brick.color} />
       <span onClick={onInsert} style={{ flex: 1, fontSize: '11px', fontWeight: 500, color: brick.color, cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {brick.label}
       </span>
+      {hasTarget && onOpenPicker && (
+        <button
+          type="button"
+          onClick={handlePickerClick}
+          aria-label="Pré-remplir depuis un intervenant"
+          title="Pré-remplir depuis un intervenant"
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '18px',
+            height: '18px',
+            borderRadius: '4px',
+            border: `1px solid ${brick.color}40`,
+            background: `${brick.color}18`,
+            color: brick.color,
+            cursor: 'pointer',
+            transition: 'all 0.12s',
+          }}
+        >
+          <Users size={10} />
+        </button>
+      )}
     </div>
   )
 }
 
 // ─── BrickGroupSection ────────────────────────────────────────────────────────
 
-function BrickGroupSection({ group, onInsert, defaultOpen }: { group: BrickGroup; onInsert: (b: Brick) => void; defaultOpen: boolean }) {
+function BrickGroupSection({
+  group, onInsert, onOpenPicker, defaultOpen,
+}: {
+  group: BrickGroup
+  onInsert: (b: Brick) => void
+  onOpenPicker?: (b: Brick, rect: DOMRect) => void
+  defaultOpen: boolean
+}) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div style={{ marginBottom: '4px' }}>
@@ -244,7 +310,9 @@ function BrickGroupSection({ group, onInsert, defaultOpen }: { group: BrickGroup
       </button>
       {open && (
         <div style={{ paddingLeft: '2px', paddingBottom: '4px' }}>
-          {group.bricks.map(b => <BrickChip key={b.id} brick={b} onInsert={() => onInsert(b)} />)}
+          {group.bricks.map(b => (
+            <BrickChip key={b.id} brick={b} onInsert={() => onInsert(b)} onOpenPicker={onOpenPicker} />
+          ))}
         </div>
       )}
     </div>
@@ -1133,14 +1201,32 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
 interface DocumentBricksPanelProps {
   onInsertBrick: (content: string) => void
   onDragStart?: (brick: Brick) => void
+  /** Dossier rattaché au document courant ; utilisé pour filtrer les intervenants éligibles à une brique. */
+  dossierId?: number
 }
 
-export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps) {
+export function DocumentBricksPanel({ onInsertBrick, dossierId }: DocumentBricksPanelProps) {
   const [groups,         setGroups]         = useState<BrickGroup[]>([])
   const [allCategories,  setAllCategories]  = useState<CategoryDef[]>([...SYSTEM_CATEGORIES.map(c => ({ ...c, iconName: c.id === 'parties' ? 'users' : c.id === 'structure' ? 'align-left' : c.id === 'formules' ? 'file-text' : 'blocks' }))])
   const [tab,            setTab]            = useState<'library' | 'custom'>('library')
   const [showEditor,     setShowEditor]     = useState(false)
   const [loaded,         setLoaded]         = useState(false)
+  const [picker,         setPicker]         = useState<{ brick: Brick; rect: { top: number; left: number } } | null>(null)
+
+  const handleOpenPicker = useCallback((brick: Brick, rect: DOMRect) => {
+    setPicker({
+      brick,
+      // Popover positionné juste sous le chip, aligné à gauche
+      rect: { top: rect.bottom + 4, left: rect.left },
+    })
+  }, [])
+
+  const handlePickContact = useCallback((contact: Contact) => {
+    if (!picker) return
+    const { content } = applyContactToBrickContent(contact, picker.brick.content)
+    onInsertBrick(brickContentToHtml(content))
+    setPicker(null)
+  }, [picker, onInsertBrick])
 
   // ── Chargement initial depuis Dexie ──────────────────────────────────────
   const loadFromDB = useCallback(async () => {
@@ -1148,6 +1234,26 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
     if (!seeded) {
       await db.bricks.bulkAdd(SEED_BRICKS as DBBrick[])
       await setSetting('bricks_seeded', true)
+    }
+
+    // Migration one-shot : ajoute targetContactType aux briques seed existantes
+    // pour les utilisateurs qui ont déjà la DB v1/v2.
+    const migrated = await getSetting<boolean>('bricks_targets_v1_migrated', false)
+    if (!migrated) {
+      const byTitle = new Map<string, Partial<DBBrick>>([
+        ['Personne physique',   { targetContactType: 'physical' }],
+        ['Personne morale',     { targetContactType: 'moral'    }],
+        ['Ayant pour avocat',   { targetContactType: 'physical', targetRoles: ['ownCounsel', 'adversaryCounsel'] }],
+      ])
+      for (const [title, patch] of Array.from(byTitle.entries())) {
+        const rows = await db.bricks.where('title').equals(title).toArray() as (DBBrick & { id: number })[]
+        for (const row of rows) {
+          if (row.targetContactType == null) {
+            await db.bricks.put({ ...row, ...patch })
+          }
+        }
+      }
+      await setSetting('bricks_targets_v1_migrated', true)
     }
 
     const savedLabels = await db.infoLabels.toArray() as (InfoLabel & { id: number })[]
@@ -1286,7 +1392,15 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
             <p style={{ fontSize: '10px', color: 'var(--color-text-faint)', marginBottom: '10px', lineHeight: 1.5 }}>
               <strong style={{ color: 'var(--color-text-muted)' }}>Cliquer</strong> pour insérer au curseur · <strong style={{ color: 'var(--color-text-muted)' }}>Glisser</strong> dans le document
             </p>
-            {displayGroups.map((g, i) => <BrickGroupSection key={g.id} group={g} onInsert={b => onInsertBrick(brickContentToHtml(b.content))} defaultOpen={i === 0} />)}
+            {displayGroups.map((g, i) => (
+              <BrickGroupSection
+                key={g.id}
+                group={g}
+                onInsert={b => onInsertBrick(brickContentToHtml(b.content))}
+                onOpenPicker={handleOpenPicker}
+                defaultOpen={i === 0}
+              />
+            ))}
           </div>
         )}
 
@@ -1298,7 +1412,14 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
                 Aucune brique personnalisée.<br />
                 <button onClick={() => setShowEditor(true)} style={{ color: 'var(--color-primary)', background: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 'inherit', marginTop: '4px' }}>Ouvrir l&apos;éditeur de briques</button>
               </div>
-            ) : customBricks.map(b => <BrickChip key={b.id} brick={b} onInsert={() => onInsertBrick(brickContentToHtml(b.content))} />)}
+            ) : customBricks.map(b => (
+              <BrickChip
+                key={b.id}
+                brick={b}
+                onInsert={() => onInsertBrick(brickContentToHtml(b.content))}
+                onOpenPicker={handleOpenPicker}
+              />
+            ))}
           </div>
         )}
 
@@ -1326,6 +1447,20 @@ export function DocumentBricksPanel({ onInsertBrick }: DocumentBricksPanelProps)
           onRenameSystemCategory={handleRenameSystemCategory}
           onDeleteSystemCategory={handleDeleteSystemCategory}
           onReloadBricks={loadFromDB}
+        />
+      )}
+
+      {picker && (
+        <BrickIntervenantPicker
+          brick={{
+            title: picker.brick.label,
+            targetContactType: picker.brick.targetContactType,
+            targetRoles: picker.brick.targetRoles,
+          }}
+          dossierId={dossierId}
+          anchorRect={picker.rect}
+          onPick={handlePickContact}
+          onClose={() => setPicker(null)}
         />
       )}
     </>

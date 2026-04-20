@@ -553,6 +553,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           {/* Panneau Boîte à outils (briques) */}
           <DocumentBricksPanel
             onInsertBrick={handleInsertBrick}
+            dossierId={document.dossierId}
           />
         </div>
 
