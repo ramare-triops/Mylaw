@@ -3,17 +3,19 @@
 /**
  * BrickIntervenantPicker
  *
- * Popover affiché depuis un BrickChip pour appliquer un intervenant
- * (contact) à la brique avant insertion. Seuls les contacts compatibles
- * avec la brique sont proposés :
- *   - brick.targetContactType (physical / moral) → filtre sur le type
- *   - brick.targetRoles (DossierRole[]) → filtre par rôle dans le dossier courant
+ * Popover affiché pour appliquer un intervenant (contact) à une brique.
  *
- * Si aucun dossier n'est attaché au document courant, on propose l'ensemble
- * des contacts du bon type (filtre role ignoré).
+ * Comportement :
+ *  - Par défaut, seuls les intervenants rattachés au dossier de travail du
+ *    document sont proposés (filtrés en plus par brick.targetContactType
+ *    et brick.targetRoles s'ils sont définis).
+ *  - Une case à cocher « Étendre la recherche à tous les intervenants »
+ *    permet d'inclure tous les contacts de la base (du bon type).
+ *  - Si aucun dossier n'est attaché, la recherche est étendue d'office
+ *    à toute la base.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { User, Building2, Search, X, Users } from 'lucide-react';
 import { db, contactDisplayName } from '@/lib/db';
@@ -42,6 +44,8 @@ export function BrickIntervenantPicker({
   onClose,
 }: Props) {
   const [search, setSearch] = useState('');
+  // Par défaut : restreint au dossier. Si pas de dossier, on étend d'office.
+  const [extendAll, setExtendAll] = useState<boolean>(!dossierId);
   const popoverRef = useRef<HTMLDivElement>(null);
 
   // ─── Ferme au clic extérieur ─────────────────────────────────────────────
@@ -59,10 +63,6 @@ export function BrickIntervenantPicker({
   }, [onClose]);
 
   // ─── Chargement des contacts ─────────────────────────────────────────────
-  //  1. Si un dossier est rattaché et des rôles sont spécifiés → on prend les
-  //     intervenants du dossier correspondant au(x) rôle(s).
-  //  2. Sinon si un dossier est rattaché → tous les intervenants du dossier.
-  //  3. Sinon → tous les contacts de la base (du bon type).
   const dossierContacts = useLiveQuery<DossierContact[]>(
     () =>
       dossierId
@@ -71,31 +71,31 @@ export function BrickIntervenantPicker({
     [dossierId]
   );
 
-  const relevantContactIds = dossierContacts
-    ? brick.targetRoles && brick.targetRoles.length > 0
-      ? dossierContacts
-          .filter((dc) => brick.targetRoles!.includes(dc.role))
-          .map((dc) => dc.contactId)
-      : dossierContacts.map((dc) => dc.contactId)
-    : [];
+  const allContacts = useLiveQuery<Contact[]>(() => db.contacts.toArray(), []);
 
-  const roleByContactId = new Map(
-    (dossierContacts ?? []).map((dc) => [dc.contactId, dc.role])
+  const roleByContactId = useMemo(
+    () =>
+      new Map((dossierContacts ?? []).map((dc) => [dc.contactId, dc.role])),
+    [dossierContacts]
   );
 
-  const allContacts = useLiveQuery<Contact[]>(
-    () => db.contacts.toArray(),
-    []
+  const dossierContactIds = useMemo(
+    () =>
+      brick.targetRoles && brick.targetRoles.length > 0
+        ? (dossierContacts ?? [])
+            .filter((dc) => brick.targetRoles!.includes(dc.role))
+            .map((dc) => dc.contactId)
+        : (dossierContacts ?? []).map((dc) => dc.contactId),
+    [dossierContacts, brick.targetRoles]
   );
 
   // ─── Filtrage ────────────────────────────────────────────────────────────
-  const rows: ContactRow[] = (() => {
-    const base: Contact[] =
-      dossierId && dossierContacts
-        ? (allContacts ?? []).filter((c) =>
-            relevantContactIds.includes(c.id!)
-          )
-        : allContacts ?? [];
+  const effectiveExtend = extendAll || !dossierId;
+
+  const rows: ContactRow[] = useMemo(() => {
+    const base: Contact[] = effectiveExtend
+      ? allContacts ?? []
+      : (allContacts ?? []).filter((c) => dossierContactIds.includes(c.id!));
 
     const typeFiltered = brick.targetContactType
       ? base.filter((c) => c.type === brick.targetContactType)
@@ -121,8 +121,8 @@ export function BrickIntervenantPicker({
         contact: c,
         role: roleByContactId.get(c.id!),
       }))
-      // tri : contacts du dossier en premier si on interroge la base globale
       .sort((a, b) => {
+        // Intervenants du dossier en premier (utile en mode étendu).
         const aIn = a.role ? 0 : 1;
         const bIn = b.role ? 0 : 1;
         if (aIn !== bIn) return aIn - bIn;
@@ -130,11 +130,17 @@ export function BrickIntervenantPicker({
           contactDisplayName(b.contact)
         );
       });
-  })();
+  }, [
+    allContacts,
+    brick.targetContactType,
+    dossierContactIds,
+    effectiveExtend,
+    roleByContactId,
+    search,
+  ]);
 
   if (!anchorRect) return null;
 
-  // Calcul de position (sous le chip, avec ancrage à gauche)
   const style: React.CSSProperties = {
     position: 'fixed',
     top: anchorRect.top,
@@ -155,12 +161,33 @@ export function BrickIntervenantPicker({
     return parts.join(' · ');
   })();
 
+  // Empty state contextualisé
+  const emptyState = (() => {
+    if (rows.length > 0) return null;
+    if (!effectiveExtend && dossierId) {
+      return (
+        <>
+          Aucun intervenant du dossier ne correspond.
+          <br />
+          Cochez « Étendre la recherche » pour voir tous les contacts.
+        </>
+      );
+    }
+    if (brick.targetContactType === 'physical') {
+      return <>Aucune personne physique disponible.</>;
+    }
+    if (brick.targetContactType === 'moral') {
+      return <>Aucune personne morale disponible.</>;
+    }
+    return <>Aucun contact disponible.</>;
+  })();
+
   return (
     <div
       ref={popoverRef}
       style={style}
       className={cn(
-        'w-[360px] max-w-[90vw] max-h-[400px] flex flex-col',
+        'w-[360px] max-w-[90vw] max-h-[440px] flex flex-col',
         'rounded-md shadow-lg',
         'bg-[var(--color-surface)] border border-[var(--color-primary)]'
       )}
@@ -187,7 +214,7 @@ export function BrickIntervenantPicker({
         </button>
       </div>
 
-      <div className="px-3 py-2 border-b border-[var(--color-border)]">
+      <div className="px-3 py-2 border-b border-[var(--color-border)] flex flex-col gap-1.5">
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-muted)]" />
           <input
@@ -199,24 +226,48 @@ export function BrickIntervenantPicker({
             className="w-full pl-7 pr-2 py-1.5 text-xs rounded bg-[var(--color-surface-raised)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)]"
           />
         </div>
+
+        {/* Case circulaire : étendre la recherche à tous les intervenants */}
+        <label
+          className={cn(
+            'flex items-center gap-2 text-[11px] select-none',
+            dossierId
+              ? 'cursor-pointer text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+              : 'cursor-not-allowed text-[var(--color-text-faint)]'
+          )}
+          title={
+            dossierId
+              ? undefined
+              : 'Le document n’est rattaché à aucun dossier — tous les intervenants sont déjà affichés.'
+          }
+        >
+          <span
+            className={cn(
+              'relative inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border transition-colors flex-shrink-0',
+              effectiveExtend
+                ? 'border-[var(--color-primary)] bg-[var(--color-primary)]'
+                : 'border-[var(--color-border)] bg-[var(--color-surface-raised)]'
+            )}
+          >
+            {effectiveExtend && (
+              <span className="w-1.5 h-1.5 rounded-full bg-white" />
+            )}
+          </span>
+          <input
+            type="checkbox"
+            className="sr-only"
+            checked={effectiveExtend}
+            disabled={!dossierId}
+            onChange={(e) => setExtendAll(e.target.checked)}
+          />
+          Étendre la recherche à tous les intervenants
+        </label>
       </div>
 
       <div className="flex-1 overflow-auto">
         {rows.length === 0 ? (
           <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
-            {!dossierId && brick.targetRoles && brick.targetRoles.length > 0 ? (
-              <>
-                Ce document n&apos;est rattaché à aucun dossier.
-                <br />
-                Rattachez-le d&apos;abord pour filtrer les intervenants par rôle.
-              </>
-            ) : brick.targetContactType === 'physical' ? (
-              <>Aucune personne physique disponible.</>
-            ) : brick.targetContactType === 'moral' ? (
-              <>Aucune personne morale disponible.</>
-            ) : (
-              <>Aucun contact disponible.</>
-            )}
+            {emptyState}
           </div>
         ) : (
           <div className="divide-y divide-[var(--color-border)]">

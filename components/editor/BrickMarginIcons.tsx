@@ -3,24 +3,23 @@
 /**
  * BrickMarginIcons
  *
- * Overlay qui s'affiche au-dessus de la page du document TipTap, et qui
- * positionne dans la marge gauche une icône "intervenants" à la hauteur de
- * chaque brique insérée (marqueur invisible <span data-mylaw-brick-id>).
+ * Overlay affiché par-dessus la page éditeur TipTap. Pour chaque brique
+ * insérée (marqueur invisible <span data-mylaw-brick-id>) qui contient
+ * encore des variables non-remplies et qui cible un intervenant, une petite
+ * icône carrée type « commentaire Word » est épinglée dans la marge gauche,
+ * dans l'alignement vertical de la brique.
  *
- * Comportements clés :
- *  - L'icône apparaît dès qu'une brique avec `targetContactType` ou
- *    `targetRoles` a été insérée dans le document.
- *  - L'icône disparaît automatiquement dès que toutes les variables
- *    non-renseignées de la brique ont été remplies (plus aucun
- *    <span data-variable-field> entre ce marqueur et le suivant).
- *  - Clic sur une icône = ouvre le BrickIntervenantPicker pour remplir
- *    d'un coup tous les champs restants depuis un contact.
+ * L'icône reste affichée tant que la brique contient au moins un
+ * <span data-variable-field> non rempli. Dès que tout est rempli, elle
+ * disparaît automatiquement.
  *
- * Positionnement :
- *  - On utilise getBoundingClientRect() des marqueurs DOM (viewport coords).
- *  - Les icônes sont rendues en position fixed.
- *  - Le recalcul est fait sur : onUpdate de l'éditeur, scroll de la fenêtre,
- *    scroll d'un ancêtre scrollable, resize.
+ * Clic sur l'icône → ouvre le BrickIntervenantPicker pour remplir d'un coup
+ * tous les champs restants depuis un contact.
+ *
+ * Pour fiabiliser le remplissage, on s'appuie sur l'identifiant unique
+ * (brickId) porté par le marqueur : on retrouve la plage PM correspondante
+ * en traversant le document ProseMirror plutôt qu'en utilisant les positions
+ * retournées par posAtDOM sur des nœuds atomiques (approche fragile).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -35,10 +34,8 @@ interface MarkerInfo {
   brickTitle: string;
   targetContactType?: ContactType;
   targetRoles: DossierRole[];
-  domPos: number;          // position ProseMirror du marqueur
-  nextDomPos: number;      // position du marqueur suivant (ou fin du doc)
   unfilledCount: number;   // nombre de [data-variable-field] restants dans la portée
-  top: number;             // Y viewport (du marqueur)
+  top: number;             // Y viewport (du marqueur dans la page scalée)
 }
 
 interface Props {
@@ -71,8 +68,6 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
       return;
     }
 
-    // Pour chaque marqueur : position PM, rect, unfilled count jusqu'au
-    // prochain marqueur.
     const infos: MarkerInfo[] = [];
     for (let i = 0; i < markerNodes.length; i++) {
       const el = markerNodes[i];
@@ -86,36 +81,17 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
         ? (rolesStr.split(',').filter(Boolean) as DossierRole[])
         : [];
 
-      // Position PM du marqueur (le nœud courant)
-      let domPos = 0;
-      try {
-        domPos = editor.view.posAtDOM(el, 0);
-      } catch {
-        domPos = 0;
-      }
+      // Compte des variables non remplies dans la plage DOM [el, nextEl)
       const nextEl = markerNodes[i + 1];
-      let nextDomPos = editor.state.doc.content.size;
-      if (nextEl) {
-        try {
-          nextDomPos = editor.view.posAtDOM(nextEl, 0);
-        } catch {
-          nextDomPos = editor.state.doc.content.size;
-        }
-      }
-
-      // Compte les [data-variable-field] dans la plage [el, nextEl)
-      let unfilled = 0;
       const range = document.createRange();
       range.setStartAfter(el);
       if (nextEl) range.setEndBefore(nextEl);
-      else {
-        range.setEndAfter(editorEl);
-      }
+      else range.setEndAfter(editorEl);
       const frag = range.cloneContents();
-      unfilled =
-        frag.querySelectorAll('[data-variable-field]').length;
+      const unfilled = frag.querySelectorAll('[data-variable-field]').length;
 
-      // Rect du marqueur (on prend la ligne du parent si le marqueur est width:0)
+      // Rect du marqueur : comme le span a width:0;height:0, on prend le
+      // rect du parent (paragraphe) pour obtenir une ligne exploitable.
       const probe =
         el.getBoundingClientRect().height === 0
           ? (el.parentElement ?? el)
@@ -127,8 +103,6 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
         brickTitle,
         targetContactType: targetType ?? undefined,
         targetRoles,
-        domPos,
-        nextDomPos,
         unfilledCount: unfilled,
         top: rect.top,
       });
@@ -163,34 +137,11 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
     };
   }, [editor, scheduleScan]);
 
-  // ─── Application d'un contact à la plage d'une brique ────────────────────
+  // ─── Application d'un contact à la brique identifiée par brickId ────────
   const applyContactToMarker = useCallback(
     (marker: MarkerInfo, contact: Contact) => {
       if (!editor) return;
-      // Parcourt les variableField nodes dans [domPos, nextDomPos) et
-      // remplace ceux dont on connaît une valeur.
-      const replacements: Array<{ pos: number; value: string }> = [];
-      editor.state.doc.nodesBetween(
-        marker.domPos,
-        marker.nextDomPos,
-        (node, pos) => {
-          if (node.type.name !== 'variableField') return true;
-          const name = node.attrs.name as string;
-          if (!name) return false;
-          // On importe dynamiquement pour éviter un cycle
-          const value = resolveValue(contact, name);
-          if (value != null && value !== '') {
-            replacements.push({ pos, value });
-          }
-          return false;
-        }
-      );
-      // Applique en ordre inverse pour ne pas décaler les positions.
-      replacements
-        .sort((a, b) => b.pos - a.pos)
-        .forEach((r) => {
-          editor.commands.replaceVariable(r.pos, r.value);
-        });
+      applyContactToBrickId(editor, marker.brickId, contact);
       setPicker(null);
       scheduleScan();
     },
@@ -206,9 +157,10 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
       (m.targetContactType || m.targetRoles.length > 0)
   );
 
-  // Position X : bord gauche du contenu éditeur, moins 32px
+  // Position X : bord gauche de la page, avec un petit retrait pour être
+  // clairement « dans la marge ».
   const pageRect = pageRef.current?.getBoundingClientRect();
-  const iconLeft = pageRect ? Math.max(8, pageRect.left - 32) : 8;
+  const iconLeft = pageRect ? Math.max(8, pageRect.left - 36) : 8;
 
   return (
     <>
@@ -222,10 +174,10 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
             ).getBoundingClientRect();
             setPicker({
               marker: m,
-              rect: { top: rect.bottom + 4, left: rect.left },
+              rect: { top: rect.bottom + 4, left: rect.right + 6 },
             });
           }}
-          title={`Pré-remplir « ${m.brickTitle} » depuis un intervenant`}
+          title={`Pré-remplir « ${m.brickTitle} » depuis un intervenant (${m.unfilledCount} champ${m.unfilledCount > 1 ? 's' : ''} restant${m.unfilledCount > 1 ? 's' : ''})`}
           aria-label={`Pré-remplir depuis un intervenant (${m.unfilledCount} champ${
             m.unfilledCount > 1 ? 's' : ''
           } à remplir)`}
@@ -233,8 +185,8 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
             position: 'fixed',
             top: m.top,
             left: iconLeft,
-            width: 24,
-            height: 24,
+            width: 26,
+            height: 26,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -243,15 +195,16 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
             background: 'var(--color-surface)',
             color: 'var(--color-primary)',
             cursor: 'pointer',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.10)',
-            zIndex: 40,
+            boxShadow: '0 1px 4px rgba(0,0,0,0.12)',
+            zIndex: 60,
             transition: 'transform 0.12s, background 0.12s',
+            padding: 0,
           }}
           onMouseEnter={(e) => {
             (e.currentTarget as HTMLButtonElement).style.transform =
               'scale(1.08)';
             (e.currentTarget as HTMLButtonElement).style.background =
-              'var(--color-primary-light)';
+              'var(--color-primary-light, rgba(1,105,111,0.08))';
           }}
           onMouseLeave={(e) => {
             (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)';
@@ -259,7 +212,7 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
               'var(--color-surface)';
           }}
         >
-          <Users size={13} />
+          <Users size={14} />
           <span
             style={{
               position: 'absolute',
@@ -276,6 +229,7 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              lineHeight: 1,
             }}
           >
             {m.unfilledCount}
@@ -300,9 +254,74 @@ export function BrickMarginIcons({ editor, pageRef, dossierId }: Props) {
   );
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────
-function resolveValue(c: Contact, name: string): string | undefined {
-  return contactVariableValue(c, name);
+// ─── Helpers exportés ─────────────────────────────────────────────────────
+
+/**
+ * Retrouve la plage PM [start, end) occupée par une brique (identifiée par
+ * son brickId) en traversant le document ProseMirror. Plus fiable que
+ * posAtDOM() sur des nœuds atomiques inline.
+ *
+ * Retourne null si le brickMarker n'est pas trouvé.
+ */
+export function findBrickRangeByBrickId(
+  editor: Editor,
+  brickId: string
+): { start: number; end: number } | null {
+  let start = -1;
+  let end = editor.state.doc.content.size;
+  let seenStart = false;
+
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name !== 'brickMarker') return true;
+    if (seenStart) {
+      // Premier marqueur rencontré après le nôtre : fin de plage.
+      end = pos;
+      return false;
+    }
+    if (node.attrs.brickId === brickId) {
+      start = pos + node.nodeSize; // juste après le marqueur
+      seenStart = true;
+    }
+    return true;
+  });
+
+  if (start < 0) return null;
+  return { start, end };
+}
+
+/**
+ * Remplit les variableField d'une brique donnée (par brickId) à partir d'un
+ * contact, en conservant formatage et positions. Utilisé à la fois par
+ * BrickMarginIcons et par le popup posé au drop d'une brique.
+ *
+ * Retourne le nombre de variables effectivement remplacées.
+ */
+export function applyContactToBrickId(
+  editor: Editor,
+  brickId: string,
+  contact: Contact
+): number {
+  const range = findBrickRangeByBrickId(editor, brickId);
+  if (!range) return 0;
+
+  const replacements: Array<{ pos: number; value: string }> = [];
+  editor.state.doc.nodesBetween(range.start, range.end, (node, pos) => {
+    if (node.type.name !== 'variableField') return true;
+    const name = node.attrs.name as string | null;
+    if (!name) return false;
+    const value = contactVariableValue(contact, name);
+    if (value != null && value !== '') {
+      replacements.push({ pos, value });
+    }
+    return false;
+  });
+
+  // Appliquer en ordre décroissant pour ne pas invalider les positions.
+  replacements
+    .sort((a, b) => b.pos - a.pos)
+    .forEach((r) => editor.commands.replaceVariable(r.pos, r.value));
+
+  return replacements.length;
 }
 
 // Re-export utilitaire pour wrapper un HTML de brique avec un marqueur

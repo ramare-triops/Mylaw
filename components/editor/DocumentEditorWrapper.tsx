@@ -44,8 +44,7 @@ import { FillAllVariablesDialog } from './FillAllVariablesDialog'
 import { DocumentBricksPanel, DRAG_BRICK_KEY, brickContentToHtml } from './DocumentBricksPanel'
 import type { Brick } from './DocumentBricksPanel'
 import { BrickIntervenantPicker } from './BrickIntervenantPicker'
-import { BrickMarginIcons, wrapBrickHtmlWithMarker } from './BrickMarginIcons'
-import { contactVariableValue } from '@/lib/contact-variables'
+import { BrickMarginIcons, wrapBrickHtmlWithMarker, applyContactToBrickId } from './BrickMarginIcons'
 import { DocumentPropertiesDialog } from '@/components/documents/DocumentPropertiesDialog'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
 import { getSetting, db } from '@/lib/db'
@@ -725,40 +724,8 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           anchorRect={pickerFromDrop.rect}
           onPick={(contact) => {
             const ed = editorRef.current
-            if (!ed) { setPickerFromDrop(null); return }
-            // Retrouver le marqueur fraîchement posé et sa plage, puis
-            // remplacer les variables connues par les valeurs du contact.
-            const markerEl = (ed.view.dom as HTMLElement).querySelector<HTMLElement>(
-              `[data-mylaw-brick-id="${pickerFromDrop.brickId}"]`,
-            )
-            if (!markerEl) { setPickerFromDrop(null); return }
-            const allMarkers = Array.from(
-              (ed.view.dom as HTMLElement).querySelectorAll<HTMLElement>('[data-mylaw-brick-id]'),
-            )
-            const idx = allMarkers.indexOf(markerEl)
-            let startPos = 0, endPos = ed.state.doc.content.size
-            try { startPos = ed.view.posAtDOM(markerEl, 0) } catch {}
-            const nextEl = allMarkers[idx + 1]
-            if (nextEl) {
-              try { endPos = ed.view.posAtDOM(nextEl, 0) } catch {}
-            }
-            // Parcours des variableField et remplacement.
-            const replacements: Array<{ pos: number; value: string }> = []
-            ed.state.doc.nodesBetween(startPos, endPos, (node, pos) => {
-              if (node.type.name !== 'variableField') return true
-              const name = node.attrs.name as string
-              if (!name) return false
-              const value = contactVariableValue(contact, name)
-              if (value != null && value !== '') {
-                replacements.push({ pos, value })
-              }
-              return false
-            })
-            replacements.sort((a, b) => b.pos - a.pos).forEach((r) => {
-              ed.commands.replaceVariable(r.pos, r.value)
-            })
+            if (ed) applyContactToBrickId(ed, pickerFromDrop.brickId, contact)
             setPickerFromDrop(null)
-            // Mets à jour le compteur de variables restantes
             setTimeout(() => {
               const c = editorRef.current ? countVariables(editorRef.current) : 0
               setVariableCount(c)
