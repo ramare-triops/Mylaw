@@ -2,11 +2,44 @@
 
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useRouter } from 'next/navigation';
-import { FileText, Clock, AlertTriangle, Plus } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, Plus, CalendarDays } from 'lucide-react';
 import { db, saveDocument } from '@/lib/db';
 import { formatDateTime, formatDate } from '@/lib/utils';
 import { cn } from '@/lib/utils';
-import { addDays, isAfter, isBefore } from 'date-fns';
+import { addDays, isBefore } from 'date-fns';
+import type { Deadline, DeadlineType } from '@/types';
+
+// Mapping type DB → libellé lisible + couleur (aligné avec DeadlineTracker).
+const DEADLINE_TYPE_META: Record<DeadlineType, { label: string; color: string }> = {
+  peremption: { label: 'Péremption',       color: 'var(--color-error)'       },
+  forclusion: { label: 'Forclusion',       color: 'var(--color-error)'       },
+  reponse:    { label: 'Délai de réponse', color: 'var(--color-warning)'     },
+  audience:   { label: 'Audience',         color: 'var(--color-primary)'     },
+  appel:      { label: 'Appel',            color: 'var(--color-primary)'     },
+  other:      { label: 'Autre',            color: 'var(--color-text-muted)' },
+};
+
+function daysUntil(date: Date): number {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const target = new Date(date);
+  target.setHours(0, 0, 0, 0);
+  return Math.ceil((target.getTime() - now.getTime()) / 86_400_000);
+}
+
+function formatRelative(days: number): { label: string; tone: 'overdue' | 'today' | 'soon' | 'ok' } {
+  if (days < 0)   return { label: `J+${Math.abs(days)}`, tone: 'overdue' };
+  if (days === 0) return { label: "Aujourd'hui",          tone: 'today'   };
+  if (days <= 7)  return { label: `J-${days}`,            tone: 'soon'    };
+  return            { label: `J-${days}`,                 tone: 'ok'      };
+}
+
+const TONE_COLORS: Record<'overdue' | 'today' | 'soon' | 'ok', string> = {
+  overdue: 'var(--color-error)',
+  today:   'var(--color-error)',
+  soon:    'var(--color-warning)',
+  ok:      'var(--color-text-muted)',
+};
 
 export function Dashboard() {
   const router = useRouter();
@@ -20,6 +53,15 @@ export function Dashboard() {
     return db.deadlines
       .filter((d) => !d.done && isBefore(new Date(d.dueDate), in7days))
       .toArray();
+  });
+
+  // Toutes les échéances non terminées, triées par date croissante
+  // (les plus proches en premier, past-due inclus car encore actionnables).
+  const upcomingDeadlines = useLiveQuery(async () => {
+    const all = await db.deadlines.toArray();
+    return all
+      .filter((d) => !d.done)
+      .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
   });
 
   const createDocument = async () => {
@@ -76,7 +118,7 @@ export function Dashboard() {
                 <div className="min-w-0">
                   <div className="text-sm font-medium text-[var(--color-text)] truncate">{d.title}</div>
                   <div className="text-xs text-[var(--color-text-muted)]">
-                    {d.dossier} • Échéance : {formatDate(d.dueDate)}
+                    {d.dossier} • Échéance : {formatDate(d.dueDate)}
                   </div>
                 </div>
               </div>
@@ -126,6 +168,82 @@ export function Dashboard() {
           </div>
         </section>
       </div>
+
+      {/* Prochaines échéances — toutes les non terminées, ordre chronologique */}
+      <section className="mt-8">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-[var(--color-primary)]" />
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">
+              Prochaines échéances
+            </h2>
+            {upcomingDeadlines && upcomingDeadlines.length > 0 && (
+              <span className="text-xs text-[var(--color-text-muted)]">
+                · {upcomingDeadlines.length}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => router.push('/tools/deadline-tracker')}
+            className="text-xs text-[var(--color-primary)] hover:underline"
+          >
+            Voir tout
+          </button>
+        </div>
+        <div className="rounded-md border border-[var(--color-border)] overflow-hidden">
+          {upcomingDeadlines?.length === 0 && (
+            <p className="text-xs text-[var(--color-text-muted)] py-6 text-center">
+              Aucune échéance enregistrée.
+            </p>
+          )}
+          {upcomingDeadlines?.map((d: Deadline, i: number) => {
+            const days = daysUntil(new Date(d.dueDate));
+            const rel  = formatRelative(days);
+            const meta = DEADLINE_TYPE_META[d.type] ?? DEADLINE_TYPE_META.other;
+            const isLast = i === upcomingDeadlines.length - 1;
+            return (
+              <button
+                key={d.id}
+                onClick={() => router.push('/tools/deadline-tracker')}
+                className={cn(
+                  'w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors',
+                  'hover:bg-[var(--color-surface-raised)]',
+                  !isLast && 'border-b border-[var(--color-border)]',
+                )}
+              >
+                <span
+                  className="flex-shrink-0 w-1.5 h-8 rounded-full"
+                  style={{ background: meta.color }}
+                  aria-hidden
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-[var(--color-text)] truncate">
+                      {d.title}
+                    </span>
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                      style={{ background: `${meta.color}18`, color: meta.color, fontWeight: 600 }}
+                    >
+                      {meta.label}
+                    </span>
+                  </div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate">
+                    {formatDate(d.dueDate)}
+                    {d.dossier && <> · {d.dossier}</>}
+                  </div>
+                </div>
+                <span
+                  className="flex-shrink-0 text-xs font-semibold tabular-nums"
+                  style={{ color: TONE_COLORS[rel.tone] }}
+                >
+                  {rel.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
