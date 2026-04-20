@@ -988,9 +988,11 @@ function DropSuggestionPopup({
           style={{
             fontSize: 13,
             fontWeight: 700,
-            color: 'var(--color-primary)',
-            textDecoration: 'underline',
-            textUnderlineOffset: 2,
+            color: '#fff',
+            background: '#2563eb',
+            padding: '2px 8px',
+            borderRadius: 6,
+            marginTop: 2,
           }}
         >
           Intervenant
