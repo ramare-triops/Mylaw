@@ -44,7 +44,7 @@ export function BrickIntervenantPicker({
   const [search, setSearch] = useState('');
   /**
    * Par défaut on ne montre que les intervenants liés au dossier courant.
-   * L'utilisateur peut cocher « Étendre la recherche à tous les intervenants »
+   * L'utilisateur peut cocher « Étendre la recherche à tous les dossiers »
    * pour élargir à l'ensemble de la base contacts du cabinet.
    */
   const [extendAll, setExtendAll] = useState(false);
@@ -239,7 +239,7 @@ export function BrickIntervenantPicker({
                 )}
               />
             </span>
-            <span>Étendre la recherche à tous les intervenants</span>
+            <span>Étendre la recherche à tous les dossiers</span>
           </label>
         )}
       </div>
