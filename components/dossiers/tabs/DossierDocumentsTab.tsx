@@ -58,6 +58,74 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
+// ─── Office URI Scheme (ms-word:, ms-excel:, ms-powerpoint:) ─────────────────
+// Microsoft permet à une page web de demander au système d'ouvrir un fichier
+// directement dans Word/Excel/PowerPoint via une URL de la forme :
+//     ms-word:ofe|u|<URL_HTTP_DU_FICHIER>
+// Le protocole exige une URL HTTP(S) accessible par l'application Office —
+// pas de blob:/data:. On passe donc par un upload temporaire côté serveur
+// (/api/open-office) qui renvoie un token à usage court.
+
+type OfficeApp = 'word' | 'excel' | 'powerpoint';
+
+const OFFICE_MIME: Record<string, OfficeApp> = {
+  'application/msword': 'word',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'word',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.template': 'word',
+  'application/vnd.ms-word.document.macroEnabled.12': 'word',
+  'application/vnd.ms-excel': 'excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.template': 'excel',
+  'application/vnd.ms-excel.sheet.macroEnabled.12': 'excel',
+  'application/vnd.ms-powerpoint': 'powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.slideshow': 'powerpoint',
+  'application/vnd.ms-powerpoint.presentation.macroEnabled.12': 'powerpoint',
+};
+
+const OFFICE_EXT: Record<string, OfficeApp> = {
+  doc: 'word', docx: 'word', dot: 'word', dotx: 'word', docm: 'word', rtf: 'word',
+  xls: 'excel', xlsx: 'excel', xlsm: 'excel', xlt: 'excel', xltx: 'excel', csv: 'excel',
+  ppt: 'powerpoint', pptx: 'powerpoint', pps: 'powerpoint', ppsx: 'powerpoint', pptm: 'powerpoint',
+};
+
+function detectOfficeApp(filename: string, mimeType: string): OfficeApp | null {
+  if (mimeType && OFFICE_MIME[mimeType]) return OFFICE_MIME[mimeType];
+  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  return OFFICE_EXT[ext] ?? null;
+}
+
+/**
+ * Upload la pièce jointe vers un endpoint temporaire et déclenche le
+ * protocole Office correspondant. Lance une exception si l'upload échoue,
+ * ce qui permet à l'appelant de retomber sur un téléchargement classique.
+ */
+async function openInOfficeApp(blob: Blob, name: string, app: OfficeApp): Promise<void> {
+  const form = new FormData();
+  form.append('file', blob, name);
+  form.append('name', name);
+  const res = await fetch('/api/open-office', { method: 'POST', body: form });
+  if (!res.ok) throw new Error(`upload_failed_${res.status}`);
+  const { token } = (await res.json()) as { token: string };
+  if (!token) throw new Error('missing_token');
+
+  const scheme = app === 'word' ? 'ms-word' : app === 'excel' ? 'ms-excel' : 'ms-powerpoint';
+  const httpUrl = `${window.location.origin}/api/open-office/${token}`;
+  // `ofe` = Open For Editing. Word/Excel/PowerPoint ouvrent le fichier depuis
+  // l'URL. Sur macOS/Windows/Linux, le handler du scheme fait le relais.
+  const schemeUrl = `${scheme}:ofe|u|${httpUrl}`;
+
+  // Le click sur un anchor est plus fiable que window.location.href pour
+  // déclencher un handler de protocole personnalisé sans perdre la page actuelle.
+  const a = document.createElement('a');
+  a.href = schemeUrl;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 export function DossierDocumentsTab({ dossier }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState('');
@@ -247,27 +315,44 @@ export function DossierDocumentsTab({ dossier }: Props) {
   }
 
   /**
-   * Ouvre une pièce jointe (Word, PDF, image, etc.) en créant une URL blob
-   * et en l'ouvrant dans un nouvel onglet. Le navigateur gère nativement
-   * les PDF et les images ; les .docx seront proposés au téléchargement par
-   * le navigateur (aucun viewer natif).
+   * Ouvre une pièce jointe en fonction de son type :
+   *   - Fichiers Office (Word/Excel/PowerPoint) : upload temporaire côté
+   *     serveur + redirection via le protocole "Office URI Scheme"
+   *     (ms-word:ofe|u|…), ce qui lance l'application de bureau installée
+   *     sur la machine de l'utilisateur plutôt que de télécharger le fichier.
+   *   - PDF, images, etc. : ouverture blob URL dans un nouvel onglet
+   *     (viewer natif du navigateur).
+   *   - Fallback : téléchargement si rien ne peut être ouvert.
    */
-  function handleOpenAttachment(att: Attachment) {
+  async function handleOpenAttachment(att: Attachment) {
     if (att.id == null) return;
-    db.attachments.get(att.id).then((fresh) => {
-      const blob = fresh?.blob ?? att.blob;
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank', 'noopener,noreferrer');
-      // Révocation retardée : laisse le temps au nouvel onglet de charger.
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      logAudit({
-        dossierId: dossier.id,
-        entityType: 'attachment',
-        entityId: att.id!,
-        action: 'view',
-      });
+    const fresh = await db.attachments.get(att.id);
+    const blob = fresh?.blob ?? att.blob;
+    if (!blob) return;
+
+    logAudit({
+      dossierId: dossier.id,
+      entityType: 'attachment',
+      entityId: att.id,
+      action: 'view',
     });
+
+    const office = detectOfficeApp(att.name, att.mimeType);
+    if (office) {
+      try {
+        await openInOfficeApp(blob, att.name, office);
+        return;
+      } catch {
+        // Fallback transparent : on télécharge si l'upload temporaire échoue.
+        handleDownloadAttachment(att.id, att.name);
+      }
+      return;
+    }
+
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank', 'noopener,noreferrer');
+    // Révocation retardée : laisse le temps au nouvel onglet de charger.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
 
   async function handleDeleteAttachment(e: React.MouseEvent, att: Attachment) {
