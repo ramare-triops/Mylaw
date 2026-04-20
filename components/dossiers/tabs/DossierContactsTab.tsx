@@ -13,6 +13,7 @@ import {
   Trash2,
   X,
   Search,
+  Minus,
 } from 'lucide-react';
 import {
   db,
@@ -297,7 +298,9 @@ function ContactDialog({
   const [representativeRole, setRepresentativeRole] = useState('');
 
   const [email, setEmail] = useState('');
+  const [additionalEmails, setAdditionalEmails] = useState<string[]>([]);
   const [phone, setPhone] = useState('');
+  const [additionalPhones, setAdditionalPhones] = useState<string[]>([]);
   const [address, setAddress] = useState<StructuredAddress>({});
 
   const [fileRef, setFileRef] = useState('');
@@ -328,9 +331,12 @@ function ContactDialog({
       setRepresentative(initial.representative ?? '');
       setRepresentativeRole(initial.representativeRole ?? '');
       setEmail(initial.email ?? '');
+      setAdditionalEmails(initial.additionalEmails ?? []);
       setPhone(initial.phone ?? '');
+      setAdditionalPhones(initial.additionalPhones ?? []);
       setAddress({
         addressNumber: initial.addressNumber,
+        addressNumberSuffix: initial.addressNumberSuffix,
         addressStreet: initial.addressStreet,
         addressComplement: initial.addressComplement,
         addressPostalCode: initial.addressPostalCode,
@@ -356,7 +362,9 @@ function ContactDialog({
       setRepresentative('');
       setRepresentativeRole('');
       setEmail('');
+      setAdditionalEmails([]);
       setPhone('');
+      setAdditionalPhones([]);
       setAddress({});
       setFileRef('');
       setNotes('');
@@ -404,8 +412,11 @@ function ContactDialog({
       representative: representative.trim() || undefined,
       representativeRole: representativeRole.trim() || undefined,
       email: email.trim() || undefined,
+      additionalEmails: additionalEmails.map((e) => e.trim()).filter(Boolean),
       phone: phone.trim() || undefined,
+      additionalPhones: additionalPhones.map((p) => p.trim()).filter(Boolean),
       addressNumber: address.addressNumber || undefined,
+      addressNumberSuffix: address.addressNumberSuffix || undefined,
       addressStreet: address.addressStreet || undefined,
       addressComplement: address.addressComplement || undefined,
       addressPostalCode: address.addressPostalCode || undefined,
@@ -650,11 +661,31 @@ function ContactDialog({
           )}
 
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Email">
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} autoComplete="email" />
+            <Field label="Adresses e-mail">
+              <MultiInput
+                primary={email}
+                setPrimary={setEmail}
+                extras={additionalEmails}
+                setExtras={setAdditionalEmails}
+                type="email"
+                placeholder="avocat@cabinet.fr"
+                icon={<Mail className="w-3.5 h-3.5" />}
+                addLabel="Ajouter une adresse e-mail"
+                autoComplete="email"
+              />
             </Field>
-            <Field label="Téléphone">
-              <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} autoComplete="tel" />
+            <Field label="Téléphones">
+              <MultiInput
+                primary={phone}
+                setPrimary={setPhone}
+                extras={additionalPhones}
+                setExtras={setAdditionalPhones}
+                type="tel"
+                placeholder="06 12 34 56 78"
+                icon={<Phone className="w-3.5 h-3.5" />}
+                addLabel="Ajouter un numéro"
+                autoComplete="tel"
+              />
             </Field>
           </div>
 
@@ -828,5 +859,101 @@ function Field({
       <span className="text-xs font-medium text-[var(--color-text-muted)]">{label}</span>
       {children}
     </label>
+  );
+}
+
+/** Saisie d'un champ principal + liste extensible de champs secondaires (+/–). */
+function MultiInput({
+  primary,
+  setPrimary,
+  extras,
+  setExtras,
+  type,
+  placeholder,
+  icon,
+  addLabel,
+  autoComplete,
+}: {
+  primary: string;
+  setPrimary: (v: string) => void;
+  extras: string[];
+  setExtras: (v: string[]) => void;
+  type: 'email' | 'tel';
+  placeholder: string;
+  icon?: React.ReactNode;
+  addLabel: string;
+  autoComplete?: string;
+}) {
+  const inputCls = cn(
+    'flex-1 min-w-0 px-3 py-2 text-sm rounded-md',
+    'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+    'text-[var(--color-text)]',
+    'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]'
+  );
+
+  const updateExtra = (i: number, v: string) =>
+    setExtras(extras.map((e, idx) => (idx === i ? v : e)));
+  const removeExtra = (i: number) =>
+    setExtras(extras.filter((_, idx) => idx !== i));
+  const addExtra = () => setExtras([...extras, '']);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5">
+        {icon && (
+          <span className="text-[var(--color-text-muted)] flex-shrink-0">
+            {icon}
+          </span>
+        )}
+        <input
+          type={type}
+          value={primary}
+          onChange={(e) => setPrimary(e.target.value)}
+          placeholder={placeholder}
+          className={inputCls}
+          autoComplete={autoComplete}
+        />
+        <button
+          type="button"
+          onClick={addExtra}
+          title={addLabel}
+          aria-label={addLabel}
+          className={cn(
+            'flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-md',
+            'border border-[var(--color-border)] bg-[var(--color-surface-raised)]',
+            'text-[var(--color-text-muted)] hover:text-[var(--color-primary)]',
+            'hover:border-[var(--color-primary)] transition-colors'
+          )}
+        >
+          <Plus className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      {extras.map((v, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <span className="w-3.5 h-3.5 flex-shrink-0" aria-hidden />
+          <input
+            type={type}
+            value={v}
+            onChange={(e) => updateExtra(i, e.target.value)}
+            placeholder={placeholder}
+            className={inputCls}
+            autoComplete={autoComplete}
+          />
+          <button
+            type="button"
+            onClick={() => removeExtra(i)}
+            title="Supprimer"
+            aria-label="Supprimer ce champ"
+            className={cn(
+              'flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-md',
+              'border border-red-200 bg-red-50 text-red-500',
+              'hover:bg-red-100 transition-colors'
+            )}
+          >
+            <Minus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }

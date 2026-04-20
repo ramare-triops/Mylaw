@@ -375,13 +375,21 @@ export interface Contact {
   representativeRole?: string;
 
   // ── Coordonnées ─────────────────────────────────────────────
+  /** Adresse email principale. */
   email?: string;
+  /** Adresses email supplémentaires (perso, pro…). */
+  additionalEmails?: string[];
+  /** Numéro principal. */
   phone?: string;
+  /** Numéros supplémentaires (portable, bureau, domicile…). */
+  additionalPhones?: string[];
 
   /** Adresse libre (compat + affichage groupé). Reste synchronisée avec les champs structurés. */
   address?: string;
   /** Numéro de voie (12, 12bis…). */
   addressNumber?: string;
+  /** Suffixe du numéro (bis, ter, quater…). */
+  addressNumberSuffix?: string;
   /** Nom de la rue / voie. */
   addressStreet?: string;
   /** Complément d'adresse (bâtiment, étage, résidence…). */
