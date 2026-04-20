@@ -5,7 +5,11 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { X, FileText, Scale, Mail, Users, Gavel, FileSignature, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { db } from '@/lib/db';
-import { migrateDocumentCategoryIfNeeded } from '@/components/templates/TemplateLibrary';
+import {
+  migrateDocumentCategoryIfNeeded,
+  seedAdditionalDefaultsIfNeeded,
+  type TemplateOptionalClause,
+} from '@/components/templates/TemplateLibrary';
 
 // ─── Template tel que stocké dans Dexie ────────────────────────────────────
 // Doit rester aligné avec `Template` défini dans TemplateLibrary.tsx. On le
@@ -22,13 +26,16 @@ export interface DialogTemplate {
   updatedAt: string;
   isCustom?: boolean;
   documentCategory?: string;
+  optionalClauses?: TemplateOptionalClause[];
 }
 
 async function loadTemplatesFromDexie(): Promise<DialogTemplate[]> {
   // Garantit que les modèles par défaut historiques disposent du champ
   // `documentCategory` même si l'utilisateur n'a jamais ouvert la
-  // bibliothèque depuis l'ajout de cette fonctionnalité.
+  // bibliothèque depuis l'ajout de cette fonctionnalité. Seed également
+  // les modèles ajoutés après le seed initial (ex : convention tarif horaire).
   await migrateDocumentCategoryIfNeeded();
+  await seedAdditionalDefaultsIfNeeded();
   const rows = await db
     .table('templates')
     .toArray() as Array<Record<string, unknown> & { id: number }>;
@@ -45,8 +52,29 @@ async function loadTemplatesFromDexie(): Promise<DialogTemplate[]> {
       updatedAt: raw.updatedAt ?? new Date().toISOString(),
       isCustom: raw.isCustom,
       documentCategory: raw.documentCategory,
+      optionalClauses: raw.optionalClauses,
     };
   });
+}
+
+// ─── Clauses optionnelles : strip des blocs non cochés ────────────────────
+/**
+ * Supprime du contenu les blocs délimités par `<!--OPT:id-->...<!--/OPT:id-->`
+ * dont l'id n'est pas présent dans `enabledIds`. Les blocs actifs restent en
+ * place avec leurs balises commentées (neutres pour le rendu HTML comme pour
+ * TipTap). Fonctionne sur plusieurs lignes (le contenu HTML peut contenir
+ * des retours à la ligne).
+ */
+export function applyOptionalClauses(
+  content: string,
+  enabledIds: ReadonlySet<string>,
+): string {
+  if (!content) return content;
+  // Regex gourmande minimale pour chaque bloc OPT.
+  return content.replace(
+    /<!--OPT:([a-zA-Z0-9_-]+)-->([\s\S]*?)<!--\/OPT:\1-->/g,
+    (_match, id: string, body: string) => (enabledIds.has(id) ? body : ''),
+  );
 }
 
 // ─── Convertit JSON TipTap / HTML en texte pour l'aperçu ──────────────────
@@ -101,6 +129,8 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
   const [title, setTitle]                       = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Tous');
   const [selectedTemplate, setSelectedTemplate] = useState<DialogTemplate | null>(null);
+  // Etat des clauses optionnelles du modèle sélectionné (id → coché).
+  const [enabledClauses, setEnabledClauses] = useState<Record<string, boolean>>({});
 
   // Charge les modèles en live depuis Dexie (réagit aux créations/suppressions
   // faites depuis la bibliothèque pendant que le dialog est ouvert).
@@ -114,8 +144,19 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
       setSelectedTemplate(null);
       setTitle('');
       setSelectedCategory('Tous');
+      setEnabledClauses({});
     }
   }, [open]);
+
+  // À chaque changement de modèle sélectionné, (ré)initialise l'état des
+  // clauses optionnelles à partir de leurs valeurs `defaultChecked`.
+  useEffect(() => {
+    const initial: Record<string, boolean> = {};
+    for (const c of selectedTemplate?.optionalClauses ?? []) {
+      initial[c.id] = c.defaultChecked ?? false;
+    }
+    setEnabledClauses(initial);
+  }, [selectedTemplate]);
 
   if (!open) return null;
 
@@ -127,16 +168,29 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const finalTitle = title.trim() || (selectedTemplate ? selectedTemplate.name : 'Nouveau document');
-    onCreate(finalTitle, selectedTemplate);
+    // Applique les clauses optionnelles avant de transmettre au parent.
+    let templateToEmit: DialogTemplate | null = selectedTemplate;
+    if (selectedTemplate?.optionalClauses?.length) {
+      const enabledIds = new Set(
+        Object.entries(enabledClauses).filter(([, v]) => v).map(([k]) => k),
+      );
+      templateToEmit = {
+        ...selectedTemplate,
+        content: applyOptionalClauses(selectedTemplate.content, enabledIds),
+      };
+    }
+    onCreate(finalTitle, templateToEmit);
     setTitle('');
     setSelectedTemplate(null);
     setSelectedCategory('Tous');
+    setEnabledClauses({});
   }
 
   function handleClose() {
     setTitle('');
     setSelectedTemplate(null);
     setSelectedCategory('Tous');
+    setEnabledClauses({});
     onClose();
   }
 
@@ -192,6 +246,43 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
               </div>
             </div>
           </div>
+
+          {/* Clauses optionnelles du modèle sélectionné */}
+          {selectedTemplate?.optionalClauses?.length ? (
+            <div
+              className="flex flex-col gap-2 mx-6 mb-4 p-3 rounded-md"
+              style={{ background: 'var(--color-primary-highlight)', border: '1px solid var(--color-border)', flexShrink: 0 }}
+            >
+              <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Clauses optionnelles
+              </span>
+              <div className="flex flex-col gap-1.5">
+                {selectedTemplate.optionalClauses.map((c) => {
+                  const checked = !!enabledClauses[c.id];
+                  return (
+                    <label
+                      key={c.id}
+                      className="flex items-start gap-2 cursor-pointer"
+                      style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text)' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => setEnabledClauses((prev) => ({ ...prev, [c.id]: e.target.checked }))}
+                        style={{ marginTop: '3px', accentColor: 'var(--color-primary)' }}
+                      />
+                      <span className="flex flex-col">
+                        <span style={{ fontWeight: 500 }}>{c.label}</span>
+                        {c.description && (
+                          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>{c.description}</span>
+                        )}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           {/* Galerie */}
           <div className="flex-1 overflow-y-auto px-6 pb-4" style={{ minHeight: 0 }}>
