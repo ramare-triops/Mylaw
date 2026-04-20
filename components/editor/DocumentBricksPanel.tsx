@@ -1199,7 +1199,12 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
 // ─── COMPOSANT PRINCIPAL ──────────────────────────────────────────────────────
 
 interface DocumentBricksPanelProps {
-  onInsertBrick: (content: string) => void
+  /**
+   * Insertion d'une brique dans le document.
+   * `brick` est fourni pour que l'appelant puisse poser un marqueur et activer
+   * l'auto-remplissage depuis un intervenant.
+   */
+  onInsertBrick: (content: string, brick?: Brick) => void
   onDragStart?: (brick: Brick) => void
   /** Dossier rattaché au document courant ; utilisé pour filtrer les intervenants éligibles à une brique. */
   dossierId?: number
@@ -1224,7 +1229,7 @@ export function DocumentBricksPanel({ onInsertBrick, dossierId }: DocumentBricks
   const handlePickContact = useCallback((contact: Contact) => {
     if (!picker) return
     const { content } = applyContactToBrickContent(contact, picker.brick.content)
-    onInsertBrick(brickContentToHtml(content))
+    onInsertBrick(brickContentToHtml(content), picker.brick)
     setPicker(null)
   }, [picker, onInsertBrick])
 
@@ -1396,7 +1401,7 @@ export function DocumentBricksPanel({ onInsertBrick, dossierId }: DocumentBricks
               <BrickGroupSection
                 key={g.id}
                 group={g}
-                onInsert={b => onInsertBrick(brickContentToHtml(b.content))}
+                onInsert={b => onInsertBrick(brickContentToHtml(b.content), b)}
                 onOpenPicker={handleOpenPicker}
                 defaultOpen={i === 0}
               />
@@ -1416,7 +1421,7 @@ export function DocumentBricksPanel({ onInsertBrick, dossierId }: DocumentBricks
               <BrickChip
                 key={b.id}
                 brick={b}
-                onInsert={() => onInsertBrick(brickContentToHtml(b.content))}
+                onInsert={() => onInsertBrick(brickContentToHtml(b.content), b)}
                 onOpenPicker={handleOpenPicker}
               />
             ))}

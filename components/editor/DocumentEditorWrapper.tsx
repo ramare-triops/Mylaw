@@ -31,17 +31,21 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import CharacterCount from '@tiptap/extension-character-count'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Save, Check, Loader2, Wifi, WifiOff, X, ZoomIn, ZoomOut, Settings2 } from 'lucide-react'
+import { Save, Check, Loader2, Wifi, WifiOff, X, ZoomIn, ZoomOut, Settings2, Users } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
 
 import { WordToolbar } from './WordToolbar'
 import { FontSize } from './extensions/FontSize'
 import { VariableField } from './extensions/VariableField'
+import { BrickMarker } from './extensions/BrickMarker'
 import { TextExpansion } from './extensions/TextExpansion'
 import { VariablePopup } from './VariablePopup'
 import { FillAllVariablesDialog } from './FillAllVariablesDialog'
 import { DocumentBricksPanel, DRAG_BRICK_KEY, brickContentToHtml } from './DocumentBricksPanel'
 import type { Brick } from './DocumentBricksPanel'
+import { BrickIntervenantPicker } from './BrickIntervenantPicker'
+import { BrickMarginIcons, wrapBrickHtmlWithMarker } from './BrickMarginIcons'
+import { contactVariableValue } from '@/lib/contact-variables'
 import { DocumentPropertiesDialog } from '@/components/documents/DocumentPropertiesDialog'
 import { useDocumentSave } from '@/hooks/useDocumentSave'
 import { getSetting, db } from '@/lib/db'
@@ -149,6 +153,15 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const [showCloseDialog, setShowCloseDialog]         = useState(false)
   const [showFillDialog, setShowFillDialog]           = useState(false)
   const [showPropsDialog, setShowPropsDialog]         = useState(false)
+  const [dropSuggestion, setDropSuggestion]           = useState<
+    | { brick: Brick; brickId: string; rect: { top: number; left: number } }
+    | null
+  >(null)
+  const [pickerFromDrop, setPickerFromDrop]           = useState<
+    | { brick: Brick; brickId: string; rect: { top: number; left: number } }
+    | null
+  >(null)
+  const pageRef = useRef<HTMLDivElement | null>(null)
   const [isOnline, setIsOnline]                       = useState(true)
   const [prefs, setPrefs]                             = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS)
   const [variableCount, setVariableCount]             = useState(0)
@@ -308,10 +321,19 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
 
   // ── Insertion d'une brique au curseur ─────────────────────────────────────
   // brickContentToHtml est importé depuis DocumentBricksPanel (gère Markdown + variables)
-  const handleInsertBrick = useCallback((brickHtml: string) => {
+  const handleInsertBrick = useCallback((brickHtml: string, brick?: Brick) => {
     const ed = editorRef.current
     if (!ed) return
-    ed.chain().focus().insertContent(brickHtml).run()
+    const hasTarget = !!(brick && (brick.targetContactType || (brick.targetRoles && brick.targetRoles.length > 0)))
+    const finalHtml = brick && hasTarget
+      ? wrapBrickHtmlWithMarker(brickHtml, {
+          brickId: `brk-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,
+          title: brick.label,
+          targetContactType: brick.targetContactType,
+          targetRoles: brick.targetRoles,
+        })
+      : brickHtml
+    ed.chain().focus().insertContent(finalHtml).run()
     setTimeout(() => {
       const c = editorRef.current ? countVariables(editorRef.current) : 0
       setVariableCount(c)
@@ -331,7 +353,17 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
       const view = ed.view
       const coords = { left: e.clientX, top: e.clientY }
       const pos = view.posAtCoords(coords)
-      const html = brickContentToHtml(brick.content)
+      const baseHtml = brickContentToHtml(brick.content)
+      const hasTarget = !!(brick.targetContactType || (brick.targetRoles && brick.targetRoles.length > 0))
+      const brickId = `brk-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`
+      const html = hasTarget
+        ? wrapBrickHtmlWithMarker(baseHtml, {
+            brickId,
+            title: brick.label,
+            targetContactType: brick.targetContactType,
+            targetRoles: brick.targetRoles,
+          })
+        : baseHtml
       if (pos) {
         ed.chain().focus().insertContentAt(pos.pos, html).run()
       } else {
@@ -341,6 +373,15 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         const c = editorRef.current ? countVariables(editorRef.current) : 0
         setVariableCount(c)
       }, 50)
+      // Popup de suggestion au point de drop — uniquement si la brique
+      // est éligible à un auto-remplissage.
+      if (hasTarget) {
+        setDropSuggestion({
+          brick,
+          brickId,
+          rect: { top: e.clientY + 8, left: e.clientX + 8 },
+        })
+      }
     } catch {}
   }, [])
 
@@ -372,6 +413,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         onVariableClick: handleVariableClick,
         HTMLAttributes: {},
       }),
+      BrickMarker,
       TextExpansion.configure({
         expansions: expansionsRef.current,
         triggers: [' ', 'Enter'],
@@ -533,6 +575,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
               }}
             >
               <div
+                ref={pageRef}
                 style={{
                   width: `${A4_WIDTH_MM}mm`,
                   maxWidth: '100%',
@@ -645,6 +688,85 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         document={document}
         onClose={() => setShowPropsDialog(false)}
       />
+
+      {/* Overlay : icônes "intervenants" dans la marge, au niveau de chaque brique */}
+      <BrickMarginIcons
+        editor={editor}
+        pageRef={pageRef}
+        dossierId={document.dossierId}
+      />
+
+      {/* Popup de suggestion posé au point de drop d'une brique éligible */}
+      {dropSuggestion && (
+        <DropSuggestionPopup
+          rect={dropSuggestion.rect}
+          brickTitle={dropSuggestion.brick.label}
+          onAccept={() => {
+            setPickerFromDrop({
+              brick: dropSuggestion.brick,
+              brickId: dropSuggestion.brickId,
+              rect: dropSuggestion.rect,
+            })
+            setDropSuggestion(null)
+          }}
+          onDismiss={() => setDropSuggestion(null)}
+        />
+      )}
+
+      {/* Picker déclenché depuis le popup de drop — applique le contact à la brique fraîchement posée */}
+      {pickerFromDrop && (
+        <BrickIntervenantPicker
+          brick={{
+            title: pickerFromDrop.brick.label,
+            targetContactType: pickerFromDrop.brick.targetContactType,
+            targetRoles: pickerFromDrop.brick.targetRoles,
+          }}
+          dossierId={document.dossierId}
+          anchorRect={pickerFromDrop.rect}
+          onPick={(contact) => {
+            const ed = editorRef.current
+            if (!ed) { setPickerFromDrop(null); return }
+            // Retrouver le marqueur fraîchement posé et sa plage, puis
+            // remplacer les variables connues par les valeurs du contact.
+            const markerEl = (ed.view.dom as HTMLElement).querySelector<HTMLElement>(
+              `[data-mylaw-brick-id="${pickerFromDrop.brickId}"]`,
+            )
+            if (!markerEl) { setPickerFromDrop(null); return }
+            const allMarkers = Array.from(
+              (ed.view.dom as HTMLElement).querySelectorAll<HTMLElement>('[data-mylaw-brick-id]'),
+            )
+            const idx = allMarkers.indexOf(markerEl)
+            let startPos = 0, endPos = ed.state.doc.content.size
+            try { startPos = ed.view.posAtDOM(markerEl, 0) } catch {}
+            const nextEl = allMarkers[idx + 1]
+            if (nextEl) {
+              try { endPos = ed.view.posAtDOM(nextEl, 0) } catch {}
+            }
+            // Parcours des variableField et remplacement.
+            const replacements: Array<{ pos: number; value: string }> = []
+            ed.state.doc.nodesBetween(startPos, endPos, (node, pos) => {
+              if (node.type.name !== 'variableField') return true
+              const name = node.attrs.name as string
+              if (!name) return false
+              const value = contactVariableValue(contact, name)
+              if (value != null && value !== '') {
+                replacements.push({ pos, value })
+              }
+              return false
+            })
+            replacements.sort((a, b) => b.pos - a.pos).forEach((r) => {
+              ed.commands.replaceVariable(r.pos, r.value)
+            })
+            setPickerFromDrop(null)
+            // Mets à jour le compteur de variables restantes
+            setTimeout(() => {
+              const c = editorRef.current ? countVariables(editorRef.current) : 0
+              setVariableCount(c)
+            }, 50)
+          }}
+          onClose={() => setPickerFromDrop(null)}
+        />
+      )}
 
       <style jsx global>{`
         .mylex-editor-content {
@@ -769,6 +891,86 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         [data-theme="dark"] .mylex-editor-content [data-variable-field]:not([data-variable-type])       { color: #9ca3af; background: rgba(156, 163, 175, 0.10); }
       `}</style>
     </>
+  )
+}
+
+// ─── Popup suggestion au drop d'une brique avec cible d'intervenant ────────
+function DropSuggestionPopup({
+  rect,
+  brickTitle,
+  onAccept,
+  onDismiss,
+}: {
+  rect: { top: number; left: number }
+  brickTitle: string
+  onAccept: () => void
+  onDismiss: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onDismiss()
+    }
+    // Délai pour éviter de fermer immédiatement si le drop est encore en cours
+    const t = setTimeout(() => document.addEventListener('mousedown', onDown), 50)
+    return () => { clearTimeout(t); document.removeEventListener('mousedown', onDown) }
+  }, [onDismiss])
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'fixed',
+        top: rect.top,
+        left: rect.left,
+        zIndex: 50,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '6px 10px',
+        background: 'var(--color-surface)',
+        border: '1.5px solid var(--color-primary)',
+        borderRadius: 8,
+        boxShadow: '0 4px 14px rgba(0,0,0,0.14)',
+        fontSize: 12,
+        animation: 'fadeIn 150ms ease-out',
+      }}
+    >
+      <Users size={14} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
+      <span style={{ color: 'var(--color-text)', fontWeight: 500 }}>
+        « {brickTitle} »
+      </span>
+      <button
+        type="button"
+        onClick={onAccept}
+        style={{
+          padding: '4px 10px',
+          borderRadius: 6,
+          border: 'none',
+          background: 'var(--color-primary)',
+          color: '#fff',
+          fontSize: 11,
+          fontWeight: 600,
+          cursor: 'pointer',
+        }}
+      >
+        Auto-remplir avec un intervenant
+      </button>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Fermer"
+        style={{
+          padding: 4,
+          border: 'none',
+          background: 'transparent',
+          color: 'var(--color-text-muted)',
+          cursor: 'pointer',
+        }}
+      >
+        <X size={12} />
+      </button>
+    </div>
   )
 }
 
