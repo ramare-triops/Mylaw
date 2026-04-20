@@ -115,6 +115,9 @@ export async function buildBackup(): Promise<MylawBackup> {
   const [
     documents, folders, snippets, deadlines,
     templates, tools, aiChats, bricks, infoLabels, sessions,
+    dossiers, contacts, dossierContacts, documentContacts,
+    timeEntries, expenses, fixedFees, invoices,
+    documentLinks, documentVersions,
   ] = await Promise.all([
     db.documents.toArray(),
     db.folders.toArray(),
@@ -126,6 +129,16 @@ export async function buildBackup(): Promise<MylawBackup> {
     db.table('bricks').toArray(),
     db.table('infoLabels').toArray(),
     db.table('sessions').toArray(),
+    db.dossiers.toArray(),
+    db.contacts.toArray(),
+    db.dossierContacts.toArray(),
+    db.documentContacts.toArray(),
+    db.timeEntries.toArray(),
+    db.expenses.toArray(),
+    db.fixedFees.toArray(),
+    db.invoices.toArray(),
+    db.documentLinks.toArray(),
+    db.documentVersions.toArray(),
   ]);
 
   // Settings : on EXCLUT les clés internes pour ne pas polluer les autres appareils.
@@ -136,11 +149,14 @@ export async function buildBackup(): Promise<MylawBackup> {
   }
 
   return {
-    version: 3,
+    version: 4,
     exportedAt: new Date().toISOString(),
     documents, folders, snippets, deadlines,
     templates, tools, aiChats,
     bricks, infoLabels, sessions,
+    dossiers, contacts, dossierContacts, documentContacts,
+    timeEntries, expenses, fixedFees, invoices,
+    documentLinks, documentVersions,
     settings,
   };
 }
@@ -169,6 +185,17 @@ export async function mergeFromBackup(
   await mergeTable(db.table('bricks'),        backup.bricks,     opts);
   await mergeTable(db.table('infoLabels'),    backup.infoLabels, opts);
   await mergeTable(db.table('sessions'),      backup.sessions,   opts);
+  // v4 — onglet Dossiers
+  await mergeTable(db.dossiers,           backup.dossiers,         opts);
+  await mergeTable(db.contacts,           backup.contacts,         opts);
+  await mergeTable(db.dossierContacts,    backup.dossierContacts,  opts);
+  await mergeTable(db.documentContacts,   backup.documentContacts, opts);
+  await mergeTable(db.timeEntries,        backup.timeEntries,      opts);
+  await mergeTable(db.expenses,           backup.expenses,         opts);
+  await mergeTable(db.fixedFees,          backup.fixedFees,        opts);
+  await mergeTable(db.invoices,           backup.invoices,         opts);
+  await mergeTable(db.documentLinks,      backup.documentLinks,    opts);
+  await mergeTable(db.documentVersions,   backup.documentVersions, opts);
 
   // Settings : clé par clé, on ne touche JAMAIS aux clés internes locales.
   const remoteSettings = backup.settings ?? {};

@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type {
   Document,
+  DocumentVersion,
   Folder,
   ToolRecord,
   Template,
@@ -11,6 +12,17 @@ import type {
   Deadline,
   Brick,
   InfoLabel,
+  Dossier,
+  Contact,
+  DossierContact,
+  DocumentContact,
+  TimeEntry,
+  Expense,
+  FixedFee,
+  Invoice,
+  Attachment,
+  DocumentLink,
+  AuditEntry,
 } from '@/types';
 
 type SettingsRecord = { key: string; value: unknown };
@@ -63,6 +75,7 @@ export function triggerDriveSync() {
 
 export class MyLexDatabase extends Dexie {
   documents!: Table<Document>;
+  documentVersions!: Table<DocumentVersion>;
   folders!: Table<Folder>;
   tools!: Table<ToolRecord>;
   templates!: Table<Template>;
@@ -74,6 +87,18 @@ export class MyLexDatabase extends Dexie {
   deadlines!: Table<Deadline>;
   bricks!: Table<Brick>;
   infoLabels!: Table<InfoLabel>;
+  // ─── v3 : onglet Dossiers ──────────────────────────────────────────────
+  dossiers!: Table<Dossier>;
+  contacts!: Table<Contact>;
+  dossierContacts!: Table<DossierContact>;
+  documentContacts!: Table<DocumentContact>;
+  timeEntries!: Table<TimeEntry>;
+  expenses!: Table<Expense>;
+  fixedFees!: Table<FixedFee>;
+  invoices!: Table<Invoice>;
+  attachments!: Table<Attachment>;
+  documentLinks!: Table<DocumentLink>;
+  auditLog!: Table<AuditEntry>;
 
   constructor() {
     super('MyLexDB');
@@ -109,6 +134,46 @@ export class MyLexDatabase extends Dexie {
       infoLabels: '++id, name, color, createdAt',
     });
 
+    // ─── Version 3 : Dossiers, Contacts, Finance, Versions, Audit ─────────
+    this.version(3).stores({
+      documents:
+        '++id, title, type, folderId, dossierId, status, category, updatedAt, tags, *searchTokens',
+      documentVersions: '++id, documentId, timestamp',
+      folders: '++id, name, parentId, color, createdAt',
+      tools: '++id, slug, name, pinned, order, config, lastUsedAt',
+      templates: '++id, name, category, content, variables, createdAt',
+      sessions: '++id, date, toolId, content, tags',
+      snippets: '++id, trigger, expansion, category',
+      aiChats: '++id, documentId, messages, createdAt',
+      settings: 'key',
+      history: '++id, action, entityId, entityType, timestamp',
+      deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
+      bricks: '++id, title, category, infoLabelId, updatedAt, *tags',
+      infoLabels: '++id, name, color, createdAt',
+      dossiers:
+        '++id, reference, name, type, status, updatedAt, createdAt, *tags',
+      contacts:
+        '++id, type, lastName, companyName, email, updatedAt, *tags',
+      dossierContacts:
+        '++id, dossierId, contactId, role, [dossierId+contactId]',
+      documentContacts:
+        '++id, documentId, contactId, role, [documentId+contactId]',
+      timeEntries:
+        '++id, dossierId, documentId, contactId, date, billable, billed, invoiceId',
+      expenses:
+        '++id, dossierId, documentId, date, category, billed, invoiceId',
+      fixedFees:
+        '++id, dossierId, documentId, date, kind, billed, invoiceId',
+      invoices:
+        '++id, dossierId, reference, date, status',
+      attachments:
+        '++id, dossierId, documentId, name, mimeType, uploadedAt, *tags',
+      documentLinks:
+        '++id, documentId, dossierId, [documentId+dossierId]',
+      auditLog:
+        '++id, dossierId, entityType, entityId, action, timestamp',
+    });
+
     // ─── Middleware : déclenche le sync Drive sur toute mutation ───
     // On intercepte add, put, delete, clear sur toutes les tables sauf :
     //   - 'history' (audit log interne, jamais synchronisé)
@@ -125,7 +190,14 @@ export class MyLexDatabase extends Dexie {
           ...downlevel,
           table(tableName: string) {
             const table = downlevel.table(tableName);
-            if (tableName === 'history') return table;
+            // Tables jamais synchronisées vers Drive (locales pures) :
+            //  - history / auditLog : journaux internes
+            //  - attachments : blobs binaires, trop lourds pour un JSON Drive
+            if (
+              tableName === 'history' ||
+              tableName === 'auditLog' ||
+              tableName === 'attachments'
+            ) return table;
             return {
               ...table,
               mutate(req: any) {
@@ -237,4 +309,424 @@ export async function deleteInfoLabel(id: number): Promise<void> {
     linked.map((b) => db.bricks.put({ ...b, infoLabelId: undefined }))
   );
   await db.infoLabels.delete(id);
+}
+
+// ─── Audit helpers ────────────────────────────────────────────────────────
+export async function logAudit(entry: Omit<AuditEntry, 'id' | 'timestamp'> & { timestamp?: Date }): Promise<void> {
+  await db.auditLog.add({
+    ...entry,
+    timestamp: entry.timestamp ?? new Date(),
+  } as AuditEntry);
+}
+
+// ─── Dossier helpers ──────────────────────────────────────────────────────
+export async function saveDossier(dossier: Dossier): Promise<number> {
+  const now = new Date();
+  const payload: Dossier = {
+    ...dossier,
+    updatedAt: now,
+    createdAt: dossier.createdAt ?? now,
+  };
+  const isUpdate = dossier.id != null;
+  const id = await db.dossiers.put(payload);
+  await logAudit({
+    dossierId: Number(id),
+    entityType: 'dossier',
+    entityId: Number(id),
+    action: isUpdate ? 'update' : 'create',
+  });
+  return Number(id);
+}
+
+export async function deleteDossier(id: number): Promise<void> {
+  // On détache les documents mais on ne les supprime pas (ils restent dans la GED).
+  const docs = await db.documents.where('dossierId').equals(id).toArray();
+  await Promise.all(
+    docs.map((d) =>
+      db.documents.put({ ...d, dossierId: undefined, updatedAt: new Date() })
+    )
+  );
+  // Suppression cascade des entités exclusivement rattachées au dossier.
+  await db.dossierContacts.where('dossierId').equals(id).delete();
+  await db.timeEntries.where('dossierId').equals(id).delete();
+  await db.expenses.where('dossierId').equals(id).delete();
+  await db.fixedFees.where('dossierId').equals(id).delete();
+  await db.invoices.where('dossierId').equals(id).delete();
+  await db.attachments.where('dossierId').equals(id).delete();
+  await db.documentLinks.where('dossierId').equals(id).delete();
+  await db.dossiers.delete(id);
+  await logAudit({
+    dossierId: id,
+    entityType: 'dossier',
+    entityId: id,
+    action: 'delete',
+  });
+}
+
+// ─── Contact helpers ──────────────────────────────────────────────────────
+export async function saveContact(contact: Contact): Promise<number> {
+  const now = new Date();
+  const payload: Contact = {
+    ...contact,
+    updatedAt: now,
+    createdAt: contact.createdAt ?? now,
+  };
+  const isUpdate = contact.id != null;
+  const id = await db.contacts.put(payload);
+  await logAudit({
+    entityType: 'contact',
+    entityId: Number(id),
+    action: isUpdate ? 'update' : 'create',
+  });
+  return Number(id);
+}
+
+export async function deleteContact(id: number): Promise<void> {
+  await db.dossierContacts.where('contactId').equals(id).delete();
+  await db.documentContacts.where('contactId').equals(id).delete();
+  await db.contacts.delete(id);
+  await logAudit({ entityType: 'contact', entityId: id, action: 'delete' });
+}
+
+export function contactDisplayName(c: Pick<Contact, 'type' | 'firstName' | 'lastName' | 'companyName'>): string {
+  if (c.type === 'moral') return c.companyName || '—';
+  const name = [c.firstName, c.lastName].filter(Boolean).join(' ').trim();
+  return name || c.companyName || '—';
+}
+
+// ─── DossierContact helpers ───────────────────────────────────────────────
+export async function attachContactToDossier(
+  dossierId: number,
+  contactId: number,
+  role: DossierContact['role'],
+  permissions: DossierContact['permissions'] = ['read'],
+): Promise<number> {
+  const existing = await db.dossierContacts
+    .where('[dossierId+contactId]').equals([dossierId, contactId]).first();
+  if (existing?.id) {
+    await db.dossierContacts.put({ ...existing, role, permissions });
+    return existing.id;
+  }
+  const id = await db.dossierContacts.add({
+    dossierId, contactId, role, permissions,
+    createdAt: new Date(),
+  } as DossierContact);
+  await logAudit({
+    dossierId,
+    entityType: 'contact',
+    entityId: contactId,
+    action: 'attach',
+    details: JSON.stringify({ role }),
+  });
+  return Number(id);
+}
+
+export async function detachContactFromDossier(dossierContactId: number): Promise<void> {
+  const rec = await db.dossierContacts.get(dossierContactId);
+  await db.dossierContacts.delete(dossierContactId);
+  if (rec) {
+    await logAudit({
+      dossierId: rec.dossierId,
+      entityType: 'contact',
+      entityId: rec.contactId,
+      action: 'detach',
+    });
+  }
+}
+
+// ─── DocumentContact helpers ──────────────────────────────────────────────
+export async function attachContactToDocument(
+  documentId: number,
+  contactId: number,
+  role: DocumentContact['role'],
+): Promise<number> {
+  const existing = await db.documentContacts
+    .where('[documentId+contactId]').equals([documentId, contactId]).first();
+  if (existing?.id) {
+    await db.documentContacts.put({ ...existing, role });
+    return existing.id;
+  }
+  const id = await db.documentContacts.add({
+    documentId, contactId, role,
+    createdAt: new Date(),
+  } as DocumentContact);
+  return Number(id);
+}
+
+export async function detachContactFromDocument(documentContactId: number): Promise<void> {
+  await db.documentContacts.delete(documentContactId);
+}
+
+// ─── Time entries ─────────────────────────────────────────────────────────
+export async function saveTimeEntry(entry: TimeEntry): Promise<number> {
+  const now = new Date();
+  const payload: TimeEntry = {
+    ...entry,
+    updatedAt: now,
+    createdAt: entry.createdAt ?? now,
+  };
+  const isUpdate = entry.id != null;
+  const id = await db.timeEntries.put(payload);
+  await logAudit({
+    dossierId: entry.dossierId,
+    entityType: 'time',
+    entityId: Number(id),
+    action: isUpdate ? 'update' : 'create',
+  });
+  return Number(id);
+}
+
+export async function deleteTimeEntry(id: number): Promise<void> {
+  const rec = await db.timeEntries.get(id);
+  await db.timeEntries.delete(id);
+  if (rec) await logAudit({
+    dossierId: rec.dossierId,
+    entityType: 'time',
+    entityId: id,
+    action: 'delete',
+  });
+}
+
+// ─── Expenses ─────────────────────────────────────────────────────────────
+export async function saveExpense(expense: Expense): Promise<number> {
+  const now = new Date();
+  const payload: Expense = {
+    ...expense,
+    updatedAt: now,
+    createdAt: expense.createdAt ?? now,
+  };
+  const isUpdate = expense.id != null;
+  const id = await db.expenses.put(payload);
+  await logAudit({
+    dossierId: expense.dossierId,
+    entityType: 'expense',
+    entityId: Number(id),
+    action: isUpdate ? 'update' : 'create',
+  });
+  return Number(id);
+}
+
+export async function deleteExpense(id: number): Promise<void> {
+  const rec = await db.expenses.get(id);
+  await db.expenses.delete(id);
+  if (rec) await logAudit({
+    dossierId: rec.dossierId,
+    entityType: 'expense',
+    entityId: id,
+    action: 'delete',
+  });
+}
+
+// ─── Fixed fees ───────────────────────────────────────────────────────────
+export async function saveFixedFee(fee: FixedFee): Promise<number> {
+  const now = new Date();
+  const payload: FixedFee = {
+    ...fee,
+    updatedAt: now,
+    createdAt: fee.createdAt ?? now,
+  };
+  const isUpdate = fee.id != null;
+  const id = await db.fixedFees.put(payload);
+  await logAudit({
+    dossierId: fee.dossierId,
+    entityType: 'fee',
+    entityId: Number(id),
+    action: isUpdate ? 'update' : 'create',
+  });
+  return Number(id);
+}
+
+export async function deleteFixedFee(id: number): Promise<void> {
+  const rec = await db.fixedFees.get(id);
+  await db.fixedFees.delete(id);
+  if (rec) await logAudit({
+    dossierId: rec.dossierId,
+    entityType: 'fee',
+    entityId: id,
+    action: 'delete',
+  });
+}
+
+// ─── Invoices ─────────────────────────────────────────────────────────────
+export async function saveInvoice(invoice: Invoice): Promise<number> {
+  const now = new Date();
+  const payload: Invoice = {
+    ...invoice,
+    updatedAt: now,
+    createdAt: invoice.createdAt ?? now,
+  };
+  const isUpdate = invoice.id != null;
+  const id = await db.invoices.put(payload);
+  await logAudit({
+    dossierId: invoice.dossierId,
+    entityType: 'invoice',
+    entityId: Number(id),
+    action: isUpdate ? 'update' : 'create',
+  });
+  return Number(id);
+}
+
+export async function deleteInvoice(id: number): Promise<void> {
+  const rec = await db.invoices.get(id);
+  // Détacher toutes les lignes financières rattachées
+  await db.timeEntries.where('invoiceId').equals(id).modify({
+    invoiceId: undefined as unknown as number, billed: false,
+  });
+  await db.expenses.where('invoiceId').equals(id).modify({
+    invoiceId: undefined as unknown as number, billed: false,
+  });
+  await db.fixedFees.where('invoiceId').equals(id).modify({
+    invoiceId: undefined as unknown as number, billed: false,
+  });
+  await db.invoices.delete(id);
+  if (rec) await logAudit({
+    dossierId: rec.dossierId,
+    entityType: 'invoice',
+    entityId: id,
+    action: 'delete',
+  });
+}
+
+// ─── Attachments ──────────────────────────────────────────────────────────
+export async function saveAttachment(att: Attachment): Promise<number> {
+  const id = await db.attachments.put({
+    ...att,
+    uploadedAt: att.uploadedAt ?? new Date(),
+  });
+  await logAudit({
+    dossierId: att.dossierId,
+    entityType: 'attachment',
+    entityId: Number(id),
+    action: 'import',
+    details: JSON.stringify({ name: att.name, size: att.size }),
+  });
+  return Number(id);
+}
+
+export async function deleteAttachment(id: number): Promise<void> {
+  const rec = await db.attachments.get(id);
+  await db.attachments.delete(id);
+  if (rec) await logAudit({
+    dossierId: rec.dossierId,
+    entityType: 'attachment',
+    entityId: id,
+    action: 'delete',
+    details: JSON.stringify({ name: rec.name }),
+  });
+}
+
+// ─── DocumentLinks (liens inter-dossiers) ─────────────────────────────────
+export async function linkDocumentToDossier(
+  documentId: number,
+  dossierId: number,
+  note?: string,
+): Promise<number> {
+  const existing = await db.documentLinks
+    .where('[documentId+dossierId]').equals([documentId, dossierId]).first();
+  if (existing?.id) return existing.id;
+  const id = await db.documentLinks.add({
+    documentId, dossierId, note,
+    createdAt: new Date(),
+  } as DocumentLink);
+  await logAudit({
+    dossierId,
+    entityType: 'link',
+    entityId: Number(id),
+    action: 'attach',
+    details: JSON.stringify({ documentId }),
+  });
+  return Number(id);
+}
+
+export async function unlinkDocumentFromDossier(linkId: number): Promise<void> {
+  const rec = await db.documentLinks.get(linkId);
+  await db.documentLinks.delete(linkId);
+  if (rec) await logAudit({
+    dossierId: rec.dossierId,
+    entityType: 'link',
+    entityId: linkId,
+    action: 'detach',
+  });
+}
+
+// ─── Document versions ────────────────────────────────────────────────────
+export async function snapshotDocumentVersion(
+  doc: Document,
+  label?: string,
+): Promise<number | null> {
+  if (!doc.id) return null;
+  const id = await db.documentVersions.add({
+    documentId: doc.id,
+    content: doc.content,
+    contentRaw: doc.contentRaw,
+    wordCount: doc.wordCount,
+    label,
+    timestamp: new Date(),
+  } as DocumentVersion);
+  return Number(id);
+}
+
+export async function restoreDocumentVersion(versionId: number): Promise<void> {
+  const v = await db.documentVersions.get(versionId);
+  if (!v) return;
+  const doc = await db.documents.get(v.documentId);
+  if (!doc) return;
+  // Snapshot de l'état courant avant restauration.
+  await snapshotDocumentVersion(doc, 'Avant restauration');
+  await db.documents.put({
+    ...doc,
+    content: v.content,
+    contentRaw: v.contentRaw,
+    wordCount: v.wordCount ?? doc.wordCount,
+    updatedAt: new Date(),
+  });
+  await logAudit({
+    dossierId: doc.dossierId,
+    entityType: 'document',
+    entityId: doc.id!,
+    action: 'restore_version',
+    details: JSON.stringify({ versionId }),
+  });
+}
+
+// ─── Stats finance d'un dossier ───────────────────────────────────────────
+export interface DossierFinanceTotals {
+  billableMinutes: number;
+  billedMinutes: number;
+  billableAmount: number; // HT
+  billedAmount: number;
+  expenseTotal: number;
+  expenseRebillable: number;
+  feeTotal: number;
+}
+
+export async function computeDossierFinanceTotals(dossierId: number): Promise<DossierFinanceTotals> {
+  const [times, exps, fees] = await Promise.all([
+    db.timeEntries.where('dossierId').equals(dossierId).toArray(),
+    db.expenses.where('dossierId').equals(dossierId).toArray(),
+    db.fixedFees.where('dossierId').equals(dossierId).toArray(),
+  ]);
+  let billableMinutes = 0, billedMinutes = 0, billableAmount = 0, billedAmount = 0;
+  for (const t of times) {
+    if (t.billable) {
+      billableMinutes += t.minutes;
+      billableAmount += (t.minutes / 60) * (t.hourlyRate ?? 0);
+    }
+    if (t.billed) {
+      billedMinutes += t.minutes;
+      billedAmount += (t.minutes / 60) * (t.hourlyRate ?? 0);
+    }
+  }
+  let expenseTotal = 0, expenseRebillable = 0;
+  for (const e of exps) {
+    expenseTotal += e.amount;
+    if (e.rebillable) expenseRebillable += e.amount;
+  }
+  const feeTotal = fees.reduce((acc, f) => acc + f.amount, 0);
+  return {
+    billableMinutes, billedMinutes,
+    billableAmount, billedAmount,
+    expenseTotal, expenseRebillable,
+    feeTotal,
+  };
 }

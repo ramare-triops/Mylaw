@@ -23,6 +23,18 @@ export interface MylawBackup {
   infoLabels: any[];
   /** Sessions d'utilisation des outils (ajouté v3.1) */
   sessions?: any[];
+  /** v4 — onglet Dossiers */
+  dossiers?: any[];
+  contacts?: any[];
+  dossierContacts?: any[];
+  documentContacts?: any[];
+  timeEntries?: any[];
+  expenses?: any[];
+  fixedFees?: any[];
+  invoices?: any[];
+  documentLinks?: any[];
+  documentVersions?: any[];
+  // ⚠️ attachments (blobs) et auditLog (journal local) NE sont PAS sync.
 }
 
 export type DriveStatus =

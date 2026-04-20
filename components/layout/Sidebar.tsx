@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   FileText,
+  FolderKanban,
   Wrench,
   FileCode,
   Sparkles,
@@ -18,6 +19,7 @@ import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Tableau de bord', icon: LayoutDashboard },
+  { href: '/dossiers', label: 'Dossiers', icon: FolderKanban },
   { href: '/documents', label: 'Documents', icon: FileText },
   { href: '/tools', label: 'Outils', icon: Wrench },
   { href: '/templates', label: 'Mod\u00e8les', icon: FileCode },
