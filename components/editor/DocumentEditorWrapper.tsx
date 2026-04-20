@@ -31,7 +31,7 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import CharacterCount from '@tiptap/extension-character-count'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Save, Check, Loader2, Wifi, WifiOff, X, ZoomIn, ZoomOut, Settings2, Users } from 'lucide-react'
+import { Save, Check, Loader2, Wifi, WifiOff, X, ZoomIn, ZoomOut, Settings2 } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
 
 import { WordToolbar } from './WordToolbar'
@@ -153,10 +153,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const [showCloseDialog, setShowCloseDialog]         = useState(false)
   const [showFillDialog, setShowFillDialog]           = useState(false)
   const [showPropsDialog, setShowPropsDialog]         = useState(false)
-  const [dropSuggestion, setDropSuggestion]           = useState<
-    | { brick: Brick; brickId: string; rect: { top: number; left: number } }
-    | null
-  >(null)
   const [pickerFromDrop, setPickerFromDrop]           = useState<
     | { brick: Brick; brickId: string; rect: { top: number; left: number } }
     | null
@@ -373,10 +369,12 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         const c = editorRef.current ? countVariables(editorRef.current) : 0
         setVariableCount(c)
       }, 50)
-      // Popup de suggestion au point de drop — uniquement si la brique
-      // est éligible à un auto-remplissage.
+      // Picker intervenant au point de drop — uniquement si la brique est
+      // éligible à un auto-remplissage. L'utilisateur peut le fermer en
+      // cliquant ailleurs ; l'icône de marge restera disponible pour
+      // rouvrir la sélection à tout moment.
       if (hasTarget) {
-        setDropSuggestion({
+        setPickerFromDrop({
           brick,
           brickId,
           rect: { top: e.clientY + 8, left: e.clientX + 8 },
@@ -694,27 +692,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         editor={editor}
         pageRef={pageRef}
         dossierId={document.dossierId}
-        suppressedBrickId={dropSuggestion?.brickId ?? null}
+        suppressedBrickId={pickerFromDrop?.brickId ?? null}
       />
 
-      {/* Popup de suggestion posé au point de drop d'une brique éligible */}
-      {dropSuggestion && (
-        <DropSuggestionPopup
-          rect={dropSuggestion.rect}
-          brickTitle={dropSuggestion.brick.label}
-          onAccept={() => {
-            setPickerFromDrop({
-              brick: dropSuggestion.brick,
-              brickId: dropSuggestion.brickId,
-              rect: dropSuggestion.rect,
-            })
-            setDropSuggestion(null)
-          }}
-          onDismiss={() => setDropSuggestion(null)}
-        />
-      )}
-
-      {/* Picker déclenché depuis le popup de drop — applique le contact à la brique fraîchement posée */}
+      {/* Picker intervenant affiché directement après le drop d'une brique éligible */}
       {pickerFromDrop && (
         <BrickIntervenantPicker
           brick={{
@@ -914,105 +895,6 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         [data-theme="dark"] .mylex-editor-content [data-variable-field]:not([data-variable-type])       { color: #9ca3af; background: rgba(156, 163, 175, 0.10); }
       `}</style>
     </>
-  )
-}
-
-// ─── Popup suggestion au drop d'une brique avec cible d'intervenant ────────
-function DropSuggestionPopup({
-  rect,
-  brickTitle,
-  onAccept,
-  onDismiss,
-}: {
-  rect: { top: number; left: number }
-  brickTitle: string
-  onAccept: () => void
-  onDismiss: () => void
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    function onDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) onDismiss()
-    }
-    // Délai pour éviter de fermer immédiatement si le drop est encore en cours
-    const t = setTimeout(() => document.addEventListener('mousedown', onDown), 50)
-    return () => { clearTimeout(t); document.removeEventListener('mousedown', onDown) }
-  }, [onDismiss])
-
-  return (
-    <div
-      ref={ref}
-      style={{
-        position: 'fixed',
-        top: rect.top,
-        left: rect.left,
-        zIndex: 50,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '6px 10px',
-        background: 'var(--color-surface)',
-        border: '1.5px solid var(--color-primary)',
-        borderRadius: 8,
-        boxShadow: '0 4px 14px rgba(0,0,0,0.14)',
-        animation: 'fadeIn 150ms ease-out',
-      }}
-    >
-      <Users size={14} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
-      <button
-        type="button"
-        onClick={onAccept}
-        title={`Pré-remplir « ${brickTitle} » depuis un intervenant`}
-        style={{
-          display: 'inline-flex',
-          flexDirection: 'column',
-          alignItems: 'flex-start',
-          lineHeight: 1.1,
-          padding: '2px 4px',
-          border: 'none',
-          background: 'transparent',
-          cursor: 'pointer',
-        }}
-      >
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 500,
-            color: 'var(--color-text-muted)',
-            letterSpacing: 0.2,
-          }}
-        >
-          Auto-remplir
-        </span>
-        <span
-          style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: '#fff',
-            background: 'var(--color-primary)',
-            padding: '2px 8px',
-            borderRadius: 6,
-            marginTop: 2,
-          }}
-        >
-          Intervenant
-        </span>
-      </button>
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label="Fermer"
-        style={{
-          padding: 4,
-          border: 'none',
-          background: 'transparent',
-          color: 'var(--color-text-muted)',
-          cursor: 'pointer',
-        }}
-      >
-        <X size={12} />
-      </button>
-    </div>
   )
 }
 
