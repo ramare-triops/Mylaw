@@ -100,19 +100,29 @@ export const IdentificationBlock = Node.create({
 
   parseHTML() {
     return [
-      // Tant historique (div block) que nouveau (span inline) — backward
-      // compat pour les modèles déjà enregistrés avec l'ancienne forme.
-      { tag: `span[${IDENTIFICATION_BLOCK_DATA_ATTR}]` },
-      { tag: `div[${IDENTIFICATION_BLOCK_DATA_ATTR}]` },
+      // Priorité haute pour battre toute règle générique qui matcherait
+      // `span` (TextStyle, etc.) sur l'attribut `style` ou `class`. Les
+      // deux formes (span inline, div bloc historique) sont acceptées
+      // pour les modèles déjà enregistrés avant le passage à inline.
+      {
+        tag: `span[${IDENTIFICATION_BLOCK_DATA_ATTR}]`,
+        priority: 1000,
+      },
+      {
+        tag: `div[${IDENTIFICATION_BLOCK_DATA_ATTR}]`,
+        priority: 1000,
+      },
     ];
   },
 
   renderHTML({ HTMLAttributes, node }) {
     const role = node.attrs.role as string | null;
     const label = (node.attrs.label as string | null) || roleLabel(role);
-    // Rendu type chip coloré avec un liseré « primary ». Volontairement
-    // proche des `VariableField` pour que l'œil reconnaisse tout de
-    // suite un placeholder.
+    // Rendu type chip coloré avec un liseré « primary ». Pas d'enfants
+    // imbriqués : TipTap ré-injecte les atom nodes tels quels au parse,
+    // et des spans imbriqués dans un atom risquent de faire croire au
+    // parser que du contenu éditable s'y cache. On met le texte du chip
+    // directement dans le span racine.
     return [
       'span',
       mergeAttributes(HTMLAttributes, {
@@ -138,8 +148,7 @@ export const IdentificationBlock = Node.create({
         ].join(';'),
         contenteditable: 'false',
       }),
-      ['span', { style: 'opacity:0.85; font-size:0.9em;' }, '¶'],
-      ['span', {}, label],
+      `¶ ${label}`,
     ];
   },
 });
