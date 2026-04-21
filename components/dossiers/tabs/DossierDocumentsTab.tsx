@@ -537,7 +537,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
             Documents ({(docs?.length ?? 0) + (attachments?.length ?? 0)})
           </h3>
           <div className="border border-[var(--color-border)] rounded-md overflow-hidden">
-            <div className="grid grid-cols-[1fr_120px_120px_100px_130px_100px] gap-3 px-4 py-2 text-xs text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+            <div className="grid grid-cols-[1fr_200px_120px_100px_130px_100px] gap-3 px-4 py-2 text-xs text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
               <span>Titre</span>
               <span>Catégorie</span>
               <span>Statut</span>
@@ -558,7 +558,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
                     <div
                       key={`doc-${item.id}`}
                       onClick={() => router.push(`/documents/${item.id}`)}
-                      className="grid grid-cols-[1fr_120px_120px_100px_130px_100px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
+                      className="grid grid-cols-[1fr_200px_120px_100px_130px_100px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <FileTypeIcon kind="mylaw" size={16} />
@@ -568,7 +568,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
                         value={item.category ?? ''}
                         onChange={(e) => handleUpdateCategory(d, e.target.value)}
                         onClick={(e) => e.stopPropagation()}
-                        className="text-xs px-2 py-1 rounded bg-transparent border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-primary)] focus:outline-none"
+                        className="w-full min-w-0 text-xs px-2 py-1 rounded bg-transparent border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-primary)] focus:outline-none"
                       >
                         <option value="">—</option>
                         {DOCUMENT_CATEGORIES.map((c) => (
@@ -618,7 +618,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
                   <div
                     key={`att-${item.id}`}
                     onClick={() => handleOpenAttachment(a)}
-                    className="grid grid-cols-[1fr_120px_120px_100px_130px_100px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
+                    className="grid grid-cols-[1fr_200px_120px_100px_130px_100px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <FileTypeIcon kind={detectFileKind(item.title, item.mimeType)} size={16} />

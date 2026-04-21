@@ -12,8 +12,9 @@ import {
   Pencil,
   Filter,
   ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
-import { db, saveDossier, deleteDossier } from '@/lib/db';
+import { db, saveDossier, deleteDossier, getSetting, setSetting } from '@/lib/db';
 import { cn, formatDate } from '@/lib/utils';
 import { NewDossierDialog } from './NewDossierDialog';
 import {
@@ -26,6 +27,39 @@ import type { Dossier, DossierStatus, DossierType } from '@/types';
 type StatusFilter = DossierStatus | 'all';
 type TypeFilter = DossierType | 'all';
 
+// Colonnes triables de la liste des dossiers. L'ordre est celui des
+// cellules du tableau — sauf les actions qui ne sont pas triables.
+type SortColumn =
+  | 'reference'
+  | 'name'
+  | 'type'
+  | 'status'
+  | 'docs'
+  | 'time'
+  | 'updated';
+type SortDirection = 'asc' | 'desc';
+interface SortState {
+  column: SortColumn;
+  direction: SortDirection;
+}
+const DEFAULT_SORT: SortState = { column: 'updated', direction: 'desc' };
+const SORT_SETTING_KEY = 'dossiers_list_sort_v1';
+
+function isSortColumn(v: unknown): v is SortColumn {
+  return (
+    v === 'reference' ||
+    v === 'name' ||
+    v === 'type' ||
+    v === 'status' ||
+    v === 'docs' ||
+    v === 'time' ||
+    v === 'updated'
+  );
+}
+function isSortDirection(v: unknown): v is SortDirection {
+  return v === 'asc' || v === 'desc';
+}
+
 export function DossierList() {
   const router = useRouter();
   const [search, setSearch] = useState('');
@@ -34,6 +68,43 @@ export function DossierList() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [openMenu, setOpenMenu] = useState<'status' | 'type' | null>(null);
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
+
+  // Lecture initiale du tri persistant en settings. On passe par un flag
+  // `sortLoaded` : tant que le setting n'a pas été lu, on n'écrit pas
+  // (sinon on écraserait la valeur stockée avec le défaut au premier
+  // montage).
+  const [sortLoaded, setSortLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const stored = await getSetting<unknown>(SORT_SETTING_KEY, null);
+      if (cancelled) return;
+      if (stored && typeof stored === 'object') {
+        const s = stored as { column?: unknown; direction?: unknown };
+        if (isSortColumn(s.column) && isSortDirection(s.direction)) {
+          setSort({ column: s.column, direction: s.direction });
+        }
+      }
+      setSortLoaded(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sortLoaded) return;
+    void setSetting(SORT_SETTING_KEY, sort);
+  }, [sort, sortLoaded]);
+
+  function toggleSort(column: SortColumn) {
+    setSort((prev) =>
+      prev.column === column
+        ? { column, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { column, direction: 'asc' }
+    );
+  }
 
   // Filet de sécurité one-shot : si la DB locale a été corrompue par un
   // bug de buildBackup qui a croisé les tables (voir
@@ -100,7 +171,37 @@ export function DossierList() {
     }
     if (statusFilter !== 'all') list = list.filter((d) => d.status === statusFilter);
     if (typeFilter !== 'all') list = list.filter((d) => d.type === typeFilter);
-    return list;
+
+    // Tri client-side en fonction de la colonne sélectionnée. Pour les
+    // colonnes « documents » et « temps » on trie sur les agrégats
+    // calculés plus haut (nombre de documents, total minutes).
+    const dir = sort.direction === 'asc' ? 1 : -1;
+    const byText = (a: string, b: string) =>
+      a.localeCompare(b, 'fr', { sensitivity: 'base', numeric: true }) * dir;
+    const byNum = (a: number, b: number) => (a - b) * dir;
+    const sorted = [...list].sort((a, b) => {
+      switch (sort.column) {
+        case 'reference':
+          return byText(a.reference, b.reference);
+        case 'name':
+          return byText(a.name, b.name);
+        case 'type':
+          return byText(DOSSIER_TYPE_LABELS[a.type], DOSSIER_TYPE_LABELS[b.type]);
+        case 'status':
+          return byText(DOSSIER_STATUS_LABELS[a.status], DOSSIER_STATUS_LABELS[b.status]);
+        case 'docs':
+          return byNum(docsByDossier.get(a.id!) ?? 0, docsByDossier.get(b.id!) ?? 0);
+        case 'time':
+          return byNum(timesByDossier.get(a.id!) ?? 0, timesByDossier.get(b.id!) ?? 0);
+        case 'updated':
+        default:
+          return byNum(
+            new Date(a.updatedAt).getTime(),
+            new Date(b.updatedAt).getTime()
+          );
+      }
+    });
+    return sorted;
   })();
 
   async function handleSave(d: Dossier) {
@@ -241,14 +342,53 @@ export function DossierList() {
 
         {/* Header row */}
         {filtered.length > 0 && (
-          <div className="grid grid-cols-[110px_1fr_160px_120px_100px_80px_80px] gap-3 px-4 py-2 text-xs text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)]">
-            <span>Référence</span>
-            <span>Nom / Client</span>
-            <span>Type</span>
-            <span>Statut</span>
-            <span className="text-right">Documents</span>
-            <span className="text-right">Temps</span>
-            <span className="text-right">Mis à jour</span>
+          <div className="grid grid-cols-[110px_1fr_160px_120px_100px_80px_100px_64px] gap-3 px-4 py-2 text-xs text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)]">
+            <SortHeader
+              column="reference"
+              sort={sort}
+              onSort={toggleSort}
+              label="Référence"
+            />
+            <SortHeader
+              column="name"
+              sort={sort}
+              onSort={toggleSort}
+              label="Nom / Client"
+            />
+            <SortHeader
+              column="type"
+              sort={sort}
+              onSort={toggleSort}
+              label="Type"
+            />
+            <SortHeader
+              column="status"
+              sort={sort}
+              onSort={toggleSort}
+              label="Statut"
+            />
+            <SortHeader
+              column="docs"
+              sort={sort}
+              onSort={toggleSort}
+              label="Documents"
+              align="right"
+            />
+            <SortHeader
+              column="time"
+              sort={sort}
+              onSort={toggleSort}
+              label="Temps"
+              align="right"
+            />
+            <SortHeader
+              column="updated"
+              sort={sort}
+              onSort={toggleSort}
+              label="Mis à jour"
+              align="right"
+            />
+            <span />
           </div>
         )}
 
@@ -263,7 +403,7 @@ export function DossierList() {
                 key={d.id}
                 onClick={() => router.push(`/dossiers/${d.id}`)}
                 className={cn(
-                  'grid grid-cols-[110px_1fr_160px_120px_100px_80px_80px] gap-3 px-4 py-3 cursor-pointer group',
+                  'grid grid-cols-[110px_1fr_160px_120px_100px_80px_100px_64px] gap-3 px-4 py-3 cursor-pointer group',
                   'hover:bg-[var(--color-surface-raised)] transition-colors items-center'
                 )}
               >
@@ -305,27 +445,25 @@ export function DossierList() {
                 <span className="text-xs text-right text-[var(--color-text-muted)]">
                   {formatDate(d.updatedAt)}
                 </span>
-                <div className="col-span-full flex justify-end gap-1 -mt-10 pointer-events-none">
-                  <div className="pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditTarget(d);
-                        setDialogOpen(true);
-                      }}
-                      className="p-1 rounded hover:bg-[var(--color-border)]"
-                      title="Modifier"
-                    >
-                      <Pencil className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                    </button>
-                    <button
-                      onClick={(e) => handleDelete(e, d)}
-                      className="p-1 rounded hover:bg-red-100"
-                      title="Supprimer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                    </button>
-                  </div>
+                <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditTarget(d);
+                      setDialogOpen(true);
+                    }}
+                    className="p-1 rounded hover:bg-[var(--color-border)]"
+                    title="Modifier"
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                  </button>
+                  <button
+                    onClick={(e) => handleDelete(e, d)}
+                    className="p-1 rounded hover:bg-red-100"
+                    title="Supprimer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                  </button>
                 </div>
               </div>
             );
@@ -419,6 +557,44 @@ function MenuItem({
       )}
     >
       {children}
+    </button>
+  );
+}
+
+function SortHeader({
+  column,
+  sort,
+  onSort,
+  label,
+  align = 'left',
+}: {
+  column: SortColumn;
+  sort: SortState;
+  onSort: (c: SortColumn) => void;
+  label: string;
+  align?: 'left' | 'right';
+}) {
+  const active = sort.column === column;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(column)}
+      className={cn(
+        'inline-flex items-center gap-1 hover:text-[var(--color-text)] transition-colors',
+        align === 'right' ? 'justify-end' : 'justify-start',
+        active && 'text-[var(--color-text)] font-semibold'
+      )}
+    >
+      {label}
+      {active ? (
+        sort.direction === 'asc' ? (
+          <ChevronUp className="w-3 h-3" />
+        ) : (
+          <ChevronDown className="w-3 h-3" />
+        )
+      ) : (
+        <ChevronDown className="w-3 h-3 opacity-25" />
+      )}
     </button>
   );
 }
