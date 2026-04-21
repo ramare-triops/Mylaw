@@ -28,7 +28,7 @@
  *                         absent.
  */
 
-import { Node, mergeAttributes } from '@tiptap/core';
+import { Node } from '@tiptap/core';
 import type { DossierRole } from '@/types';
 
 export interface IdentificationBlockAttrs {
@@ -115,41 +115,47 @@ export const IdentificationBlock = Node.create({
     ];
   },
 
-  renderHTML({ HTMLAttributes, node }) {
-    const role = node.attrs.role as string | null;
-    const label = (node.attrs.label as string | null) || roleLabel(role);
-    // Rendu type chip coloré avec un liseré « primary ». Pas d'enfants
-    // imbriqués : TipTap ré-injecte les atom nodes tels quels au parse,
-    // et des spans imbriqués dans un atom risquent de faire croire au
-    // parser que du contenu éditable s'y cache. On met le texte du chip
-    // directement dans le span racine.
-    return [
-      'span',
-      mergeAttributes(HTMLAttributes, {
-        [IDENTIFICATION_BLOCK_DATA_ATTR]: 'true',
-        class: 'mylaw-identification-block',
-        style: [
-          'display:inline-flex',
-          'align-items:center',
-          'gap:4px',
-          'padding:1px 8px',
-          'margin:0 1px',
-          'border-radius:999px',
-          'border:1px solid var(--color-primary)',
-          'background:rgba(1,105,111,0.08)',
-          'color:var(--color-primary)',
-          'font-size:0.85em',
-          'font-weight:600',
-          'font-family:var(--font-ui)',
-          'line-height:1.4',
-          'user-select:none',
-          'cursor:default',
-          'white-space:nowrap',
-        ].join(';'),
-        contenteditable: 'false',
-      }),
-      `¶ ${label}`,
-    ];
+  renderHTML({ node }) {
+    // On construit les attributs HTML à la main, sans passer par
+    // `mergeAttributes` ni `HTMLAttributes` dérivés de `addAttributes`.
+    // Plus direct, plus prévisible : on est certain que `data-mylaw-
+    // identification-block` se retrouvera bien dans la sortie, que le
+    // résolveur pourra détecter après un round-trip `getHTML()`.
+    const role          = node.attrs.role as string | null;
+    const separator     = node.attrs.separator as string | null;
+    const emptyFallback = node.attrs.emptyFallback as string | null;
+    const attrLabel     = node.attrs.label as string | null;
+    const label         = attrLabel || roleLabel(role);
+
+    const attrs: Record<string, string> = {
+      [IDENTIFICATION_BLOCK_DATA_ATTR]: 'true',
+      class: 'mylaw-identification-block',
+      contenteditable: 'false',
+      style: [
+        'display:inline-flex',
+        'align-items:center',
+        'gap:4px',
+        'padding:1px 8px',
+        'margin:0 1px',
+        'border-radius:999px',
+        'border:1px solid var(--color-primary)',
+        'background:rgba(1,105,111,0.08)',
+        'color:var(--color-primary)',
+        'font-size:0.85em',
+        'font-weight:600',
+        'font-family:var(--font-ui)',
+        'line-height:1.4',
+        'user-select:none',
+        'cursor:default',
+        'white-space:nowrap',
+      ].join(';'),
+    };
+    if (role)          attrs['data-role']           = role;
+    if (separator)     attrs['data-separator']      = separator;
+    if (emptyFallback) attrs['data-empty-fallback'] = emptyFallback;
+    if (attrLabel)     attrs['data-label']          = attrLabel;
+
+    return ['span', attrs, `¶ ${label}`];
   },
 });
 

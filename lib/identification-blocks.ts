@@ -216,6 +216,15 @@ export function resolveIdentificationBlocks(
   ctx: IdentificationContext
 ): string {
   if (!templateHtml || typeof DOMParser === 'undefined') return templateHtml;
+
+  // Diagnostic console : traçable si l'utilisateur ouvre devtools. On
+  // reste silencieux en prod normale (pas d'erreur, juste debug).
+  const debug = typeof window !== 'undefined' && (window as unknown as { __MYLAW_DEBUG_ID_BLOCKS__?: boolean }).__MYLAW_DEBUG_ID_BLOCKS__;
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.log('[identification] incoming html length', templateHtml.length, 'has marker:', templateHtml.includes(IDENTIFICATION_BLOCK_DATA_ATTR));
+  }
+
   if (!templateHtml.includes(IDENTIFICATION_BLOCK_DATA_ATTR)) return templateHtml;
 
   const doc = new DOMParser().parseFromString(
@@ -225,6 +234,11 @@ export function resolveIdentificationBlocks(
   const blocks = Array.from(
     doc.body.querySelectorAll<HTMLElement>(`[${IDENTIFICATION_BLOCK_DATA_ATTR}]`)
   );
+
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.log('[identification] blocks found:', blocks.length, 'dossierContacts:', ctx.dossierContacts.length, 'bricks:', Object.keys(ctx.identityBricks));
+  }
 
   for (const block of blocks) {
     const role = (block.getAttribute('data-role') ?? '').trim();
@@ -238,6 +252,12 @@ export function resolveIdentificationBlocks(
       emptyFallback,
       ctx
     );
+
+    if (debug) {
+      // eslint-disable-next-line no-console
+      console.log('[identification] role=', role, 'expansion length=', innerHtml.length);
+    }
+
     replaceBlockInParagraph(doc, block, innerHtml);
   }
 

@@ -431,7 +431,11 @@ export function DossierDocumentsTab({ dossier }: Props) {
         fieldDefs,
         ownCounselFallback: cabinetIdentityToContact(cabinet),
       });
-    } catch {
+    } catch (e) {
+      // Log visible en devtools pour diagnostiquer : on n'a pas de
+      // remontée d'erreur côté UI dans ce flow (création de document).
+      // eslint-disable-next-line no-console
+      console.warn('[identification] expansion failed, falling back to raw template', e);
       return html;
     }
   }
