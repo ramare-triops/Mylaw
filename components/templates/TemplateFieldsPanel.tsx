@@ -1,13 +1,18 @@
 // components/templates/TemplateFieldsPanel.tsx
 'use client'
 
-import { useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import {
   Plus, Trash2, GripVertical, Tag,
   CalendarDays, User, MapPin, DollarSign, Clock, Hash, Type,
   Building2, Phone, Mail, Globe, CreditCard, FileText, Percent,
-  Scale, Briefcase, ChevronDown, ChevronRight, Sparkles,
+  Scale, Briefcase, ChevronDown, ChevronRight, Sparkles, GitBranch,
 } from 'lucide-react'
+import { getSetting } from '@/lib/db'
+import {
+  DEFAULT_CONDITIONAL_TAGS,
+  type CondVar,
+} from '@/lib/brick-variables'
 
 export type FieldType =
   | 'text'
@@ -161,14 +166,20 @@ function FieldTypeIcon({ type, size = 12 }: { type: FieldType; size?: number }) 
 function PresetChip({
   preset,
   onInsert,
+  draggable = true,
 }: {
   preset: PresetField
   onInsert: () => void
+  /** Permet de désactiver le drag pour les chips qui ne doivent pas être
+   *  ajoutés à `template.fields` (variables conditionnelles notamment,
+   *  résolues au rendu depuis un contact et non depuis un champ saisi). */
+  draggable?: boolean
 }) {
   const Icon = preset.icon
   const [hovered, setHovered] = useState(false)
 
   function handleDragStart(e: React.DragEvent) {
+    if (!draggable) { e.preventDefault(); return }
     e.dataTransfer.effectAllowed = 'copy'
     e.dataTransfer.setData(DRAG_FIELD_KEY, JSON.stringify({ name: preset.name, label: preset.label, type: preset.type, placeholder: preset.placeholder }))
     // Crée un ghost propre
@@ -182,12 +193,12 @@ function PresetChip({
 
   return (
     <div
-      draggable
+      draggable={draggable}
       onDragStart={handleDragStart}
       onClick={onInsert}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      title={`Cliquer pour insérer · Glisser dans le document`}
+      title={draggable ? `Cliquer pour insérer · Glisser dans le document` : 'Cliquer pour insérer'}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -199,7 +210,7 @@ function PresetChip({
         color: preset.color,
         fontSize: '11px',
         fontWeight: 500,
-        cursor: 'grab',
+        cursor: draggable ? 'grab' : 'pointer',
         userSelect: 'none',
         transition: 'all 0.12s ease',
         whiteSpace: 'nowrap',
@@ -219,12 +230,15 @@ function PresetGroup({
   items,
   onInsert,
   defaultOpen,
+  draggable = true,
 }: {
   group: string
   color: string
   items: PresetField[]
   onInsert: (preset: PresetField) => void
   defaultOpen: boolean
+  /** Propage l'option à chaque chip du groupe (cf. PresetChip.draggable). */
+  draggable?: boolean
 }) {
   const [open, setOpen] = useState(defaultOpen)
 
@@ -256,7 +270,12 @@ function PresetGroup({
       {open && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', paddingBottom: '6px', paddingLeft: '2px' }}>
           {items.map((item) => (
-            <PresetChip key={item.name} preset={item} onInsert={() => onInsert(item)} />
+            <PresetChip
+              key={item.name}
+              preset={item}
+              onInsert={() => onInsert(item)}
+              draggable={draggable}
+            />
           ))}
         </div>
       )}
@@ -524,20 +543,41 @@ export function TemplateFieldsPanel({ fields, onChange, onInsertVariable, onDrag
   )
 }
 
-// ─── Contenu "à plat" pour embarquer les champs dans un autre conteneur ────
+// ─── Contenu à plat pour embarquer les champs dans un autre conteneur ─────
 /**
- * Rendu des champs sans le chrome de colonne : un seul scroll qui mélange
- * presets (chips arrondies) et champs personnalisés (cartes éditables), sans
- * distinction navigationnelle entre « Bibliothèque » et « Mes champs ». Le
- * bouton « + Créer un champ personnalisé » est épinglé en pied.
+ * Rendu 100 % chips arrondies pour l'onglet « Champs » : « Mes champs »,
+ * groupes de la bibliothèque de presets, et « Conditionnels » (variables
+ * `[M/Mme]`, `[né/née]`… partagées avec l'éditeur de briques). Aucun chip
+ * n'expose de bouton d'action : le clic insère la variable au curseur,
+ * le glisser-déposer l'insère au point de chute (sauf pour les
+ * conditionnelles, volontairement non-draggable car elles ne sont pas des
+ * champs saisis — elles se résolvent au rendu depuis le contact).
  *
- * Utilisé par DocumentBricksPanel dans son onglet « Champs ».
+ * Le bouton « + Créer un champ personnalisé » est épinglé en pied. Aucun
+ * bouton « supprimer » n'est affiché dans cette vue (pour alléger l'UI) ;
+ * un champ non utilisé finira par disparaître quand on supprimera sa
+ * variable dans le document.
  */
 export function FieldsTabContent({
   fields,
   onChange,
   onInsertVariable,
 }: Pick<TemplateFieldsPanelProps, 'fields' | 'onChange' | 'onInsertVariable'>) {
+  // Charge les variables conditionnelles depuis la DB (source partagée avec
+  // l'éditeur de briques). Fallback sur les valeurs par défaut si absent.
+  const [condVars, setCondVars] = useState<CondVar[]>(() =>
+    DEFAULT_CONDITIONAL_TAGS.map((t, i) => ({ id: `c${i}`, label: t.label, value: t.value })),
+  )
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const stored = await getSetting<CondVar[] | null>('brick_cond_vars', null)
+      if (cancelled) return
+      if (Array.isArray(stored) && stored.length > 0) setCondVars(stored)
+    })()
+    return () => { cancelled = true }
+  }, [])
+
   function addField() {
     const newField: TemplateField = {
       id: generateId(),
@@ -568,13 +608,32 @@ export function FieldsTabContent({
     }
   }
 
-  function updateField(id: string, updated: TemplateField) {
-    onChange(fields.map((f) => (f.id === id ? updated : f)))
-  }
+  // Un champ perso existant → on l'affiche en chip au même format que la
+  // bibliothèque, via la structure `PresetField`. La couleur et l'icône
+  // sont dérivées du `type`, comme dans les presets.
+  const customFieldPresets: PresetField[] = fields.map((field) => {
+    const def = FIELD_TYPES.find((f) => f.value === field.type)
+    return {
+      name: field.name,
+      label: field.label,
+      type: field.type,
+      placeholder: field.placeholder,
+      icon: def?.icon ?? Type,
+      color: def?.color ?? '#01696f',
+    }
+  })
 
-  function deleteField(id: string) {
-    onChange(fields.filter((f) => f.id !== id))
-  }
+  // Variables conditionnelles → chips non-draggable (elles ne sont pas des
+  // champs saisis) dans un groupe dédié violet.
+  const CONDITIONAL_COLOR = '#6d28d9'
+  const conditionalPresets: PresetField[] = condVars.map((v) => ({
+    name: v.value,
+    label: v.label,
+    type: 'text',
+    placeholder: '',
+    icon: GitBranch,
+    color: CONDITIONAL_COLOR,
+  }))
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -584,27 +643,14 @@ export function FieldsTabContent({
           <strong style={{ color: 'var(--color-text-muted)' }}>Glisser</strong> dans le document
         </p>
 
-        {fields.length > 0 && (
-          <section style={{ marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 2px 6px' }}>
-              <Tag size={10} style={{ color: 'var(--color-primary)' }} />
-              <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)' }}>
-                Mes champs
-              </span>
-              <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--color-text-muted)', background: 'var(--color-surface-offset)', borderRadius: 10, padding: '1px 6px', fontWeight: 600 }}>
-                {fields.length}
-              </span>
-            </div>
-            {fields.map((field) => (
-              <FieldRow
-                key={field.id}
-                field={field}
-                onChange={(u) => updateField(field.id, u)}
-                onDelete={() => deleteField(field.id)}
-                onInsert={() => onInsertVariable(field.name)}
-              />
-            ))}
-          </section>
+        {customFieldPresets.length > 0 && (
+          <PresetGroup
+            group="Mes champs"
+            color="#01696f"
+            items={customFieldPresets}
+            onInsert={(p) => onInsertVariable(p.name)}
+            defaultOpen
+          />
         )}
 
         {PRESET_GROUPS.map((g, i) => (
@@ -614,9 +660,18 @@ export function FieldsTabContent({
             color={g.color}
             items={g.items}
             onInsert={addFromPreset}
-            defaultOpen={i === 0 && fields.length === 0}
+            defaultOpen={i === 0 && customFieldPresets.length === 0}
           />
         ))}
+
+        <PresetGroup
+          group="Conditionnels"
+          color={CONDITIONAL_COLOR}
+          items={conditionalPresets}
+          onInsert={(p) => onInsertVariable(p.name)}
+          defaultOpen={false}
+          draggable={false}
+        />
       </div>
 
       <div style={{ padding: '8px 10px', borderTop: '1px solid var(--color-border)', flexShrink: 0 }}>

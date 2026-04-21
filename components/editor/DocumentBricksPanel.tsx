@@ -16,6 +16,12 @@ import {
   FieldsTabContent,
   type TemplateField,
 } from '@/components/templates/TemplateFieldsPanel'
+import {
+  DEFAULT_SUGGESTED_TAGS,
+  DEFAULT_CONDITIONAL_TAGS,
+  type TextVar,
+  type CondVar,
+} from '@/lib/brick-variables'
 
 // ─── Types UI ────────────────────────────────────────────────────────────────
 
@@ -188,22 +194,6 @@ interface CategoryDef {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function generateId() { return Math.random().toString(36).slice(2, 9) }
-
-const DEFAULT_SUGGESTED_TAGS = [
-  'Nom', 'Prénom', 'Date de naissance', 'Lieu de naissance', 'Nationalité', 'Adresse',
-  'Nom de la société', 'Forme juridique', 'Capital social', 'Numéro RCS', 'Ville RCS',
-  'Adresse du siège', 'Représentant légal', 'Qualité',
-  "Nom de l'avocat", 'Ville du barreau', 'Adresse du cabinet',
-  'Date', 'Lieu', 'Montant', 'Durée', 'Tribunal', 'Nombre',
-]
-
-const DEFAULT_CONDITIONAL_TAGS = [
-  { label: 'M / Mme',            value: 'M/Mme'            },
-  { label: 'né / née',           value: 'né/née'           },
-  { label: 'inscrit / inscrite', value: 'inscrit/inscrite' },
-  { label: 'le / la',            value: 'le/la'            },
-  { label: 'du / de la',         value: 'du/de la'         },
-]
 
 // ─── Conversion brique → HTML TipTap ─────────────────────────────────────────
 export function brickContentToHtml(content: string): string {
@@ -546,9 +536,6 @@ function ColorPicker({ color, onChange }: { color: string; onChange: (c: string)
 }
 
 // ─── VariableManager ─────────────────────────────────────────────────────────
-
-interface TextVar { id: string; name: string }
-interface CondVar { id: string; label: string; value: string }
 
 function VariableManager({ textVars, condVars, onChangeTextVars, onChangeCondVars, onInsertTag }: {
   textVars: TextVar[]
