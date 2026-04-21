@@ -405,7 +405,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
         .mylex-editor-content .mylaw-clause-block[data-clause-type="conditional"]  { border-left-color: #6d28d9; background: rgba(109,40,217,0.04); }
         .mylex-editor-content .mylaw-clause-block[data-clause-label]::before {
           content: attr(data-clause-label);
-          position: absolute; top: -0.55em; left: 0.55em;
+          position: absolute; top: -0.55em; right: 0.55em;
           font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
           text-transform: uppercase; padding: 1px 6px; border-radius: 10px;
           background: white; border: 1px solid currentColor;

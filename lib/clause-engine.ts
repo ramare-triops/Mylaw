@@ -97,6 +97,40 @@ export function collectDependencyRefs(expr: ClauseDependencyExpr | null): string
   }
 }
 
+/**
+ * Rend une expression en une phrase lisible :
+ *   { kind: 'ref', clauseId: 'a' }                                → "A"
+ *   { kind: 'not', term: { kind: 'ref', clauseId: 'a' } }         → "NON A"
+ *   { kind: 'and', terms: […, …] }                                → "A ET B"
+ *   { kind: 'or',  terms: [a, { kind: 'not', term: b }] }         → "A OU NON B"
+ *   expressions composées → parenthèses automatiques.
+ * `labelOf(id)` permet d'utiliser les libellés humains plutôt que les ids.
+ */
+export function formatDependencyExpr(
+  expr: ClauseDependencyExpr | null,
+  labelOf: (clauseId: string) => string = (id) => id,
+): string {
+  if (!expr) return '';
+  return render(expr, 0, labelOf);
+
+  function render(
+    node: ClauseDependencyExpr,
+    parentPrec: number,
+    label: (id: string) => string,
+  ): string {
+    // Précédences : ref/not=3, and=2, or=1.
+    if (node.kind === 'ref') return label(node.clauseId);
+    if (node.kind === 'not') {
+      const inner = render(node.term, 3, label);
+      return `NON ${node.term.kind === 'ref' || node.term.kind === 'not' ? inner : `(${inner})`}`;
+    }
+    const prec = node.kind === 'and' ? 2 : 1;
+    const sep = node.kind === 'and' ? ' ET ' : ' OU ';
+    const body = node.terms.map((t) => render(t, prec, label)).join(sep);
+    return prec < parentPrec ? `(${body})` : body;
+  }
+}
+
 /* ─── Scan des clauses dans un contenu HTML ─────────────────────────────── */
 
 export function scanClauses(html: string): ClauseDescriptor[] {

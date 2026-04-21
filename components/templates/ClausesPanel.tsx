@@ -7,11 +7,13 @@ import { Shapes, Plus, Pencil, Unlink2, Link2, AlertTriangle } from 'lucide-reac
 
 import {
   collectDependencyRefs,
+  formatDependencyExpr,
   parseDependencyExpr,
   serializeDependencyExpr,
   type ClauseDependencyExpr,
   type ClauseType,
 } from '@/lib/clause-engine'
+import { DependencyEditor } from './DependencyEditor'
 
 interface ClauseInDoc {
   id: string
@@ -283,7 +285,10 @@ function ClauseRow({ clause, allClauses, onEdit, onUnwrap }: ClauseRowProps) {
         )}
         {refs.length > 0 && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <Link2 size={10} /> Dépend de : {refs.map((id) => allClauses.find((c) => c.id === id)?.label ?? id).join(', ')}
+            <Link2 size={10} /> Condition : {formatDependencyExpr(
+              clause.dependsOn,
+              (id) => allClauses.find((c) => c.id === id)?.label ?? id,
+            )}
           </span>
         )}
         {missingRefs.length > 0 && (
@@ -346,19 +351,15 @@ function ClauseForm({ mode, initial, existingClauses, onCancel, onSubmit }: Clau
   const [id, setId] = useState(initial?.id ?? '')
   const [type, setType] = useState<ClauseType>(initial?.type ?? 'optional')
   const [defaultChecked, setDefaultChecked] = useState(initial?.defaultChecked ?? false)
-  const [dependsOnId, setDependsOnId] = useState<string>(() => {
-    const refs = collectDependencyRefs(initial?.dependsOn ?? null)
-    return refs[0] ?? ''
-  })
+  const [dependsOn, setDependsOn] = useState<ClauseDependencyExpr | null>(
+    initial?.dependsOn ?? null,
+  )
 
   const otherClauses = existingClauses.filter((c) => c.id !== initial?.id)
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    const dep: ClauseDependencyExpr | null =
-      type === 'conditional' && dependsOnId
-        ? { kind: 'ref', clauseId: dependsOnId }
-        : null
+    const dep = type === 'conditional' ? dependsOn : null
     onSubmit({ id, label, type, defaultChecked, dependsOn: dep })
   }
 
@@ -414,23 +415,22 @@ function ClauseForm({ mode, initial, existingClauses, onCancel, onSubmit }: Clau
         </label>
       )}
       {type === 'conditional' && (
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
-            Incluse si la clause suivante est incluse
+            Condition d'inclusion (SI / SI NON combinés par ET / OU)
           </span>
-          <select
-            value={dependsOnId} onChange={(e) => setDependsOnId(e.target.value)}
-            style={{ padding: '5px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: '#fff', fontSize: 'var(--text-sm)' }}
-          >
-            <option value="">— Sélectionner —</option>
-            {otherClauses.map((c) => (
-              <option key={c.id} value={c.id}>{c.label} ({c.id})</option>
-            ))}
-          </select>
+          <div style={{ padding: 8, borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: '#fff' }}>
+            <DependencyEditor
+              value={dependsOn}
+              onChange={setDependsOn}
+              availableClauses={otherClauses.map((c) => ({ id: c.id, label: c.label }))}
+              excludeId={initial?.id ?? null}
+            />
+          </div>
           <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-            Les combinaisons ET/OU/NON seront accessibles dans une prochaine version.
+            Exemples : « SI A » — « SI NON A » — « SI A ET SI B » — « SI A OU (SI NON B ET SI C) ».
           </span>
-        </label>
+        </div>
       )}
       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
         <button

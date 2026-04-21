@@ -16,6 +16,7 @@ import {
   applyClauseSelection,
   collectDependencyRefs,
   evaluateDependency,
+  formatDependencyExpr,
   scanClauses,
   type ClauseDescriptor,
 } from '@/lib/clause-engine';
@@ -369,9 +370,10 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
                   const disabled = c.type === 'conditional' && !depOk;
                   const checked = !!enabledClauses[c.id];
                   const depRefs = collectDependencyRefs(c.dependsOn);
-                  const depLabels = depRefs
-                    .map((id) => clauseDescriptors.find((d) => d.id === id)?.label ?? id)
-                    .join(', ');
+                  const labelOf = (id: string) =>
+                    clauseDescriptors.find((d) => d.id === id)?.label ?? id;
+                  const depExprText = formatDependencyExpr(c.dependsOn, labelOf);
+                  const depLabels = depRefs.map(labelOf).join(', ');
                   return (
                     <label
                       key={c.id}
@@ -403,16 +405,16 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
                           {c.type === 'conditional' && depRefs.length > 0 && (
                             <span
                               className="flex items-center gap-1"
-                              title={`Dépend de : ${depLabels}`}
+                              title={`Condition : ${depExprText}`}
                               style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}
                             >
-                              <Link2 size={10} /> {depLabels}
+                              <Link2 size={10} /> {depExprText}
                             </span>
                           )}
                         </span>
                         {disabled && (
                           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
-                            Activez d'abord : {depLabels}
+                            Condition non satisfaite : {depExprText}
                           </span>
                         )}
                       </span>
