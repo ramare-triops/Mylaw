@@ -198,7 +198,7 @@ const DEFAULT_TEMPLATES: Template[] = [
 <p>Ces sommes incluent la TVA au taux en vigueur à la date de la signature de la convention, soit <strong>[taux_tva]</strong> %. Elles pourront être réajustées à la date de la facturation, en cas de modification du taux applicable.</p>
 <p>Au vu des informations mises à la disposition de l'avocat par le client au jour de la signature, le volume horaire prévisible pour l'accomplissement de la mission se situe entre <strong>[volume_horaire_min]</strong> heures et <strong>[volume_horaire_max]</strong> heures.</p>
 <p>LE CLIENT reconnaît être informé que différents facteurs peuvent avoir des conséquences significatives sur le volume d'heures final : difficultés rencontrées et notamment la complexité des écritures et des pièces communiquées par la partie adverse et celles que le CLIENT communiquera à L'AVOCAT, conclusions en réplique supplémentaires à établir, incidents de procédure mis en œuvre par la partie adverse ou à l'initiative du CLIENT, rendez-vous et réunions à tenir avec des intervenants extérieurs (notaires, experts judiciaires ou privés) ou entre les parties et leurs conseils en vue de la recherche de solutions transactionnelles.</p>
-<!--OPT:resultat--><h3>2.2 – Honoraire de résultat</h3>
+<section class="mylaw-clause-block" data-clause-id="resultat" data-clause-type="optional" data-clause-label="Honoraire de résultat"><h3>2.2 – Honoraire de résultat</h3>
 <h4>2.2.1 – Calcul de l'honoraire de résultat</h4>
 <p>Un honoraire de résultat sera perçu par L'AVOCAT en fonction des gains obtenus ou de l'économie réalisée. Le ou les gains obtenus sont constitués par les sommes allouées au CLIENT au titre de <strong>[objet_gain]</strong>.</p>
 <p>Ces honoraires hors taxes seront fixés comme suit :</p>
@@ -209,7 +209,7 @@ const DEFAULT_TEMPLATES: Template[] = [
 <p>L'honoraire de résultat sera réglé à L'AVOCAT lors de la perception effective par LE CLIENT des sommes mises à la charge de la partie adverse. En cas d'échelonnement du paiement des sommes allouées, l'honoraire de résultat sera calculé sur la totalité des sommes allouées et réglé dans un délai de <strong>[delai_paiement_resultat]</strong> à compter du premier versement.</p>
 <p>Ce paiement pourra être effectué par prélèvement des sommes déposées à ce titre sur le compte CARPA de L'AVOCAT, ce que LE CLIENT s'oblige d'ores et déjà par les présentes.</p>
 <h4>2.2.3 – En cas de dessaisissement</h4>
-<p>Dans l'hypothèse où le dessaisissement interviendrait à une date proche de l'issue de la procédure et alors que le travail accompli aura permis l'obtention du résultat recherché, la clause relative aux honoraires de résultat demeurera applicable.</p><!--/OPT:resultat-->
+<p>Dans l'hypothèse où le dessaisissement interviendrait à une date proche de l'issue de la procédure et alors que le travail accompli aura permis l'obtention du résultat recherché, la clause relative aux honoraires de résultat demeurera applicable.</p></section>
 <h2>3 – FRAIS ET DÉBOURS – DÉPLACEMENTS</h2>
 <h3>3.1 – Frais et débours</h3>
 <p>Outre le règlement des honoraires, LE CLIENT s'acquitte des frais et débours payés à des tiers dans l'intérêt de la mission, par exemple :</p>
@@ -386,24 +386,26 @@ export async function seedAdditionalDefaultsIfNeeded(): Promise<void> {
 }
 
 /**
- * Resynchronisation tpl-7 : les balises `<!--OPT:resultat-->...<!--/OPT:resultat-->`
- * qui délimitent la clause d'honoraire de résultat (article 2.2) sont des
- * commentaires HTML. Elles peuvent être perdues si le modèle est chargé dans
- * l'éditeur TipTap (qui ne les restitue pas lors d'un `getJSON` / `getHTML`)
- * puis ré-enregistré. Sans ces balises, `applyOptionalClauses` ne sait plus
- * retirer l'article 2.2 et la case à cocher n'a plus d'effet.
+ * Resynchronisation tpl-7 : historiquement, la clause d'honoraire de résultat
+ * (article 2.2) était délimitée par des commentaires HTML
+ * `<!--OPT:resultat-->...<!--/OPT:resultat-->` — perdus dès que TipTap
+ * parse/re-sérialise le contenu. Depuis l'introduction de l'extension
+ * `ClauseBlock`, le wrapper est un `<section data-clause-id="resultat" …>`
+ * qui survit aux round-trips de l'éditeur.
  *
  * Cette migration, idempotente, restaure le `content`, les `optionalClauses`
- * et les `fields` canoniques de DEFAULT_TEMPLATES pour les lignes tpl-7 non
- * customs dont les balises OPT ou la clause `resultat` sont absentes. Les
- * modèles `isCustom` ne sont jamais touchés.
+ * et les `fields` canoniques de DEFAULT_TEMPLATES pour toute ligne tpl-7 non
+ * custom dont le wrapper `<section data-clause-id="resultat">` est absent.
+ * Les modèles `isCustom` ne sont jamais touchés. Le flag de version est bumpé
+ * à `v2` pour forcer la mise à jour chez les utilisateurs déjà passés par la
+ * première version (commentaires OPT).
  */
 export async function migrateTpl7OptionalClauseIfNeeded(): Promise<void> {
-  const done = await getSetting<boolean>('templates_tpl7_opt_resync_v1', false)
+  const done = await getSetting<boolean>('templates_tpl7_clause_block_v2', false)
   if (done) return
   try {
     const def = DEFAULT_TEMPLATES.find((t) => t.id === 'tpl-7')
-    if (!def) { await setSetting('templates_tpl7_opt_resync_v1', true); return }
+    if (!def) { await setSetting('templates_tpl7_clause_block_v2', true); return }
     const rows = await db.table('templates').toArray() as Array<Record<string, unknown> & {
       id: number
       name?: string
@@ -415,13 +417,8 @@ export async function migrateTpl7OptionalClauseIfNeeded(): Promise<void> {
       if (row.isCustom) continue
       if (row.name !== def.name) continue
       const content = typeof row.content === 'string' ? row.content : ''
-      const hasMarker =
-        content.includes('<!--OPT:resultat-->') &&
-        content.includes('<!--/OPT:resultat-->')
-      const hasClause =
-        Array.isArray(row.optionalClauses) &&
-        row.optionalClauses.some((c) => c.id === 'resultat')
-      if (hasMarker && hasClause) continue
+      const hasClauseBlock = content.includes('data-clause-id="resultat"')
+      if (hasClauseBlock) continue
       await db.table('templates').update(row.id, {
         content: def.content,
         optionalClauses: def.optionalClauses,
@@ -429,7 +426,7 @@ export async function migrateTpl7OptionalClauseIfNeeded(): Promise<void> {
       })
     }
   } catch { /* migration best-effort */ }
-  await setSetting('templates_tpl7_opt_resync_v1', true)
+  await setSetting('templates_tpl7_clause_block_v2', true)
 }
 
 /**
@@ -527,7 +524,7 @@ function contentToPreviewHtml(content: string): string {
   return trimmed
 }
 
-function tiptapJsonToHtml(node: Record<string, unknown>): string {
+export function tiptapJsonToHtml(node: Record<string, unknown>): string {
   const type = node.type as string
   const content = (node.content as Record<string, unknown>[] | undefined) ?? []
   const attrs = (node.attrs as Record<string, unknown>) ?? {}
@@ -601,8 +598,26 @@ function tiptapJsonToHtml(node: Record<string, unknown>): string {
       const name = attrs.name as string ?? ''
       return `<span data-variable-field="" data-variable-name="${name}" data-preview-var="">${name}</span>`
     }
+    case 'clauseBlock': {
+      const parts: string[] = [`class="mylaw-clause-block"`]
+      const cid = (attrs.clauseId as string | null) ?? null
+      const ctype = (attrs.clauseType as string | null) ?? 'required'
+      const clabel = (attrs.clauseLabel as string | null) ?? null
+      const cchecked = (attrs.defaultChecked as boolean | null) ?? false
+      const cdeps = (attrs.dependsOn as string | null) ?? null
+      if (cid) parts.push(`data-clause-id="${escapeAttr(cid)}"`)
+      parts.push(`data-clause-type="${escapeAttr(ctype)}"`)
+      if (clabel) parts.push(`data-clause-label="${escapeAttr(clabel)}"`)
+      if (cchecked) parts.push(`data-clause-default-checked="true"`)
+      if (cdeps) parts.push(`data-clause-depends-on="${escapeAttr(cdeps)}"`)
+      return `<section ${parts.join(' ')}>${children}</section>`
+    }
     default: return children
   }
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 function formatDate(iso: string): string {

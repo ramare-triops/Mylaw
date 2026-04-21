@@ -22,13 +22,15 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import CharacterCount from '@tiptap/extension-character-count'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Save, Tag, ArrowLeft, Blocks } from 'lucide-react'
+import { Save, Tag, ArrowLeft, Blocks, Shapes } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
 
 import { WordToolbar } from '@/components/editor/WordToolbar'
 import { FontSize } from '@/components/editor/extensions/FontSize'
 import { VariableField } from '@/components/editor/extensions/VariableField'
 import { BrickMarker } from '@/components/editor/extensions/BrickMarker'
+import { ClauseBlock } from '@/components/editor/extensions/ClauseBlock'
+import { ClausesPanel } from './ClausesPanel'
 import {
   DocumentBricksPanel,
   DRAG_BRICK_KEY,
@@ -79,6 +81,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
   const [fields, setFields]           = useState<TemplateField[]>(template.fields ?? [])
   const [showFields, setShowFields]   = useState(true)
   const [showBricks, setShowBricks]   = useState(true)
+  const [showClauses, setShowClauses] = useState(false)
   const [hasChanges, setHasChanges]   = useState(false)
   const [variableCount, setVariableCount] = useState(0)
   const [saved, setSaved]             = useState(false)
@@ -106,6 +109,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
       Placeholder.configure({ placeholder: 'Rédigez votre modèle ici… Glissez ou cliquez sur un champ pour l\'insérer.' }),
       VariableField.configure({ onVariableClick: undefined, HTMLAttributes: {} }),
       BrickMarker,
+      ClauseBlock,
     ],
     content: initialContent,
     editorProps: {
@@ -204,6 +208,11 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
   }, [])
 
   // ── Sauvegarde
+  // On sérialise désormais en HTML (et non plus en JSON TipTap) afin que les
+  // wrappers `<section data-clause-id>` produits par l'extension ClauseBlock
+  // soient préservés à travers le round-trip de l'éditeur. Les lecteurs en
+  // aval (éditeur de document, prévisualisations) acceptent déjà les deux
+  // formats.
   const handleSave = useCallback(() => {
     const ed = editorRef.current
     if (!ed) return
@@ -212,7 +221,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
       name: title.trim() || 'Modèle sans titre',
       category: category.trim() || 'Cabinet',
       documentCategory: documentCategory.trim() || undefined,
-      content: JSON.stringify(ed.getJSON()),
+      content: ed.getHTML(),
       fields,
       updatedAt: new Date().toISOString(),
     }
@@ -220,7 +229,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
     setHasChanges(false)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-  }, [title, category, fields, template, onSave])
+  }, [title, category, documentCategory, fields, template, onSave])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -288,6 +297,10 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
           style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: showBricks ? 'var(--color-primary-highlight)' : 'transparent', color: showBricks ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: showBricks ? 600 : 400, cursor: 'pointer', flexShrink: 0, transition: 'all 0.12s' }}>
           <Blocks size={12} /> Briques
         </button>
+        <button onClick={() => setShowClauses((v) => !v)}
+          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: showClauses ? 'var(--color-primary-highlight)' : 'transparent', color: showClauses ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: showClauses ? 600 : 400, cursor: 'pointer', flexShrink: 0, transition: 'all 0.12s' }}>
+          <Shapes size={12} /> Clauses
+        </button>
         {saved && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-success)', flexShrink: 0 }}>✓ Enregistré</span>}
         {hasChanges && !saved && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-warning)', flexShrink: 0 }}>● Non enregistré</span>}
         <button onClick={handleSave}
@@ -328,6 +341,13 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
           <DocumentBricksPanel
             onInsertBrick={handleInsertBrick}
             disableIntervenantPicker
+          />
+        )}
+
+        {showClauses && (
+          <ClausesPanel
+            editor={editor}
+            onChanged={() => { setHasChanges(true); setSaved(false) }}
           />
         )}
       </div>
@@ -371,6 +391,29 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
         .mylex-editor-content [data-variable-field][data-variable-type="reference"] { color: #be185d; background: rgba(190,24,93,0.07); }
         .mylex-editor-content [data-variable-field][data-variable-type="default"],
         .mylex-editor-content [data-variable-field]:not([data-variable-type]) { color: #6b7280; background: rgba(107,114,128,0.07); }
+
+        /* ── Clauses (ClauseBlock) ─────────────────────────────────────── */
+        .mylex-editor-content .mylaw-clause-block {
+          position: relative;
+          padding: 0.35em 0 0.35em 0.85em;
+          margin: 0.4em 0;
+          border-left: 3px solid rgba(0,0,0,0.12);
+          border-radius: 2px;
+        }
+        .mylex-editor-content .mylaw-clause-block[data-clause-type="required"]     { border-left-color: #01696f; background: rgba(1,105,111,0.04); }
+        .mylex-editor-content .mylaw-clause-block[data-clause-type="optional"]     { border-left-color: #b45309; background: rgba(180,83,9,0.04); }
+        .mylex-editor-content .mylaw-clause-block[data-clause-type="conditional"]  { border-left-color: #6d28d9; background: rgba(109,40,217,0.04); }
+        .mylex-editor-content .mylaw-clause-block[data-clause-label]::before {
+          content: attr(data-clause-label);
+          position: absolute; top: -0.55em; left: 0.55em;
+          font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+          text-transform: uppercase; padding: 1px 6px; border-radius: 10px;
+          background: white; border: 1px solid currentColor;
+          color: inherit; line-height: 1.3;
+        }
+        .mylex-editor-content .mylaw-clause-block[data-clause-type="required"]::before    { color: #01696f; }
+        .mylex-editor-content .mylaw-clause-block[data-clause-type="optional"]::before    { color: #b45309; }
+        .mylex-editor-content .mylaw-clause-block[data-clause-type="conditional"]::before { color: #6d28d9; }
       `}</style>
     </div>
   )

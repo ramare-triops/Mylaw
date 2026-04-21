@@ -1,16 +1,24 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { X, FileText, Scale, Mail, Users, Gavel, FileSignature, Check } from 'lucide-react';
+import { X, FileText, Scale, Mail, Users, Gavel, FileSignature, Check, Link2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { db } from '@/lib/db';
 import {
   migrateDocumentCategoryIfNeeded,
   migrateTpl7OptionalClauseIfNeeded,
   seedAdditionalDefaultsIfNeeded,
+  tiptapJsonToHtml,
   type TemplateOptionalClause,
 } from '@/components/templates/TemplateLibrary';
+import {
+  applyClauseSelection,
+  collectDependencyRefs,
+  evaluateDependency,
+  scanClauses,
+  type ClauseDescriptor,
+} from '@/lib/clause-engine';
 
 // ─── Template tel que stocké dans Dexie ────────────────────────────────────
 // Doit rester aligné avec `Template` défini dans TemplateLibrary.tsx. On le
@@ -59,25 +67,96 @@ async function loadTemplatesFromDexie(): Promise<DialogTemplate[]> {
   });
 }
 
-// ─── Clauses optionnelles : strip des blocs non cochés ────────────────────
+// ─── Clauses : scan + application ─────────────────────────────────────────
 /**
- * Supprime du contenu les blocs délimités par `<!--OPT:id-->...<!--/OPT:id-->`
- * dont l'id n'est pas présent dans `enabledIds`. Les blocs actifs restent en
- * place avec leurs balises commentées (neutres pour le rendu HTML comme pour
- * TipTap). Fonctionne sur plusieurs lignes (le contenu HTML peut contenir
- * des retours à la ligne).
+ * Wrapper rétro-compatible. Déléguait autrefois à un simple regex sur les
+ * commentaires `<!--OPT:id-->…<!--/OPT:id-->`. Désormais l'implémentation
+ * vit dans `lib/clause-engine.ts` et gère aussi les wrappers
+ * `<section data-clause-id>` de l'extension `ClauseBlock`.
  */
 export function applyOptionalClauses(
   content: string,
   enabledIds: ReadonlySet<string>,
 ): string {
-  if (!content) return content;
-  // Regex gourmande minimale pour chaque bloc OPT.
-  return content.replace(
-    /<!--OPT:([a-zA-Z0-9_-]+)-->([\s\S]*?)<!--\/OPT:\1-->/g,
-    (_match, id: string, body: string) => (enabledIds.has(id) ? body : ''),
-  );
+  return applyClauseSelection(normalizeContentToHtml(content), enabledIds);
 }
+
+/**
+ * Normalise vers du HTML : si le contenu est un JSON TipTap, on le sérialise
+ * via `tiptapJsonToHtml` pour pouvoir y passer les outils DOM du moteur de
+ * clauses. Si c'est déjà du HTML (ou texte brut), on le laisse tel quel.
+ */
+function normalizeContentToHtml(content: string): string {
+  if (!content) return '';
+  const t = content.trim();
+  if (t.startsWith('{"type":"doc"')) {
+    try { return tiptapJsonToHtml(JSON.parse(t)); } catch { return t; }
+  }
+  return t;
+}
+
+/**
+ * Construit la liste des clauses à proposer à l'utilisateur pour un modèle
+ * donné. On scanne le HTML (wrappers `<section data-clause-id>` et anciens
+ * commentaires `<!--OPT:id-->`) puis on enrichit avec les métadonnées
+ * héritées de `template.optionalClauses` (label / defaultChecked) lorsqu'elles
+ * existent et que le scan n'a pas déjà une info plus riche.
+ */
+function buildClauseDescriptors(template: DialogTemplate): ClauseDescriptor[] {
+  const html = normalizeContentToHtml(template.content);
+  const scanned = scanClauses(html);
+  const legacy = template.optionalClauses ?? [];
+  if (!legacy.length) return scanned;
+  const metaById = new Map(legacy.map((c) => [c.id, c]));
+  for (const d of scanned) {
+    const meta = metaById.get(d.id);
+    if (!meta) continue;
+    if (meta.label && d.label === d.id) d.label = meta.label;
+    if (typeof meta.defaultChecked === 'boolean' && d.defaultChecked === false) {
+      d.defaultChecked = meta.defaultChecked;
+    }
+  }
+  return scanned;
+}
+
+/**
+ * Calcule l'ensemble des clauses effectivement incluses à partir de l'état
+ * des cases à cocher. Tient compte du type de chaque clause :
+ *   - required     → toujours inclus.
+ *   - optional     → inclus ssi coché.
+ *   - conditional  → inclus ssi coché ET `dependsOn` évaluée à true.
+ * L'évaluation est itérative pour gérer les chaînes de dépendances
+ * (point fixe atteint quand l'ensemble se stabilise).
+ */
+function computeEffectiveSelection(
+  descriptors: ClauseDescriptor[],
+  checked: Record<string, boolean>,
+): Set<string> {
+  const selected = new Set<string>();
+  for (const d of descriptors) {
+    if (d.type === 'required') selected.add(d.id);
+  }
+  // Point fixe.
+  for (let i = 0; i < descriptors.length + 1; i++) {
+    let changed = false;
+    for (const d of descriptors) {
+      if (d.type === 'required') continue;
+      const userChecked = !!checked[d.id];
+      const depOk = evaluateDependency(d.dependsOn, selected);
+      const shouldBeIn = userChecked && depOk;
+      if (shouldBeIn && !selected.has(d.id)) { selected.add(d.id); changed = true; }
+      if (!shouldBeIn && selected.has(d.id)) { selected.delete(d.id); changed = true; }
+    }
+    if (!changed) break;
+  }
+  return selected;
+}
+
+const CLAUSE_TYPE_STYLES: Record<string, { color: string; bg: string; label: string }> = {
+  required:    { color: '#01696f', bg: 'rgba(1,105,111,0.08)', label: 'Obligatoire' },
+  optional:    { color: '#b45309', bg: 'rgba(180,83,9,0.08)', label: 'Optionnelle' },
+  conditional: { color: '#6d28d9', bg: 'rgba(109,40,217,0.08)', label: 'Conditionnelle' },
+};
 
 // ─── Convertit JSON TipTap / HTML en texte pour l'aperçu ──────────────────
 function tiptapNodeToText(node: Record<string, unknown>): string {
@@ -150,15 +229,42 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
     }
   }, [open]);
 
+  // Inventaire des clauses du modèle sélectionné (scan du contenu +
+  // enrichissement avec les métadonnées héritées de `optionalClauses`).
+  const clauseDescriptors = useMemo<ClauseDescriptor[]>(
+    () => (selectedTemplate ? buildClauseDescriptors(selectedTemplate) : []),
+    [selectedTemplate],
+  );
+
+  // Clauses visibles dans le panneau « Clauses du modèle » : on n'affiche
+  // pas les clauses obligatoires (l'utilisateur n'a rien à décider) et on
+  // trie optional avant conditional pour une lecture logique.
+  const visibleClauses = useMemo(
+    () =>
+      clauseDescriptors
+        .filter((c) => c.type !== 'required')
+        .sort((a, b) => (a.type === b.type ? 0 : a.type === 'optional' ? -1 : 1)),
+    [clauseDescriptors],
+  );
+
   // À chaque changement de modèle sélectionné, (ré)initialise l'état des
-  // clauses optionnelles à partir de leurs valeurs `defaultChecked`.
+  // cases à cocher à partir des `defaultChecked` des descripteurs scannés.
   useEffect(() => {
     const initial: Record<string, boolean> = {};
-    for (const c of selectedTemplate?.optionalClauses ?? []) {
-      initial[c.id] = c.defaultChecked ?? false;
+    for (const c of clauseDescriptors) {
+      if (c.type !== 'required') initial[c.id] = c.defaultChecked ?? false;
     }
     setEnabledClauses(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTemplate]);
+
+  // Sélection effective (tient compte des dépendances) — aussi utilisée
+  // pour griser les cases conditionnelles dont la condition n'est pas
+  // satisfaite.
+  const effectiveSelection = useMemo(
+    () => computeEffectiveSelection(clauseDescriptors, enabledClauses),
+    [clauseDescriptors, enabledClauses],
+  );
 
   if (!open) return null;
 
@@ -170,15 +276,13 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const finalTitle = title.trim() || (selectedTemplate ? selectedTemplate.name : 'Nouveau document');
-    // Applique les clauses optionnelles avant de transmettre au parent.
+    // Applique les clauses (scan + strip) avant de transmettre au parent.
     let templateToEmit: DialogTemplate | null = selectedTemplate;
-    if (selectedTemplate?.optionalClauses?.length) {
-      const enabledIds = new Set(
-        Object.entries(enabledClauses).filter(([, v]) => v).map(([k]) => k),
-      );
+    if (selectedTemplate && clauseDescriptors.length) {
+      const html = normalizeContentToHtml(selectedTemplate.content);
       templateToEmit = {
         ...selectedTemplate,
-        content: applyOptionalClauses(selectedTemplate.content, enabledIds),
+        content: applyClauseSelection(html, effectiveSelection),
       };
     }
     onCreate(finalTitle, templateToEmit);
@@ -249,34 +353,67 @@ export function NewDocumentDialog({ open, onClose, onCreate }: NewDocumentDialog
             </div>
           </div>
 
-          {/* Clauses optionnelles du modèle sélectionné */}
-          {selectedTemplate?.optionalClauses?.length ? (
+          {/* Clauses du modèle sélectionné (optionnelles + conditionnelles) */}
+          {visibleClauses.length ? (
             <div
               className="flex flex-col gap-2 mx-6 mb-4 p-3 rounded-md"
               style={{ background: 'var(--color-primary-highlight)', border: '1px solid var(--color-border)', flexShrink: 0 }}
             >
               <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Clauses optionnelles
+                Clauses du modèle
               </span>
               <div className="flex flex-col gap-1.5">
-                {selectedTemplate.optionalClauses.map((c) => {
+                {visibleClauses.map((c) => {
+                  const style = CLAUSE_TYPE_STYLES[c.type] ?? CLAUSE_TYPE_STYLES.required;
+                  const depOk = evaluateDependency(c.dependsOn, effectiveSelection);
+                  const disabled = c.type === 'conditional' && !depOk;
                   const checked = !!enabledClauses[c.id];
+                  const depRefs = collectDependencyRefs(c.dependsOn);
+                  const depLabels = depRefs
+                    .map((id) => clauseDescriptors.find((d) => d.id === id)?.label ?? id)
+                    .join(', ');
                   return (
                     <label
                       key={c.id}
-                      className="flex items-start gap-2 cursor-pointer"
-                      style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text)' }}
+                      className="flex items-start gap-2"
+                      style={{
+                        fontSize: 'var(--text-sm)',
+                        color: disabled ? 'var(--color-text-muted)' : 'var(--color-text)',
+                        cursor: disabled ? 'not-allowed' : 'pointer',
+                        opacity: disabled ? 0.55 : 1,
+                      }}
                     >
                       <input
                         type="checkbox"
-                        checked={checked}
+                        checked={checked && depOk}
+                        disabled={disabled}
                         onChange={(e) => setEnabledClauses((prev) => ({ ...prev, [c.id]: e.target.checked }))}
-                        style={{ marginTop: '3px', accentColor: 'var(--color-primary)' }}
+                        style={{ marginTop: '3px', accentColor: style.color }}
                       />
-                      <span className="flex flex-col">
-                        <span style={{ fontWeight: 500 }}>{c.label}</span>
-                        {c.description && (
-                          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>{c.description}</span>
+                      <span className="flex flex-col" style={{ minWidth: 0 }}>
+                        <span className="flex items-center gap-2 flex-wrap">
+                          <span style={{ fontWeight: 500 }}>{c.label}</span>
+                          <span
+                            style={{
+                              fontSize: '10px', fontWeight: 600, textTransform: 'uppercase',
+                              letterSpacing: '0.04em', padding: '1px 6px', borderRadius: '10px',
+                              color: style.color, background: style.bg,
+                            }}
+                          >{style.label}</span>
+                          {c.type === 'conditional' && depRefs.length > 0 && (
+                            <span
+                              className="flex items-center gap-1"
+                              title={`Dépend de : ${depLabels}`}
+                              style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}
+                            >
+                              <Link2 size={10} /> {depLabels}
+                            </span>
+                          )}
+                        </span>
+                        {disabled && (
+                          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                            Activez d'abord : {depLabels}
+                          </span>
                         )}
                       </span>
                     </label>
