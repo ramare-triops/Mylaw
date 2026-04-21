@@ -130,12 +130,18 @@ export const SEED_FIELD_DEFS: Seed[] = [
  * `fielddefs_seeded_v1` en `db.settings` pour ne plus jamais ré-insérer. Les
  * champs manquants par leur nom sont ajoutés, pas les doublons — les
  * modifications utilisateur sont respectées.
+ *
+ * Cas particulier self-healing : si la table est totalement vide alors que
+ * le drapeau est posé (perte de données — scramble de sync passé, clear
+ * accidentel…), on re-seed quand même. Une table partiellement peuplée
+ * est laissée telle quelle : l'utilisateur peut avoir supprimé
+ * volontairement certains seeds et on respecte ce choix.
  */
 export async function seedFieldDefsIfNeeded(): Promise<void> {
-  const done = await getSetting<boolean>('fielddefs_seeded_v1', false);
-  if (done) return;
   try {
     const existing = (await db.fieldDefs.toArray()) as FieldDef[];
+    const done = await getSetting<boolean>('fielddefs_seeded_v1', false);
+    if (done && existing.length > 0) return;
     const existingNames = new Set(existing.map((f) => f.name));
     const toInsert = SEED_FIELD_DEFS
       .filter((s) => !existingNames.has(s.name))
