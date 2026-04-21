@@ -414,6 +414,32 @@ export async function saveDossier(dossier: Dossier): Promise<number> {
 }
 
 /**
+ * Liste les intervenants d'un dossier avec leur rôle, prêts à être
+ * exploités par les blocs d'identification. Renvoie un tableau plat
+ * `{ contact, role, parentDossierContactId }` dans l'ordre d'insertion
+ * des `DossierContact`. Les contacts introuvables (intégrité cassée)
+ * sont filtrés silencieusement.
+ */
+export interface DossierContactWithRole {
+  dossierContact: DossierContact;
+  contact: Contact;
+}
+
+export async function getDossierContactsWithRole(
+  dossierId: number
+): Promise<DossierContactWithRole[]> {
+  const links = await db.dossierContacts.where('dossierId').equals(dossierId).toArray();
+  if (links.length === 0) return [];
+  const contacts = await db.contacts.bulkGet(links.map((l) => l.contactId));
+  const out: DossierContactWithRole[] = [];
+  for (let i = 0; i < links.length; i++) {
+    const c = contacts[i];
+    if (c) out.push({ dossierContact: links[i], contact: c });
+  }
+  return out;
+}
+
+/**
  * Horodatages « dernière ouverture » par dossier, stockés localement en
  * `db.settings` sous la clé `dossier_last_opened_v1` (map id → ISO
  * string). Cette clé est dans `INTERNAL_SETTING_KEYS` : elle ne voyage

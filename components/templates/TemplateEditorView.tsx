@@ -30,6 +30,8 @@ import { FontSize } from '@/components/editor/extensions/FontSize'
 import { VariableField } from '@/components/editor/extensions/VariableField'
 import { BrickMarker } from '@/components/editor/extensions/BrickMarker'
 import { ClauseBlock } from '@/components/editor/extensions/ClauseBlock'
+import { IdentificationBlock } from '@/components/editor/extensions/IdentificationBlock'
+import type { DossierRole } from '@/types'
 import { ClausesPanel } from './ClausesPanel'
 import {
   DocumentBricksPanel,
@@ -109,6 +111,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
       VariableField.configure({ onVariableClick: undefined, HTMLAttributes: {} }),
       BrickMarker,
       ClauseBlock,
+      IdentificationBlock,
     ],
     content: initialContent,
     editorProps: {
@@ -148,6 +151,28 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
     setSaved(false)
     setTimeout(() => setVariableCount(countVariables(ed)), 50)
   }, [])
+
+  // ── Insertion d'un bloc d'identification
+  // Pose un nœud `identificationBlock` au curseur. Le bloc reste un
+  // placeholder dans l'éditeur de modèle ; il est résolu en mentions
+  // légales concrètes au moment où un document est créé depuis le
+  // modèle dans un dossier (cf. `lib/identification-blocks.ts`).
+  const handleInsertIdentificationBlock = useCallback(
+    (role: DossierRole, separatorHtml: string) => {
+      const ed = editorRef.current
+      if (!ed) return
+      ed.chain()
+        .focus()
+        .insertContent({
+          type: 'identificationBlock',
+          attrs: { role, separator: separatorHtml || null, emptyFallback: null },
+        })
+        .run()
+      setHasChanges(true)
+      setSaved(false)
+    },
+    []
+  )
 
   // ── Drag & drop
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -331,6 +356,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
             fields={fields}
             onFieldsChange={(f) => { setFields(f); setHasChanges(true) }}
             onInsertVariable={handleInsertVariable}
+            onInsertIdentificationBlock={handleInsertIdentificationBlock}
           />
         )}
 

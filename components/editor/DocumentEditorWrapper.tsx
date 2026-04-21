@@ -39,6 +39,7 @@ import { MylawToolsBar } from './MylawToolsBar'
 import { FontSize } from './extensions/FontSize'
 import { VariableField } from './extensions/VariableField'
 import { BrickMarker } from './extensions/BrickMarker'
+import { IdentificationBlock } from './extensions/IdentificationBlock'
 import { TextExpansion } from './extensions/TextExpansion'
 import { VariablePopup } from './VariablePopup'
 import { FillAllVariablesDialog } from './FillAllVariablesDialog'
@@ -420,6 +421,7 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
         HTMLAttributes: {},
       }),
       BrickMarker,
+      IdentificationBlock,
       TextExpansion.configure({
         expansions: expansionsRef.current,
         triggers: [' ', 'Enter'],

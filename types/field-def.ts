@@ -28,6 +28,46 @@ export type FieldDefType =
   | 'url'           // URL
   | 'conditional';  // choix binaire résolu depuis un contact (ex : M/Mme)
 
+/**
+ * Mapping déterministe d'un `FieldDef` vers une propriété d'un `Contact`.
+ *
+ * Quand une variable de brique ou de modèle porte ce chemin, le résolveur
+ * (voir `lib/contact-variables.ts::contactVariableValue`) évite la
+ * correspondance floue et va droit à la valeur — indispensable pour
+ * l'auto-remplissage fiable des blocs d'identification à partir des
+ * intervenants d'un dossier.
+ *
+ * `'fullName'` et `'addressComposed'` sont des valeurs dérivées (non
+ * stockées brutes sur `Contact`) qui s'agrègent à la résolution.
+ */
+export type ContactFieldPath =
+  | 'civility'
+  | 'firstName'
+  | 'lastName'
+  | 'fullName'
+  | 'birthDate'
+  | 'birthPlace'
+  | 'nationality'
+  | 'profession'
+  | 'companyName'
+  | 'legalForm'
+  | 'capital'
+  | 'siret'
+  | 'rcs'
+  | 'rcsCity'
+  | 'representative'
+  | 'representativeRole'
+  | 'email'
+  | 'phone'
+  | 'address'
+  | 'addressComposed'
+  | 'addressNumber'
+  | 'addressStreet'
+  | 'addressComplement'
+  | 'addressPostalCode'
+  | 'addressCity'
+  | 'addressCountry';
+
 export interface FieldDef {
   id?: number;
   /** Libellé humain affiché dans la chip et dans la variable. */
@@ -45,6 +85,13 @@ export interface FieldDef {
   /** Pour type === 'conditional' : les deux options séparées (« M », « Mme »). */
   conditionalA?: string;
   conditionalB?: string;
+  /**
+   * Binding déterministe vers une propriété d'un `Contact`. Quand le champ
+   * est utilisé dans une brique d'identification attachée à un rôle du
+   * dossier, la valeur est tirée directement du contact correspondant sans
+   * passer par la correspondance floue.
+   */
+  contactPath?: ContactFieldPath;
   /** Seed immuable : empêche l'utilisateur de supprimer un champ fourni par défaut. */
   isSeed?: boolean;
   createdAt: Date;

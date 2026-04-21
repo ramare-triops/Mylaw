@@ -274,6 +274,14 @@ export interface Brick {
    * Si vide/absent, tous les rôles sont acceptés.
    */
   targetRoles?: DossierRole[];
+  /**
+   * Marqueur qui identifie une brique comme variante d'identification. Les
+   * blocs d'identification (cf. `lib/identification-blocks.ts`) repèrent
+   * leurs deux variantes (personne physique / personne morale) via ce
+   * champ, indépendamment du titre édité par l'utilisateur. Uniquement
+   * posé sur les seeds.
+   */
+  identityKind?: 'physical' | 'moral';
   createdAt: Date;
   updatedAt: Date;
 }

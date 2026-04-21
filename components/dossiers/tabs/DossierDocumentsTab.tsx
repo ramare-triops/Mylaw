@@ -33,7 +33,11 @@ import {
   linkDocumentToDossier,
   unlinkDocumentFromDossier,
   logAudit,
+  getDossierContactsWithRole,
 } from '@/lib/db';
+import { resolveIdentificationBlocks } from '@/lib/identification-blocks';
+import type { Brick as DBBrick } from '@/types';
+import type { FieldDef } from '@/types/field-def';
 import { cn, formatDate, formatDateTime } from '@/lib/utils';
 import { NewDocumentDialog, type DialogTemplate } from '@/components/documents/NewDocumentDialog';
 import {
@@ -358,7 +362,17 @@ export function DossierDocumentsTab({ dossier }: Props) {
     setNewDocOpen(false);
     const now = new Date();
     const templateContent = template?.content ?? '';
-    const content = templateToEditorContent(templateContent);
+    const normalized = templateToEditorContent(templateContent);
+    // Expansion des blocs d'identification : chaque placeholder du modèle
+    // est remplacé par l'énoncé des intervenants du dossier portant le
+    // rôle demandé, avec la variante physique / morale choisie selon
+    // `contact.type`. Les variables de contact connues sont pré-remplies ;
+    // les inconnues (champs vides côté intervenant) restent en `[Label]`
+    // pour que l'utilisateur les complète dans l'éditeur.
+    const content = await expandIdentificationBlocksInContent(
+      normalized,
+      dossier.id!
+    );
     const textForCount = content
       .replace(/<[^>]*>/g, ' ')
       .replace(/\s+/g, ' ')
@@ -380,6 +394,38 @@ export function DossierDocumentsTab({ dossier }: Props) {
       wordCount,
     });
     router.push(`/documents/${id}`);
+  }
+
+  /**
+   * Assemble le contexte d'expansion (intervenants du dossier, briques
+   * d'identité seed, catalogue de champs) et délègue à
+   * `resolveIdentificationBlocks`. Best-effort : si la résolution échoue
+   * pour une raison quelconque, on retombe sur le contenu brut du modèle
+   * pour ne pas bloquer la création du document.
+   */
+  async function expandIdentificationBlocksInContent(
+    html: string,
+    dossierId: number
+  ): Promise<string> {
+    try {
+      const [dossierContacts, bricks, fieldDefs] = await Promise.all([
+        getDossierContactsWithRole(dossierId),
+        db.bricks.toArray() as Promise<DBBrick[]>,
+        db.fieldDefs.toArray() as Promise<FieldDef[]>,
+      ]);
+      const physical = bricks.find((b) => b.identityKind === 'physical');
+      const moral = bricks.find((b) => b.identityKind === 'moral');
+      return resolveIdentificationBlocks(html, {
+        dossierContacts: dossierContacts.map((dc) => ({
+          contact: dc.contact,
+          role: dc.dossierContact.role,
+        })),
+        identityBricks: { physical, moral },
+        fieldDefs,
+      });
+    } catch {
+      return html;
+    }
   }
 
   async function handleUpdateStatus(doc: MylawDocument, status: DocumentStatus) {

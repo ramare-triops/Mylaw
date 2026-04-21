@@ -11,6 +11,7 @@
  */
 
 import type { Contact, Civility } from '@/types';
+import type { ContactFieldPath, FieldDef } from '@/types/field-def';
 import { composeAddress } from '@/components/dossiers/StructuredAddressFields';
 
 function norm(s: string): string {
@@ -57,11 +58,87 @@ function conditional(varName: string, civility?: Civility): string | undefined {
   return undefined;
 }
 
+/**
+ * Résout une variable depuis un contact via un `ContactFieldPath`
+ * déterministe. Utilisé par les blocs d'identification quand un
+ * `FieldDef.contactPath` est défini : on évite la correspondance floue et
+ * on va droit à la propriété.
+ *
+ * Retourne `undefined` si la propriété est absente / vide.
+ */
+export function contactValueFromPath(
+  contact: Contact,
+  path: ContactFieldPath
+): string | undefined {
+  switch (path) {
+    case 'civility':             return contact.civility ?? undefined;
+    case 'firstName':            return contact.firstName ?? undefined;
+    case 'lastName':             return (contact.lastName ?? '').toUpperCase() || undefined;
+    case 'fullName': {
+      const parts = [contact.firstName, (contact.lastName ?? '').toUpperCase()]
+        .filter(Boolean)
+        .join(' ');
+      return parts || contact.companyName || undefined;
+    }
+    case 'birthDate':            return formatDateFR(contact.birthDate) || undefined;
+    case 'birthPlace':           return contact.birthPlace ?? undefined;
+    case 'nationality':          return contact.nationality ?? undefined;
+    case 'profession':           return contact.profession ?? undefined;
+    case 'companyName':          return contact.companyName ?? undefined;
+    case 'legalForm':            return contact.legalForm ?? undefined;
+    case 'capital':              return contact.capital != null ? contact.capital.toLocaleString('fr-FR') : undefined;
+    case 'siret':                return contact.siret ?? undefined;
+    case 'rcs':                  return contact.rcs ?? undefined;
+    case 'rcsCity':              return contact.rcsCity ?? undefined;
+    case 'representative':       return contact.representative ?? undefined;
+    case 'representativeRole':   return contact.representativeRole ?? undefined;
+    case 'email':                return contact.email ?? undefined;
+    case 'phone':                return contact.phone ?? undefined;
+    case 'address':              return contact.address ?? undefined;
+    case 'addressComposed': {
+      const composed = composeAddress({
+        addressNumber: contact.addressNumber,
+        addressStreet: contact.addressStreet,
+        addressComplement: contact.addressComplement,
+        addressPostalCode: contact.addressPostalCode,
+        addressCity: contact.addressCity,
+      });
+      return composed || contact.address || undefined;
+    }
+    case 'addressNumber':        return contact.addressNumber ?? undefined;
+    case 'addressStreet':        return contact.addressStreet ?? undefined;
+    case 'addressComplement':    return contact.addressComplement ?? undefined;
+    case 'addressPostalCode':    return contact.addressPostalCode ?? undefined;
+    case 'addressCity':          return (contact.addressCity ?? '').toUpperCase() || undefined;
+    case 'addressCountry':       return contact.addressCountry ?? undefined;
+  }
+  return undefined;
+}
+
 /** Résout une variable depuis un contact. Retourne undefined si aucune correspondance. */
 export function contactVariableValue(
   contact: Contact,
-  varName: string
+  varName: string,
+  fieldDefs?: FieldDef[]
 ): string | undefined {
+  // ── 1. Correspondance déterministe via FieldDef.contactPath ─────────
+  // Priorité au binding explicite : le plus robuste et surtout celui que
+  // les blocs d'identification doivent utiliser. Match sur `name` (slug)
+  // ou sur `label`, insensible à la casse / aux accents.
+  if (fieldDefs && fieldDefs.length > 0) {
+    const normalized = norm(varName);
+    const def = fieldDefs.find(
+      (f) => norm(f.name) === normalized || norm(f.label) === normalized
+    );
+    if (def?.contactPath) {
+      const v = contactValueFromPath(contact, def.contactPath);
+      if (v !== undefined && v !== '') return v;
+      // Chemin déterministe mais valeur vide côté contact : on laisse la
+      // suite tenter un dernier recours via la correspondance floue
+      // héritée, au cas où le contact a rempli un champ synonyme.
+    }
+  }
+
   const v = norm(varName);
 
   // ── Variables conditionnelles (M/Mme, né/née, etc.) ──────────────────
@@ -192,15 +269,20 @@ export function extractBrickVariables(content: string): string[] {
  * Applique un contact à un contenu de brique : remplace chaque [Variable]
  * connue par la valeur correspondante, laisse les inconnues intactes.
  * Retourne le contenu modifié + la liste des variables remplies / non remplies.
+ *
+ * Quand `fieldDefs` est fourni, les bindings déterministes
+ * (`FieldDef.contactPath`) sont utilisés en priorité avant la
+ * correspondance floue.
  */
 export function applyContactToBrickContent(
   contact: Contact,
-  content: string
+  content: string,
+  fieldDefs?: FieldDef[]
 ): { content: string; filled: string[]; unfilled: string[] } {
   const filled: string[] = [];
   const unfilled: string[] = [];
   const out = content.replace(/\[([^\]]+)\]/g, (match, varName: string) => {
-    const val = contactVariableValue(contact, varName);
+    const val = contactVariableValue(contact, varName, fieldDefs);
     if (val != null && val !== '') {
       filled.push(varName);
       return val;

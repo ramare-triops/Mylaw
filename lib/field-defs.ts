@@ -55,33 +55,34 @@ type Seed = Omit<FieldDef, 'id' | 'createdAt' | 'updatedAt'>;
 const now = () => new Date();
 
 const IDENTITY: Seed[] = [
-  { label: 'Nom',                name: 'Nom',                type: 'name',    color: '#01696f', category: 'identity', placeholder: 'Ex : Dupont',                isSeed: true },
-  { label: 'Prénom',             name: 'Prénom',             type: 'name',    color: '#01696f', category: 'identity', placeholder: 'Ex : Jean',                  isSeed: true },
-  { label: 'Nom complet',        name: 'Nom complet',        type: 'name',    color: '#01696f', category: 'identity', placeholder: 'Ex : Jean Dupont',           isSeed: true },
-  { label: 'Civilité',           name: 'Civilité',           type: 'text',    color: '#01696f', category: 'identity', placeholder: 'M. / Mme',                   isSeed: true },
-  { label: 'Qualité',            name: 'Qualité',            type: 'text',    color: '#01696f', category: 'identity', placeholder: 'Ex : Directeur général',     isSeed: true },
-  { label: 'Date de naissance',  name: 'Date de naissance',  type: 'date',    color: '#4f46e5', category: 'identity', placeholder: 'Ex : 01/01/1980',            isSeed: true },
-  { label: 'Lieu de naissance',  name: 'Lieu de naissance',  type: 'address', color: '#c2410c', category: 'identity', placeholder: 'Ex : Paris',                 isSeed: true },
-  { label: 'Nationalité',        name: 'Nationalité',        type: 'text',    color: '#01696f', category: 'identity', placeholder: 'Ex : française',             isSeed: true },
+  { label: 'Nom',                name: 'Nom',                type: 'name',    color: '#01696f', category: 'identity', placeholder: 'Ex : Dupont',                isSeed: true, contactPath: 'lastName' },
+  { label: 'Prénom',             name: 'Prénom',             type: 'name',    color: '#01696f', category: 'identity', placeholder: 'Ex : Jean',                  isSeed: true, contactPath: 'firstName' },
+  { label: 'Nom complet',        name: 'Nom complet',        type: 'name',    color: '#01696f', category: 'identity', placeholder: 'Ex : Jean Dupont',           isSeed: true, contactPath: 'fullName' },
+  { label: 'Civilité',           name: 'Civilité',           type: 'text',    color: '#01696f', category: 'identity', placeholder: 'M. / Mme',                   isSeed: true, contactPath: 'civility' },
+  { label: 'Qualité',            name: 'Qualité',            type: 'text',    color: '#01696f', category: 'identity', placeholder: 'Ex : Directeur général',     isSeed: true, contactPath: 'representativeRole' },
+  { label: 'Date de naissance',  name: 'Date de naissance',  type: 'date',    color: '#4f46e5', category: 'identity', placeholder: 'Ex : 01/01/1980',            isSeed: true, contactPath: 'birthDate' },
+  { label: 'Lieu de naissance',  name: 'Lieu de naissance',  type: 'address', color: '#c2410c', category: 'identity', placeholder: 'Ex : Paris',                 isSeed: true, contactPath: 'birthPlace' },
+  { label: 'Nationalité',        name: 'Nationalité',        type: 'text',    color: '#01696f', category: 'identity', placeholder: 'Ex : française',             isSeed: true, contactPath: 'nationality' },
+  { label: 'Profession',         name: 'Profession',         type: 'text',    color: '#01696f', category: 'identity', placeholder: 'Ex : cadre',                 isSeed: true, contactPath: 'profession' },
 ];
 
 const COORDS: Seed[] = [
-  { label: 'Adresse',     name: 'Adresse',     type: 'address', color: '#c2410c', category: 'coords', placeholder: 'Ex : 12 rue de la Paix',      isSeed: true },
-  { label: 'Code postal', name: 'Code postal', type: 'text',    color: '#c2410c', category: 'coords', placeholder: 'Ex : 75001',                  isSeed: true },
-  { label: 'Ville',       name: 'Ville',       type: 'address', color: '#c2410c', category: 'coords', placeholder: 'Ex : Paris',                  isSeed: true },
-  { label: 'Pays',        name: 'Pays',        type: 'address', color: '#c2410c', category: 'coords', placeholder: 'Ex : France',                 isSeed: true },
-  { label: 'Téléphone',   name: 'Téléphone',   type: 'phone',   color: '#c2410c', category: 'coords', placeholder: 'Ex : 06 12 34 56 78',         isSeed: true },
-  { label: 'Email',       name: 'Email',       type: 'email',   color: '#c2410c', category: 'coords', placeholder: 'Ex : jean@exemple.fr',        isSeed: true },
+  { label: 'Adresse',     name: 'Adresse',     type: 'address', color: '#c2410c', category: 'coords', placeholder: 'Ex : 12 rue de la Paix',      isSeed: true, contactPath: 'addressComposed' },
+  { label: 'Code postal', name: 'Code postal', type: 'text',    color: '#c2410c', category: 'coords', placeholder: 'Ex : 75001',                  isSeed: true, contactPath: 'addressPostalCode' },
+  { label: 'Ville',       name: 'Ville',       type: 'address', color: '#c2410c', category: 'coords', placeholder: 'Ex : Paris',                  isSeed: true, contactPath: 'addressCity' },
+  { label: 'Pays',        name: 'Pays',        type: 'address', color: '#c2410c', category: 'coords', placeholder: 'Ex : France',                 isSeed: true, contactPath: 'addressCountry' },
+  { label: 'Téléphone',   name: 'Téléphone',   type: 'phone',   color: '#c2410c', category: 'coords', placeholder: 'Ex : 06 12 34 56 78',         isSeed: true, contactPath: 'phone' },
+  { label: 'Email',       name: 'Email',       type: 'email',   color: '#c2410c', category: 'coords', placeholder: 'Ex : jean@exemple.fr',        isSeed: true, contactPath: 'email' },
 ];
 
 const COMPANY: Seed[] = [
-  { label: 'Nom de la société', name: 'Nom de la société', type: 'name',      color: '#7c3aed', category: 'company', placeholder: 'Ex : Acme SAS',                 isSeed: true },
-  { label: 'Forme juridique',   name: 'Forme juridique',   type: 'text',      color: '#7c3aed', category: 'company', placeholder: 'Ex : SAS / SARL / SCI',         isSeed: true },
-  { label: 'Capital social',    name: 'Capital social',    type: 'price',     color: '#15803d', category: 'company', placeholder: 'Ex : 10 000',                   isSeed: true },
-  { label: 'Numéro RCS',        name: 'Numéro RCS',        type: 'reference', color: '#be185d', category: 'company', placeholder: 'Ex : 123 456 789',              isSeed: true },
-  { label: 'Ville RCS',         name: 'Ville RCS',         type: 'address',   color: '#c2410c', category: 'company', placeholder: 'Ex : Paris',                    isSeed: true },
-  { label: 'Adresse du siège',  name: 'Adresse du siège',  type: 'address',   color: '#c2410c', category: 'company', placeholder: '',                              isSeed: true },
-  { label: 'Représentant légal',name: 'Représentant légal',type: 'name',      color: '#7c3aed', category: 'company', placeholder: '',                              isSeed: true },
+  { label: 'Nom de la société', name: 'Nom de la société', type: 'name',      color: '#7c3aed', category: 'company', placeholder: 'Ex : Acme SAS',                 isSeed: true, contactPath: 'companyName' },
+  { label: 'Forme juridique',   name: 'Forme juridique',   type: 'text',      color: '#7c3aed', category: 'company', placeholder: 'Ex : SAS / SARL / SCI',         isSeed: true, contactPath: 'legalForm' },
+  { label: 'Capital social',    name: 'Capital social',    type: 'price',     color: '#15803d', category: 'company', placeholder: 'Ex : 10 000',                   isSeed: true, contactPath: 'capital' },
+  { label: 'Numéro RCS',        name: 'Numéro RCS',        type: 'reference', color: '#be185d', category: 'company', placeholder: 'Ex : 123 456 789',              isSeed: true, contactPath: 'rcs' },
+  { label: 'Ville RCS',         name: 'Ville RCS',         type: 'address',   color: '#c2410c', category: 'company', placeholder: 'Ex : Paris',                    isSeed: true, contactPath: 'rcsCity' },
+  { label: 'Adresse du siège',  name: 'Adresse du siège',  type: 'address',   color: '#c2410c', category: 'company', placeholder: '',                              isSeed: true, contactPath: 'addressComposed' },
+  { label: 'Représentant légal',name: 'Représentant légal',type: 'name',      color: '#7c3aed', category: 'company', placeholder: '',                              isSeed: true, contactPath: 'representative' },
 ];
 
 const LEGAL: Seed[] = [
@@ -141,6 +142,13 @@ export async function seedFieldDefsIfNeeded(): Promise<void> {
   try {
     const existing = (await db.fieldDefs.toArray()) as FieldDef[];
     const done = await getSetting<boolean>('fielddefs_seeded_v1', false);
+
+    // Migration `contactPath` : les seeds posés avant l'introduction de
+    // `FieldDef.contactPath` n'en ont pas. On back-fill depuis le seed
+    // courant (match par `name`) — pour les seed records uniquement, pour
+    // ne pas toucher aux champs user-created.
+    await backfillContactPathOnSeeds(existing);
+
     if (done && existing.length > 0) return;
     const existingNames = new Set(existing.map((f) => f.name));
     const toInsert = SEED_FIELD_DEFS
@@ -151,6 +159,25 @@ export async function seedFieldDefsIfNeeded(): Promise<void> {
     /* best-effort */
   }
   await setSetting('fielddefs_seeded_v1', true);
+}
+
+/**
+ * Back-fille `contactPath` sur les enregistrements seed déjà présents en
+ * base. Idempotent : ne touche que les seeds qui n'ont pas encore de
+ * `contactPath` et dont le nom correspond à une entrée du seed courant
+ * portant ce chemin.
+ */
+async function backfillContactPathOnSeeds(existing: FieldDef[]): Promise<void> {
+  const seedByName = new Map(SEED_FIELD_DEFS.map((s) => [s.name, s]));
+  const updates: FieldDef[] = [];
+  for (const f of existing) {
+    if (!f.isSeed) continue;
+    if (f.contactPath !== undefined) continue;
+    const seed = seedByName.get(f.name);
+    if (!seed?.contactPath) continue;
+    updates.push({ ...f, contactPath: seed.contactPath, updatedAt: now() });
+  }
+  if (updates.length > 0) await db.fieldDefs.bulkPut(updates);
 }
 
 /* ─── CRUD helpers ──────────────────────────────────────────────────────── */
