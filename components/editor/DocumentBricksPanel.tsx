@@ -1489,9 +1489,11 @@ export function DocumentBricksPanel({
               <Blocks size={13} style={{ color: 'var(--color-primary)' }} />
               <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--color-text)' }}>Boîte à outils</span>
             </div>
-            <button onClick={() => setShowEditor(true)} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: 'var(--radius-sm)', background: 'var(--color-primary)', color: '#fff', fontSize: '10px', fontWeight: 600, cursor: 'pointer', border: 'none' }}>
-              <Plus size={10} /> Nouvelle
-            </button>
+            {tab === 'bricks' && (
+              <button onClick={() => setShowEditor(true)} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: 'var(--radius-sm)', background: 'var(--color-primary)', color: '#fff', fontSize: '10px', fontWeight: 600, cursor: 'pointer', border: 'none' }}>
+                <Plus size={10} /> Nouvelle
+              </button>
+            )}
           </div>
           <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', marginLeft: '-14px', marginRight: '-14px', paddingLeft: '6px', paddingRight: '6px' }}>
             <button style={tabStyle(tab === 'bricks')} onClick={() => setTab('bricks')}>
@@ -1531,13 +1533,15 @@ export function DocumentBricksPanel({
           />
         )}
 
-        <div style={{ padding: '8px 10px', borderTop: '1px solid var(--color-border)', flexShrink: 0 }}>
-          <button onClick={() => setShowEditor(true)}
-            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: '11px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.12s' }}
-            onMouseEnter={e => { const b = e.currentTarget; b.style.borderColor = 'var(--color-primary)'; b.style.color = 'var(--color-primary)'; b.style.background = 'var(--color-primary)08' }}
-            onMouseLeave={e => { const b = e.currentTarget; b.style.borderColor = 'var(--color-border)'; b.style.color = 'var(--color-text-muted)'; b.style.background = 'var(--color-surface-offset)' }}
-          ><Settings2 size={12} /> Éditeur de briques</button>
-        </div>
+        {tab === 'bricks' && (
+          <div style={{ padding: '8px 10px', borderTop: '1px solid var(--color-border)', flexShrink: 0 }}>
+            <button onClick={() => setShowEditor(true)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: '11px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.12s' }}
+              onMouseEnter={e => { const b = e.currentTarget; b.style.borderColor = 'var(--color-primary)'; b.style.color = 'var(--color-primary)'; b.style.background = 'var(--color-primary)08' }}
+              onMouseLeave={e => { const b = e.currentTarget; b.style.borderColor = 'var(--color-border)'; b.style.color = 'var(--color-text-muted)'; b.style.background = 'var(--color-surface-offset)' }}
+            ><Settings2 size={12} /> Éditeur de briques</button>
+          </div>
+        )}
       </div>
 
       {showEditor && (
