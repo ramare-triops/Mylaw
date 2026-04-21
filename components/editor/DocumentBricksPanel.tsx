@@ -22,7 +22,6 @@ import {
   type TextVar,
   type CondVar,
 } from '@/lib/brick-variables'
-import { makeIdentificationBlockHtml } from './extensions/IdentificationBlock'
 
 // ─── Types UI ────────────────────────────────────────────────────────────────
 
@@ -1504,14 +1503,19 @@ export function DocumentBricksPanel({
    * équipés (éditeur de document en lecture seule, etc.).
    */
   const handleBrickClick = useCallback((b: Brick) => {
-    if (b.identityRole && onInsertIdentificationBlock) {
-      onInsertIdentificationBlock(b.identityRole, b.identitySeparator ?? null, b.label)
+    // Briques « Dossier » (identityRole posé) : insertion via le
+    // callback `onInsertIdentificationBlock`, qui pose un nœud Tiptap
+    // via spec — chemin robuste au round-trip. Si l'hôte ne fournit
+    // pas ce callback (par exemple un éditeur de document en mode
+    // lecture), on tombe silencieusement en no-op plutôt que de poser
+    // un marqueur HTML incomplet qui resterait orphelin.
+    if (b.identityRole) {
+      if (onInsertIdentificationBlock) {
+        onInsertIdentificationBlock(b.identityRole, b.identitySeparator ?? null, b.label)
+      }
       return
     }
-    const html = b.identityRole
-      ? makeIdentificationBlockHtml(b.identityRole, b.identitySeparator, null, b.label)
-      : brickContentToHtml(b.content)
-    onInsertBrick(html, b)
+    onInsertBrick(brickContentToHtml(b.content), b)
   }, [onInsertBrick, onInsertIdentificationBlock])
 
   const handleOpenPicker = useCallback((brick: Brick, rect: DOMRect) => {
