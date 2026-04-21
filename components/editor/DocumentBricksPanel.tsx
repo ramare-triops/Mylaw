@@ -89,6 +89,47 @@ const SEED_BRICKS: Omit<DBBrick, 'id'>[] = [
   { title: 'Bloc signature', content: 'Pour [Partie 1]\n[Nom et signature]\n\nPour [Partie 2]\n[Nom et signature]', category: 'formule', tags: ['formules', 'check', '#15803d'], createdAt: new Date(), updatedAt: new Date() },
 ]
 
+/**
+ * Dédoublonnage défensif des briques en DB.
+ *
+ * Lorsque plusieurs briques partagent le même `title` ET le même `content`,
+ * on ne garde qu'une seule ligne : celle qui a le plus d'informations de
+ * présentation (tags `[categorie, icone, couleur]` au complet) et, à égalité,
+ * la plus récemment modifiée. Les autres — typiquement des relique des
+ * anciennes versions qui ré-insérait les seeds ou des imports Drive avec
+ * des IDs divergents — sont supprimées.
+ *
+ * Ne touche pas aux bricks dont le contenu diffère (l'utilisateur peut
+ * vouloir deux briques de même titre mais de contenu différent).
+ */
+async function dedupeBricksByTitleContent(): Promise<void> {
+  try {
+    const all = (await db.bricks.toArray()) as (DBBrick & { id: number })[]
+    const byKey = new Map<string, (DBBrick & { id: number })[]>()
+    for (const b of all) {
+      const key = `${b.title}::${b.content}`
+      if (!byKey.has(key)) byKey.set(key, [])
+      byKey.get(key)!.push(b)
+    }
+    const toDelete: number[] = []
+    for (const dups of Array.from(byKey.values())) {
+      if (dups.length < 2) continue
+      const sorted = dups.slice().sort((a, b) => {
+        const aFull = Array.isArray(a.tags) && a.tags.length >= 3 && !!a.tags[1] && !!a.tags[2] ? 1 : 0
+        const bFull = Array.isArray(b.tags) && b.tags.length >= 3 && !!b.tags[1] && !!b.tags[2] ? 1 : 0
+        if (aFull !== bFull) return bFull - aFull
+        const at = a.updatedAt instanceof Date ? a.updatedAt.getTime() : Date.parse(String(a.updatedAt ?? 0)) || 0
+        const bt = b.updatedAt instanceof Date ? b.updatedAt.getTime() : Date.parse(String(b.updatedAt ?? 0)) || 0
+        return bt - at
+      })
+      for (let i = 1; i < sorted.length; i++) toDelete.push(sorted[i].id)
+    }
+    if (toDelete.length > 0) await db.bricks.bulkDelete(toDelete)
+  } catch {
+    /* best-effort, pas critique */
+  }
+}
+
 // ─── Helpers de conversion DB ↔ UI ───────────────────────────────────────────
 
 function dbBrickToUI(b: DBBrick & { id: number }): Brick {
@@ -739,7 +780,7 @@ function BrickEditorForm({ brick, allCategories, textVars, condVars, onChangeTex
           <button onClick={() => { if (canSave) onSave({ ...brick, label: label.trim(), content: content.trim(), category, icon, color }) }}
             disabled={!canSave}
             style={{ padding: '7px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: canSave ? 'pointer' : 'not-allowed', opacity: canSave ? 1 : 0.5, border: 'none' }}
-          >{isNew ? 'Créer' : 'Enregistrer'}</button>
+          >Enregistrer</button>
         </div>
       </div>
     </div>
@@ -962,6 +1003,8 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
   const [search,          setSearch]          = useState('')
   const [filterCat,       setFilterCat]       = useState('all')
   const [showCatManager,  setShowCatManager]  = useState(false)
+  /** Confirmation visuelle après enregistrement (affichée ~2s). */
+  const [justSaved,       setJustSaved]       = useState<'created' | 'updated' | null>(null)
 
   // ── Variables partagées (textuelles + conditionnelles) ───────────────────
   // Persistées dans db.settings pour que les modifications survivent à la
@@ -1059,6 +1102,7 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
       onSave(filtered); return filtered
     })
     setSelectedBrickId(updated.id)
+    flashSaved('updated')
   }
 
   async function handleAdd(partial: Omit<Brick, 'id'>) {
@@ -1073,7 +1117,18 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
       const filtered = next.filter(g => g.bricks.length > 0)
       onSave(filtered); return filtered
     })
-    setSelectedBrickId(newId); setIsCreating(false)
+    // Ferme le formulaire de création : la brique est désormais dans la
+    // liste, l'utilisateur peut la rouvrir pour la modifier si besoin. Un
+    // seul clic (« Enregistrer ») suffit donc pour créer une nouvelle
+    // brique, plus de double confirmation.
+    setSelectedBrickId(null)
+    setIsCreating(false)
+    flashSaved('created')
+  }
+
+  function flashSaved(kind: 'created' | 'updated') {
+    setJustSaved(kind)
+    setTimeout(() => setJustSaved((v) => (v === kind ? null : v)), 2000)
   }
 
   async function handleDelete(id: string) {
@@ -1112,6 +1167,21 @@ function BricksEditorModal({ groups, allCategories, onSave, onClose, onAdd, onUp
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {justSaved && (
+              <span
+                role="status"
+                aria-live="polite"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontSize: '11px', fontWeight: 600,
+                  padding: '3px 9px', borderRadius: 'var(--radius-full)',
+                  background: '#dcfce7', color: '#15803d',
+                  transition: 'opacity 0.15s',
+                }}
+              >
+                <Check size={11} /> {justSaved === 'created' ? 'Brique créée' : 'Enregistré'}
+              </span>
+            )}
             <button onClick={() => setShowCatManager(v => !v)}
               style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '8px', border: `1.5px solid ${showCatManager ? 'var(--color-primary)' : 'var(--color-border)'}`, background: showCatManager ? 'var(--color-primary)10' : 'var(--color-surface-offset)', color: showCatManager ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s' }}
             >
@@ -1263,11 +1333,28 @@ export function DocumentBricksPanel({
 
   // ── Chargement initial depuis Dexie ──────────────────────────────────────
   const loadFromDB = useCallback(async () => {
+    // Seeding : idempotent par titre. Le flag `bricks_seeded` évite la
+    // requête quand tout est déjà en place ; mais même sans flag (DB
+    // restaurée depuis un backup incomplet, paramètre effacé manuellement,
+    // race avec le StrictMode…), on n'ajoute PAS une seconde copie d'une
+    // brique seed dont le titre existe déjà.
     const seeded = await getSetting<boolean>('bricks_seeded', false)
     if (!seeded) {
-      await db.bricks.bulkAdd(SEED_BRICKS as DBBrick[])
+      const existingTitles = new Set(
+        ((await db.bricks.toArray()) as DBBrick[]).map((b) => b.title),
+      )
+      const toSeed = SEED_BRICKS.filter((s) => !existingTitles.has(s.title))
+      if (toSeed.length > 0) {
+        await db.bricks.bulkAdd(toSeed as DBBrick[])
+      }
       await setSetting('bricks_seeded', true)
     }
+
+    // Dédoublonnage défensif : si plusieurs briques partagent exactement le
+    // même `title` et le même `content`, on ne garde que la plus « complète »
+    // (tags à 3 éléments remplis) et la plus récemment modifiée. Cible les
+    // doublons apparus par des anciennes versions qui ré-insérait des seeds.
+    await dedupeBricksByTitleContent()
 
     // Migration one-shot : ajoute targetContactType aux briques seed existantes
     // pour les utilisateurs qui ont déjà la DB v1/v2.
