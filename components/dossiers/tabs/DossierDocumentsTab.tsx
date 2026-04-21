@@ -34,8 +34,14 @@ import {
   unlinkDocumentFromDossier,
   logAudit,
   getDossierContactsWithRole,
+  getSetting,
 } from '@/lib/db';
 import { resolveIdentificationBlocks } from '@/lib/identification-blocks';
+import {
+  cabinetIdentityToContact,
+  CABINET_IDENTITY_KEY,
+  type CabinetIdentity,
+} from '@/lib/cabinet-identity';
 import type { Brick as DBBrick } from '@/types';
 import type { FieldDef } from '@/types/field-def';
 import { cn, formatDate, formatDateTime } from '@/lib/utils';
@@ -408,10 +414,11 @@ export function DossierDocumentsTab({ dossier }: Props) {
     dossierId: number
   ): Promise<string> {
     try {
-      const [dossierContacts, bricks, fieldDefs] = await Promise.all([
+      const [dossierContacts, bricks, fieldDefs, cabinet] = await Promise.all([
         getDossierContactsWithRole(dossierId),
         db.bricks.toArray() as Promise<DBBrick[]>,
         db.fieldDefs.toArray() as Promise<FieldDef[]>,
+        getSetting<CabinetIdentity | null>(CABINET_IDENTITY_KEY, null),
       ]);
       const physical = bricks.find((b) => b.identityKind === 'physical');
       const moral = bricks.find((b) => b.identityKind === 'moral');
@@ -422,6 +429,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
         })),
         identityBricks: { physical, moral },
         fieldDefs,
+        ownCounselFallback: cabinetIdentityToContact(cabinet),
       });
     } catch {
       return html;

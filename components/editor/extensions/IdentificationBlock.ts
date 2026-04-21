@@ -1,12 +1,18 @@
 /**
- * IdentificationBlock — extension TipTap (nœud block atomique)
+ * IdentificationBlock — extension TipTap (nœud inline atomique)
  *
  * Bloc d'identification d'un ou plusieurs intervenants d'un dossier. Posé
  * dans un modèle au moment de la rédaction, il reste un placeholder
- * visuel jusqu'à l'instanciation : c'est au moment où un document est
- * créé depuis le modèle dans un dossier que le bloc est remplacé par
- * l'énoncé des mentions légales de chaque intervenant porteur du rôle
- * demandé — cf. `lib/identification-blocks.ts::resolveIdentificationBlocks`.
+ * visuel (petit chip coloré, façon « variable ») jusqu'à l'instanciation :
+ * c'est au moment où un document est créé depuis le modèle dans un
+ * dossier que le bloc est remplacé par l'énoncé des mentions légales de
+ * chaque intervenant porteur du rôle demandé — cf.
+ * `lib/identification-blocks.ts::resolveIdentificationBlocks`.
+ *
+ * Inline + atom : le placeholder peut se poser n'importe où (milieu de
+ * phrase, début de paragraphe…), comme n'importe quelle variable. À la
+ * résolution, le résolveur gère le cas où l'expansion est multi-paragraphe
+ * en splittant le `<p>` contenant le marqueur.
  *
  * Attributs :
  *  - role              : rôle du dossier à aller chercher (« client »,
@@ -17,9 +23,9 @@
  *                         rôle. Par défaut le bloc reste visible pour
  *                         signaler à l'utilisateur qu'il manque un
  *                         intervenant côté dossier.
- *
- * Le nœud est `atom: true` : son contenu interne est scellé, on ne peut
- * pas venir y éditer. Le placeholder est dessiné via `renderHTML`.
+ *  - label             : libellé court à afficher dans le chip (ex.
+ *                         « Client »). Optionnel, dérivé du rôle quand
+ *                         absent.
  */
 
 import { Node, mergeAttributes } from '@tiptap/core';
@@ -29,16 +35,39 @@ export interface IdentificationBlockAttrs {
   role: DossierRole | null;
   separator: string | null;
   emptyFallback: string | null;
+  label: string | null;
 }
 
 export const IDENTIFICATION_BLOCK_DATA_ATTR = 'data-mylaw-identification-block';
 
+const ROLE_LABELS: Record<string, string> = {
+  client:           'Client',
+  adversary:        'Partie adverse',
+  ownCounsel:       'Avocat du cabinet',
+  adversaryCounsel: 'Confrère adverse',
+  collaborator:     'Collaborateur',
+  trainee:          'Stagiaire',
+  assistant:        'Assistant(e)',
+  expert:           'Expert',
+  bailiff:          'Commissaire de justice',
+  judge:            'Magistrat',
+  court:            'Juridiction',
+  witness:          'Témoin',
+  other:            'Autre',
+};
+
+export function roleLabel(role: string | null | undefined): string {
+  if (!role) return '—';
+  return ROLE_LABELS[role] ?? role;
+}
+
 export const IdentificationBlock = Node.create({
   name: 'identificationBlock',
-  group: 'block',
+  group: 'inline',
+  inline: true,
   atom: true,
   selectable: true,
-  draggable: true,
+  draggable: false,
 
   addAttributes() {
     return {
@@ -61,47 +90,86 @@ export const IdentificationBlock = Node.create({
             ? { 'data-empty-fallback': attrs.emptyFallback }
             : {},
       },
+      label: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-label'),
+        renderHTML: (attrs) => (attrs.label ? { 'data-label': attrs.label } : {}),
+      },
     };
   },
 
   parseHTML() {
     return [
+      // Tant historique (div block) que nouveau (span inline) — backward
+      // compat pour les modèles déjà enregistrés avec l'ancienne forme.
+      { tag: `span[${IDENTIFICATION_BLOCK_DATA_ATTR}]` },
       { tag: `div[${IDENTIFICATION_BLOCK_DATA_ATTR}]` },
     ];
   },
 
   renderHTML({ HTMLAttributes, node }) {
-    const role = (node.attrs.role as string | null) ?? '—';
-    const sep = (node.attrs.separator as string | null) ?? '';
-    const label = `Bloc d'identification — ${role}`;
-    const sepHint = sep
-      ? `Séparateur : ${stripHtml(sep)}`
-      : 'Séparateur par défaut';
+    const role = node.attrs.role as string | null;
+    const label = (node.attrs.label as string | null) || roleLabel(role);
+    // Rendu type chip coloré avec un liseré « primary ». Volontairement
+    // proche des `VariableField` pour que l'œil reconnaisse tout de
+    // suite un placeholder.
     return [
-      'div',
+      'span',
       mergeAttributes(HTMLAttributes, {
         [IDENTIFICATION_BLOCK_DATA_ATTR]: 'true',
         class: 'mylaw-identification-block',
-        style:
-          'border:1px dashed var(--color-primary); border-radius:6px; padding:8px 10px; margin:6px 0; background:rgba(1,105,111,0.05); color:var(--color-primary); font-size:12px; font-family:var(--font-ui);',
+        style: [
+          'display:inline-flex',
+          'align-items:center',
+          'gap:4px',
+          'padding:1px 8px',
+          'margin:0 1px',
+          'border-radius:999px',
+          'border:1px solid var(--color-primary)',
+          'background:rgba(1,105,111,0.08)',
+          'color:var(--color-primary)',
+          'font-size:0.85em',
+          'font-weight:600',
+          'font-family:var(--font-ui)',
+          'line-height:1.4',
+          'user-select:none',
+          'cursor:default',
+          'white-space:nowrap',
+        ].join(';'),
         contenteditable: 'false',
       }),
-      ['div', { style: 'font-weight:600;' }, label],
-      ['div', { style: 'opacity:0.75; font-size:11px; margin-top:2px;' }, sepHint],
+      ['span', { style: 'opacity:0.85; font-size:0.9em;' }, '¶'],
+      ['span', {}, label],
     ];
   },
 });
 
 /**
- * Petit util pour résumer le séparateur HTML en texte brut à l'intention
- * du placeholder visuel. Volontairement simple — les cas complexes
- * (listes, tableaux dans un séparateur) sont rarissimes.
+ * Produit le HTML brut d'un marqueur de bloc d'identification, prêt à
+ * être injecté via `editor.insertContent(html)`. Utilisé par le panneau
+ * de briques quand l'utilisateur clique sur une brique de type
+ * « Dossier » dans un modèle.
  */
-function stripHtml(html: string): string {
-  return html
-    .replace(/<br\s*\/?>(\s*)/gi, ' ')
-    .replace(/<\/?p[^>]*>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+export function makeIdentificationBlockHtml(
+  role: DossierRole,
+  separator?: string | null,
+  emptyFallback?: string | null,
+  label?: string | null,
+): string {
+  const attrs: string[] = [
+    `${IDENTIFICATION_BLOCK_DATA_ATTR}="true"`,
+    `data-role="${escapeAttr(role)}"`,
+  ];
+  if (separator)      attrs.push(`data-separator="${escapeAttr(separator)}"`);
+  if (emptyFallback)  attrs.push(`data-empty-fallback="${escapeAttr(emptyFallback)}"`);
+  if (label)          attrs.push(`data-label="${escapeAttr(label)}"`);
+  return `<span ${attrs.join(' ')}>​</span>`;
+}
+
+function escapeAttr(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }

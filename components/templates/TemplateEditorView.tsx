@@ -31,7 +31,6 @@ import { VariableField } from '@/components/editor/extensions/VariableField'
 import { BrickMarker } from '@/components/editor/extensions/BrickMarker'
 import { ClauseBlock } from '@/components/editor/extensions/ClauseBlock'
 import { IdentificationBlock } from '@/components/editor/extensions/IdentificationBlock'
-import type { DossierRole } from '@/types'
 import { ClausesPanel } from './ClausesPanel'
 import {
   DocumentBricksPanel,
@@ -39,10 +38,13 @@ import {
   brickContentToHtml,
 } from '@/components/editor/DocumentBricksPanel'
 import type { Brick } from '@/components/editor/DocumentBricksPanel'
+import { makeIdentificationBlockHtml } from '@/components/editor/extensions/IdentificationBlock'
 import { DRAG_FIELD_KEY } from './TemplateFieldsPanel'
 import type { TemplateField } from './TemplateFieldsPanel'
 import type { Template } from './TemplateLibrary'
 import { DOCUMENT_CATEGORIES } from '@/components/dossiers/labels'
+// `DossierRole` n'est plus utilisé ici : le rôle est porté par la brique
+// elle-même (cf. `Brick.identityRole`) et propagé au helper.
 
 interface TemplateEditorViewProps {
   template: Template
@@ -142,7 +144,9 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
   // ── Insertion d'une brique au curseur
   // Dans l'éditeur de modèles, on insère la brique sans marqueur d'intervenant :
   // un modèle doit rester générique, les variables seront remplies lors de
-  // l'utilisation dans un document.
+  // l'utilisation dans un document. Les briques « Dossier » (marquées par
+  // un `identityRole`) posent leur marqueur inline : le panneau a déjà
+  // émis le HTML approprié via `makeIdentificationBlockHtml`.
   const handleInsertBrick = useCallback((brickHtml: string, _brick?: Brick) => {
     const ed = editorRef.current
     if (!ed) return
@@ -151,28 +155,6 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
     setSaved(false)
     setTimeout(() => setVariableCount(countVariables(ed)), 50)
   }, [])
-
-  // ── Insertion d'un bloc d'identification
-  // Pose un nœud `identificationBlock` au curseur. Le bloc reste un
-  // placeholder dans l'éditeur de modèle ; il est résolu en mentions
-  // légales concrètes au moment où un document est créé depuis le
-  // modèle dans un dossier (cf. `lib/identification-blocks.ts`).
-  const handleInsertIdentificationBlock = useCallback(
-    (role: DossierRole, separatorHtml: string) => {
-      const ed = editorRef.current
-      if (!ed) return
-      ed.chain()
-        .focus()
-        .insertContent({
-          type: 'identificationBlock',
-          attrs: { role, separator: separatorHtml || null, emptyFallback: null },
-        })
-        .run()
-      setHasChanges(true)
-      setSaved(false)
-    },
-    []
-  )
 
   // ── Drag & drop
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -198,7 +180,14 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
         const brick: Brick = JSON.parse(brickRaw)
         const ed = editorRef.current
         if (!ed) return
-        const html = brickContentToHtml(brick.content)
+        const html = brick.identityRole
+          ? makeIdentificationBlockHtml(
+              brick.identityRole,
+              brick.identitySeparator,
+              null,
+              brick.label,
+            )
+          : brickContentToHtml(brick.content)
         const pos = ed.view.posAtCoords({ left: e.clientX, top: e.clientY })
         if (pos) ed.chain().focus().insertContentAt(pos.pos, html).run()
         else ed.chain().focus().insertContent(html).run()
@@ -356,7 +345,6 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
             fields={fields}
             onFieldsChange={(f) => { setFields(f); setHasChanges(true) }}
             onInsertVariable={handleInsertVariable}
-            onInsertIdentificationBlock={handleInsertIdentificationBlock}
           />
         )}
 

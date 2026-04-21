@@ -1,14 +1,19 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { User, Bell, Palette, Shield, Database, RefreshCw, Loader2, Check, FileText, Download, Trash2 } from 'lucide-react';
+import { User, Bell, Palette, Shield, Database, RefreshCw, Loader2, Check, FileText, Download, Trash2, Briefcase } from 'lucide-react';
 import { db, getSetting, setSetting } from '@/lib/db';
 import { DriveSyncSection } from './DriveSyncSection';
 import { useDrive } from '@/components/providers/DriveSyncProvider';
 import { buildBackup } from '@/lib/drive-merge';
+import {
+  CABINET_IDENTITY_KEY,
+  type CabinetIdentity as CabinetIdentityExt,
+} from '@/lib/cabinet-identity';
 
 const SECTIONS = [
   { id: 'profile',       label: 'Profil',           icon: User },
+  { id: 'cabinet',       label: 'Cabinet',           icon: Briefcase },
   { id: 'notifications', label: 'Notifications',    icon: Bell },
   { id: 'appearance',    label: 'Apparence',         icon: Palette },
   { id: 'editor',        label: 'Éditeur',           icon: FileText },
@@ -20,6 +25,37 @@ const SECTIONS = [
 type Profile    = { firstName: string; lastName: string; email: string; barreau: string; cabinet: string; phone: string };
 type Notifs     = { emailAlerts: boolean; deadlineReminders: boolean; newDocuments: boolean; weeklyDigest: boolean };
 type Appearance = { theme: string; fontSize: string; compactMode: boolean };
+
+type CabinetIdentity = CabinetIdentityExt;
+
+const DEFAULT_CABINET: CabinetIdentity = {
+  civility:          '',
+  firstName:         '',
+  lastName:          '',
+  birthDate:         '',
+  birthPlace:        '',
+  nationality:       '',
+  profession:        'Avocat',
+  barreau:           '',
+  cabinet:           '',
+  structureType:     '',
+  capital:           '',
+  siret:             '',
+  rcs:               '',
+  rcsCity:           '',
+  vatNumber:         '',
+  toque:             '',
+  email:             '',
+  phone:             '',
+  fax:               '',
+  website:           '',
+  addressStreet:     '',
+  addressComplement: '',
+  addressPostalCode: '',
+  addressCity:       '',
+  addressCountry:    'France',
+};
+
 export type EditorPrefs = {
   fontFamily:       string;
   fontSize:         string;
@@ -113,6 +149,7 @@ export function Settings() {
   const { status: driveStatus } = useDrive();
 
   const [profile,      setProfile]      = useState<Profile>(DEFAULT_PROFILE);
+  const [cabinet,      setCabinet]      = useState<CabinetIdentity>(DEFAULT_CABINET);
   const [notifs,       setNotifs]       = useState<Notifs>(DEFAULT_NOTIFS);
   const [appearance,   setAppearance]   = useState<Appearance>(DEFAULT_APPEARANCE);
   const [editorPrefs,  setEditorPrefs]  = useState<EditorPrefs>(DEFAULT_EDITOR_PREFS);
@@ -129,13 +166,28 @@ export function Settings() {
 
   async function loadFromDexie() {
     setLoading(true);
-    const [p, n, a, e] = await Promise.all([
+    const [p, c, n, a, e] = await Promise.all([
       getSetting<Profile>('profile', DEFAULT_PROFILE),
+      getSetting<CabinetIdentity>(CABINET_IDENTITY_KEY, DEFAULT_CABINET),
       getSetting<Notifs>('notifications', DEFAULT_NOTIFS),
       getSetting<Appearance>('appearance', DEFAULT_APPEARANCE),
       getSetting<EditorPrefs>('editorPrefs', DEFAULT_EDITOR_PREFS),
     ]);
-    setProfile(p); setNotifs(n); setAppearance(a); setEditorPrefs(e);
+    // Fusion des champs Profil dans Cabinet au premier chargement : les
+    // utilisateurs existants retrouvent leur nom/prénom/email/phone sans
+    // avoir à les ressaisir. `p` a priorité sur `c` quand `c` est vide,
+    // pour garantir la reprise propre.
+    const merged: CabinetIdentity = {
+      ...DEFAULT_CABINET,
+      ...c,
+      firstName: c.firstName || p.firstName,
+      lastName:  c.lastName  || p.lastName,
+      email:     c.email     || p.email,
+      phone:     c.phone     || p.phone,
+      barreau:   c.barreau   || p.barreau,
+      cabinet:   c.cabinet   || p.cabinet,
+    };
+    setProfile(p); setCabinet(merged); setNotifs(n); setAppearance(a); setEditorPrefs(e);
     setLoading(false);
   }
 
@@ -160,6 +212,7 @@ export function Settings() {
     try {
       await Promise.all([
         setSetting('profile', profile),
+        setSetting(CABINET_IDENTITY_KEY, cabinet),
         setSetting('notifications', notifs),
         setSetting('appearance', appearance),
         setSetting('editorPrefs', editorPrefs),
@@ -237,6 +290,59 @@ export function Settings() {
             <Field label="Cabinet"><input style={inputStyle} value={profile.cabinet} onChange={e => setProfile(p => ({ ...p, cabinet: e.target.value }))} placeholder="Cabinet Dupont & Associés" /></Field>
             <Field label="Téléphone"><input style={inputStyle} value={profile.phone}   onChange={e => setProfile(p => ({ ...p, phone:   e.target.value }))} placeholder="+33 1 00 00 00 00" /></Field>
           </Section>
+        )}
+
+        {activeSection === 'cabinet' && (
+          <>
+            <Section title="Identité de l'avocat" description="Fiche d'intervenant personnelle — sert à remplir le bloc « Avocat du cabinet » des modèles quand aucun intervenant ownCounsel n'est renseigné dans le dossier.">
+              <Field label="Civilité">
+                <select style={inputStyle} value={cabinet.civility} onChange={e => setCabinet(c => ({ ...c, civility: e.target.value }))}>
+                  <option value="">—</option>
+                  <option value="M.">M.</option>
+                  <option value="Mme">Mme</option>
+                </select>
+              </Field>
+              <Field label="Prénom"><input style={inputStyle} value={cabinet.firstName} onChange={e => setCabinet(c => ({ ...c, firstName: e.target.value }))} placeholder="Jean" /></Field>
+              <Field label="Nom"><input style={inputStyle} value={cabinet.lastName} onChange={e => setCabinet(c => ({ ...c, lastName: e.target.value }))} placeholder="Dupont" /></Field>
+              <Field label="Date de naissance"><input style={inputStyle} type="date" value={cabinet.birthDate} onChange={e => setCabinet(c => ({ ...c, birthDate: e.target.value }))} /></Field>
+              <Field label="Lieu de naissance"><input style={inputStyle} value={cabinet.birthPlace} onChange={e => setCabinet(c => ({ ...c, birthPlace: e.target.value }))} placeholder="Paris" /></Field>
+              <Field label="Nationalité"><input style={inputStyle} value={cabinet.nationality} onChange={e => setCabinet(c => ({ ...c, nationality: e.target.value }))} placeholder="française" /></Field>
+              <Field label="Profession"><input style={inputStyle} value={cabinet.profession} onChange={e => setCabinet(c => ({ ...c, profession: e.target.value }))} placeholder="Avocat" /></Field>
+            </Section>
+
+            <div style={{ height: '24px' }} />
+
+            <Section title="Structure d'exercice" description="Informations portées sur la première page des assignations, conclusions, conventions d'honoraires.">
+              <Field label="Barreau d'inscription"><input style={inputStyle} value={cabinet.barreau} onChange={e => setCabinet(c => ({ ...c, barreau: e.target.value }))} placeholder="Paris" /></Field>
+              <Field label="Toque / Palais"><input style={inputStyle} value={cabinet.toque} onChange={e => setCabinet(c => ({ ...c, toque: e.target.value }))} placeholder="P123" /></Field>
+              <Field label="Nom du cabinet / raison sociale"><input style={inputStyle} value={cabinet.cabinet} onChange={e => setCabinet(c => ({ ...c, cabinet: e.target.value }))} placeholder="SELARL Dupont & Associés" /></Field>
+              <Field label="Forme juridique"><input style={inputStyle} value={cabinet.structureType} onChange={e => setCabinet(c => ({ ...c, structureType: e.target.value }))} placeholder="SELARL / SELAS / AARPI / EI…" /></Field>
+              <Field label="Capital social"><input style={inputStyle} value={cabinet.capital} onChange={e => setCabinet(c => ({ ...c, capital: e.target.value }))} placeholder="10 000 €" /></Field>
+              <Field label="SIRET"><input style={inputStyle} value={cabinet.siret} onChange={e => setCabinet(c => ({ ...c, siret: e.target.value }))} placeholder="123 456 789 00012" /></Field>
+              <Field label="Numéro RCS"><input style={inputStyle} value={cabinet.rcs} onChange={e => setCabinet(c => ({ ...c, rcs: e.target.value }))} placeholder="Paris B 123 456 789" /></Field>
+              <Field label="Ville du RCS"><input style={inputStyle} value={cabinet.rcsCity} onChange={e => setCabinet(c => ({ ...c, rcsCity: e.target.value }))} placeholder="Paris" /></Field>
+              <Field label="Numéro de TVA"><input style={inputStyle} value={cabinet.vatNumber} onChange={e => setCabinet(c => ({ ...c, vatNumber: e.target.value }))} placeholder="FR12345678901" /></Field>
+            </Section>
+
+            <div style={{ height: '24px' }} />
+
+            <Section title="Coordonnées" description="">
+              <Field label="Email"><input style={inputStyle} type="email" value={cabinet.email} onChange={e => setCabinet(c => ({ ...c, email: e.target.value }))} placeholder="jean.dupont@cabinet.fr" /></Field>
+              <Field label="Téléphone"><input style={inputStyle} value={cabinet.phone} onChange={e => setCabinet(c => ({ ...c, phone: e.target.value }))} placeholder="+33 1 00 00 00 00" /></Field>
+              <Field label="Fax"><input style={inputStyle} value={cabinet.fax} onChange={e => setCabinet(c => ({ ...c, fax: e.target.value }))} placeholder="+33 1 00 00 00 01" /></Field>
+              <Field label="Site web"><input style={inputStyle} value={cabinet.website} onChange={e => setCabinet(c => ({ ...c, website: e.target.value }))} placeholder="https://cabinet.fr" /></Field>
+            </Section>
+
+            <div style={{ height: '24px' }} />
+
+            <Section title="Adresse postale du cabinet" description="">
+              <Field label="Rue"><input style={inputStyle} value={cabinet.addressStreet} onChange={e => setCabinet(c => ({ ...c, addressStreet: e.target.value }))} placeholder="12 rue de la Paix" /></Field>
+              <Field label="Complément"><input style={inputStyle} value={cabinet.addressComplement} onChange={e => setCabinet(c => ({ ...c, addressComplement: e.target.value }))} placeholder="Bâtiment A, 3e étage" /></Field>
+              <Field label="Code postal"><input style={inputStyle} value={cabinet.addressPostalCode} onChange={e => setCabinet(c => ({ ...c, addressPostalCode: e.target.value }))} placeholder="75001" /></Field>
+              <Field label="Ville"><input style={inputStyle} value={cabinet.addressCity} onChange={e => setCabinet(c => ({ ...c, addressCity: e.target.value }))} placeholder="Paris" /></Field>
+              <Field label="Pays"><input style={inputStyle} value={cabinet.addressCountry} onChange={e => setCabinet(c => ({ ...c, addressCountry: e.target.value }))} placeholder="France" /></Field>
+            </Section>
+          </>
         )}
 
         {activeSection === 'notifications' && (

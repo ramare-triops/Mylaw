@@ -282,6 +282,22 @@ export interface Brick {
    * posé sur les seeds.
    */
   identityKind?: 'physical' | 'moral';
+  /**
+   * Marqueur qui transforme une brique en « bloc d'identification » lié à
+   * un rôle du dossier. Quand elle est insérée dans un modèle, la brique
+   * ne dépose pas son contenu brut mais un placeholder qui sera résolu à
+   * l'instanciation du modèle dans un dossier : les intervenants du
+   * dossier portant ce rôle (avec leur variante physique / morale selon
+   * `contact.type`) sont interpolés en lieu et place. Utilisé pour
+   * « Client », « Partie adverse », « Avocat du cabinet », etc.
+   */
+  identityRole?: DossierRole;
+  /**
+   * Séparateur HTML posé entre deux intervenants quand le rôle en compte
+   * plusieurs dans le dossier. Exclusivement pertinent quand
+   * `identityRole` est défini. Par défaut : un retour à la ligne simple.
+   */
+  identitySeparator?: string;
   createdAt: Date;
   updatedAt: Date;
 }

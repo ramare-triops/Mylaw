@@ -22,10 +22,7 @@ import {
   type TextVar,
   type CondVar,
 } from '@/lib/brick-variables'
-import {
-  IdentificationBlockDialog,
-  type IdentificationBlockPayload,
-} from './IdentificationBlockDialog'
+import { makeIdentificationBlockHtml } from './extensions/IdentificationBlock'
 
 // ─── Types UI ────────────────────────────────────────────────────────────────
 
@@ -40,6 +37,15 @@ export interface Brick {
   targetContactType?: ContactType
   /** Si défini, rôles dossier éligibles pour la pré-sélection. */
   targetRoles?: DossierRole[]
+  /**
+   * Quand défini, la brique est un bloc d'identification lié au rôle du
+   * dossier indiqué : son insertion pose un marqueur Tiptap qui sera
+   * résolu à l'instanciation du modèle dans un dossier, et non le
+   * contenu brut de `content`.
+   */
+  identityRole?: DossierRole
+  /** Séparateur HTML entre deux intervenants de même rôle (bloc d'identification). */
+  identitySeparator?: string
 }
 
 export interface BrickGroup {
@@ -55,6 +61,7 @@ export const DRAG_BRICK_KEY = 'application/x-mylaw-brick'
 
 // Catégories système (toutes éditables)
 const SYSTEM_CATEGORIES = [
+  { id: 'dossier',   label: 'Dossier',        color: '#01696f' },
   { id: 'parties',   label: 'Parties',       color: '#01696f' },
   { id: 'structure', label: 'Structure',      color: '#4f46e5' },
   { id: 'formules',  label: 'Formules types', color: '#15803d' },
@@ -82,6 +89,21 @@ const COLOR_OPTIONS = [
 // ─── Briques pré-installées (seed) ───────────────────────────────────────────
 
 const SEED_BRICKS: Omit<DBBrick, 'id'>[] = [
+  // Briques « Dossier » — leur contenu est synthétique, généré à
+  // l'instanciation du modèle dans un dossier à partir des intervenants
+  // du rôle correspondant. Le champ `content` sert uniquement de
+  // description visible côté éditeur de briques.
+  { title: 'Client',              content: '→ Identification du client du dossier',                       category: 'clause', tags: ['dossier', 'user',     '#01696f'], identityRole: 'client',           identitySeparator: '<p>et</p>', createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Partie adverse',      content: '→ Identification de la partie adverse du dossier',           category: 'clause', tags: ['dossier', 'users',    '#01696f'], identityRole: 'adversary',        identitySeparator: '<p>et</p>', createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Avocat du cabinet',   content: '→ Identification de l\'avocat du cabinet (à défaut : paramètres > Cabinet)', category: 'clause', tags: ['dossier', 'scale',    '#01696f'], identityRole: 'ownCounsel',       identitySeparator: '<p>et</p>', createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Confrère adverse',    content: '→ Identification du confrère adverse',                         category: 'clause', tags: ['dossier', 'scale',    '#01696f'], identityRole: 'adversaryCounsel', identitySeparator: '<p>et</p>', createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Expert judiciaire',   content: '→ Identification de l\'expert désigné',                       category: 'clause', tags: ['dossier', 'briefcase','#01696f'], identityRole: 'expert',           identitySeparator: '<p>et</p>', createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Magistrat',           content: '→ Identification du magistrat',                                category: 'clause', tags: ['dossier', 'gavel',    '#01696f'], identityRole: 'judge',            identitySeparator: '<p>et</p>', createdAt: new Date(), updatedAt: new Date() },
+  { title: 'Juridiction',         content: '→ Identification de la juridiction',                           category: 'clause', tags: ['dossier', 'gavel',    '#01696f'], identityRole: 'court',            identitySeparator: '<p>et</p>', createdAt: new Date(), updatedAt: new Date() },
+  // Variantes d'identité — servent de « gabarits » aux blocs Dossier
+  // ci-dessus : physique pour un Contact.type === 'physical', morale pour
+  // 'moral'. Restent disponibles dans la catégorie Parties pour être
+  // insérées directement via le picker d'intervenant, comme avant.
   { title: 'Personne physique', content: '[M/Mme] **[Nom] [Prénom]**, [né/née] le [Date de naissance] à [Lieu de naissance], de nationalité [Nationalité], demeurant au [Adresse]', category: 'clause', tags: ['parties', 'user', '#01696f'], targetContactType: 'physical', identityKind: 'physical', createdAt: new Date(), updatedAt: new Date() },
   { title: 'Personne morale', content: 'La société **[Nom de la société]**, [Forme juridique] au capital de [Capital social] euros, immatriculée au RCS de [Ville RCS] sous le numéro [Numéro RCS], dont le siège social est sis [Adresse du siège], représentée par [Représentant légal], en sa qualité de [Qualité du représentant]', category: 'clause', tags: ['parties', 'building', '#7c3aed'], targetContactType: 'moral', identityKind: 'moral', createdAt: new Date(), updatedAt: new Date() },
   { title: 'Ayant pour avocat', content: "Ayant pour avocat **Maître [Nom de l'avocat]**, inscrit(e) au Barreau de [Ville du barreau], dont le cabinet est sis [Adresse du cabinet]", category: 'clause', tags: ['parties', 'scale', '#be185d'], targetContactType: 'physical', targetRoles: ['ownCounsel', 'adversaryCounsel'], createdAt: new Date(), updatedAt: new Date() },
@@ -151,6 +173,8 @@ function dbBrickToUI(b: DBBrick & { id: number }): Brick {
     category: uiCategory, icon, color,
     targetContactType: b.targetContactType,
     targetRoles: b.targetRoles,
+    identityRole: b.identityRole,
+    identitySeparator: b.identitySeparator,
   }
 }
 
@@ -678,6 +702,8 @@ function BrickEditorForm({ brick, allCategories, textVars, condVars, onChangeTex
   const [icon,          setIcon]          = useState(brick.icon)
   const [color,         setColor]         = useState(brick.color)
   const [showPreview,   setShowPreview]   = useState(false)
+  const [identityRole,      setIdentityRole]      = useState<DossierRole | ''>(brick.identityRole ?? '')
+  const [identitySeparator, setIdentitySeparator] = useState<string>(brick.identitySeparator ?? '')
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -707,7 +733,12 @@ function BrickEditorForm({ brick, allCategories, textVars, condVars, onChangeTex
   }
 
   const inp: React.CSSProperties = { width: '100%', padding: '7px 10px', fontSize: '13px', background: 'var(--color-surface-offset)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text)', outline: 'none' }
-  const canSave = label.trim() !== '' && content.trim() !== ''
+  // Quand la brique est un bloc d'identification, `content` devient
+  // purement descriptif (il n'est pas inséré). On relâche alors la
+  // contrainte de non-vacuité pour que l'utilisateur puisse sauvegarder
+  // même avec une description vide.
+  const isIdentityBrick = identityRole !== ''
+  const canSave = label.trim() !== '' && (isIdentityBrick || content.trim() !== '')
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -743,13 +774,30 @@ function BrickEditorForm({ brick, allCategories, textVars, condVars, onChangeTex
           </div>
           <FormatToolbar onFormat={applyFormat} />
           <textarea ref={textareaRef} value={content} onChange={e => setContent(e.target.value)}
-            placeholder={`Rédigez le contenu…\n**Gras** __Souligné__ _Italique_ ^^MAJUSCULES^^\n[Variable] [M/Mme] [né/née]`}
-            rows={5}
-            style={{ ...inp, resize: 'vertical', lineHeight: 1.6, fontFamily: 'monospace', fontSize: '12px', borderRadius: '0 0 6px 6px', borderTop: 'none' }}
+            placeholder={isIdentityBrick
+              ? 'Description (facultative). Le contenu effectif est généré à l\'instanciation.'
+              : `Rédigez le contenu…\n**Gras** __Souligné__ _Italique_ ^^MAJUSCULES^^\n[Variable] [M/Mme] [né/née]`}
+            rows={isIdentityBrick ? 2 : 5}
+            disabled={isIdentityBrick}
+            style={{
+              ...inp, resize: 'vertical', lineHeight: 1.6, fontFamily: 'monospace',
+              fontSize: '12px', borderRadius: '0 0 6px 6px', borderTop: 'none',
+              opacity: isIdentityBrick ? 0.6 : 1,
+            }}
           />
-          {showPreview && <BrickPreview content={content} color={color} />}
+          {showPreview && !isIdentityBrick && <BrickPreview content={content} color={color} />}
         </div>
-        <VariableManager textVars={textVars} condVars={condVars} onChangeTextVars={onChangeTextVars} onChangeCondVars={onChangeCondVars} onInsertTag={insertTag} />
+
+        <IdentityBlockFields
+          role={identityRole}
+          separator={identitySeparator}
+          onRoleChange={setIdentityRole}
+          onSeparatorChange={setIdentitySeparator}
+        />
+
+        {!isIdentityBrick && (
+          <VariableManager textVars={textVars} condVars={condVars} onChangeTextVars={onChangeTextVars} onChangeCondVars={onChangeCondVars} onInsertTag={insertTag} />
+        )}
       </div>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
         <div>
@@ -770,12 +818,135 @@ function BrickEditorForm({ brick, allCategories, textVars, condVars, onChangeTex
             style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
           >Annuler</button>
           <button
-            onClick={() => { if (canSave) onSave({ ...brick, label: label.trim(), content: content.trim(), category, icon, color }) }}
+            onClick={() => {
+              if (!canSave) return
+              onSave({
+                ...brick,
+                label:             label.trim(),
+                content:           content.trim(),
+                category,
+                icon,
+                color,
+                identityRole:      identityRole || undefined,
+                identitySeparator: identityRole ? (identitySeparator || undefined) : undefined,
+              })
+            }}
             disabled={!canSave}
             style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: canSave ? 'pointer' : 'not-allowed', opacity: canSave ? 1 : 0.5 }}
           >Enregistrer</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── IdentityBlockFields ──────────────────────────────────────────────────────
+// Section du formulaire d'édition d'une brique dédiée aux « blocs
+// d'identification » : rôle du dossier cible + séparateur HTML entre
+// intervenants. Quand le rôle est vide, la brique est une brique
+// normale et ces champs n'influencent rien.
+
+const IDENTITY_ROLE_OPTIONS: Array<{ value: DossierRole; label: string }> = [
+  { value: 'client',           label: 'Client' },
+  { value: 'adversary',        label: 'Partie adverse' },
+  { value: 'ownCounsel',       label: 'Avocat du cabinet' },
+  { value: 'adversaryCounsel', label: 'Confrère adverse' },
+  { value: 'expert',           label: 'Expert' },
+  { value: 'bailiff',          label: 'Commissaire de justice' },
+  { value: 'judge',            label: 'Magistrat' },
+  { value: 'court',            label: 'Juridiction' },
+  { value: 'witness',          label: 'Témoin' },
+  { value: 'collaborator',     label: 'Collaborateur' },
+  { value: 'trainee',          label: 'Stagiaire' },
+  { value: 'assistant',        label: 'Assistant(e)' },
+  { value: 'other',            label: 'Autre' },
+]
+
+function separatorHtmlToText(html: string): string {
+  if (!html) return ''
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?p[^>]*>/gi, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .trim()
+}
+
+function separatorTextToHtml(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  const safe = trimmed
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  return `<p>${safe.replace(/\n/g, '<br>')}</p>`
+}
+
+function IdentityBlockFields({
+  role,
+  separator,
+  onRoleChange,
+  onSeparatorChange,
+}: {
+  role: DossierRole | ''
+  separator: string
+  onRoleChange: (r: DossierRole | '') => void
+  onSeparatorChange: (s: string) => void
+}) {
+  const [sepText, setSepText] = useState(separatorHtmlToText(separator))
+  // Maintient la cohérence texte ↔ HTML quand le parent remplace le
+  // séparateur (ex. ouverture d'une autre brique sans démonter la form).
+  useEffect(() => { setSepText(separatorHtmlToText(separator)) }, [separator])
+
+  const inp: React.CSSProperties = {
+    width: '100%', padding: '7px 10px', fontSize: '12px',
+    background: 'var(--color-surface-offset)',
+    border: '1px solid var(--color-border)',
+    borderRadius: 'var(--radius-md)',
+    color: 'var(--color-text)', outline: 'none',
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px dashed var(--color-border)', background: 'var(--color-surface-offset)30' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>Bloc d'identification du dossier</p>
+          <p style={{ fontSize: '10px', color: 'var(--color-text-muted)', margin: '2px 0 0' }}>
+            À l'insertion dans un modèle, cette brique pose un placeholder qui s'expansera automatiquement à partir des intervenants du dossier portant ce rôle.
+          </p>
+        </div>
+      </div>
+
+      <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        Rôle ciblé dans le dossier
+        <select
+          value={role}
+          onChange={(e) => onRoleChange(e.target.value as DossierRole | '')}
+          style={inp}
+        >
+          <option value="">Aucun — brique classique</option>
+          {IDENTITY_ROLE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </label>
+
+      {role !== '' && (
+        <label style={{ fontSize: '11px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          Séparateur entre plusieurs intervenants
+          <textarea
+            value={sepText}
+            onChange={(e) => {
+              setSepText(e.target.value)
+              onSeparatorChange(separatorTextToHtml(e.target.value))
+            }}
+            rows={2}
+            placeholder="ex : et ; ainsi que ; , son épouse ;"
+            style={{ ...inp, resize: 'vertical', fontSize: '12px', lineHeight: 1.4 }}
+          />
+        </label>
+      )}
     </div>
   )
 }
@@ -1291,14 +1462,6 @@ interface DocumentBricksPanelProps {
   fields?: TemplateField[]
   onFieldsChange?: (fields: TemplateField[]) => void
   onInsertVariable?: (name: string) => void
-  /**
-   * Active l'onglet « Blocs » (insertion de blocs d'identification
-   * récupérant les intervenants du dossier à l'instanciation du modèle).
-   * Uniquement fourni en mode éditeur de modèle — sans effet côté
-   * éditeur de document où les blocs sont inutiles (les intervenants
-   * sont déjà résolus).
-   */
-  onInsertIdentificationBlock?: (role: DossierRole, separatorHtml: string) => void
 }
 
 export function DocumentBricksPanel({
@@ -1308,17 +1471,32 @@ export function DocumentBricksPanel({
   fields,
   onFieldsChange,
   onInsertVariable,
-  onInsertIdentificationBlock,
 }: DocumentBricksPanelProps) {
   const fieldsTabEnabled = !!(fields && onFieldsChange && onInsertVariable)
-  const blocksTabEnabled = !!onInsertIdentificationBlock
   const [groups,         setGroups]         = useState<BrickGroup[]>([])
-  const [allCategories,  setAllCategories]  = useState<CategoryDef[]>([...SYSTEM_CATEGORIES.map(c => ({ ...c, iconName: c.id === 'parties' ? 'users' : c.id === 'structure' ? 'align-left' : c.id === 'formules' ? 'file-text' : 'blocks' }))])
-  const [tab,            setTab]            = useState<'bricks' | 'fields' | 'blocks'>('bricks')
+  const [allCategories,  setAllCategories]  = useState<CategoryDef[]>([...SYSTEM_CATEGORIES.map(c => ({ ...c, iconName: c.id === 'dossier' ? 'users' : c.id === 'parties' ? 'users' : c.id === 'structure' ? 'align-left' : c.id === 'formules' ? 'file-text' : 'blocks' }))])
+  const [tab,            setTab]            = useState<'bricks' | 'fields'>('bricks')
   const [showEditor,     setShowEditor]     = useState(false)
   const [loaded,         setLoaded]         = useState(false)
   const [picker,         setPicker]         = useState<{ brick: Brick; rect: { top: number; left: number } } | null>(null)
-  const [idBlockDialog,  setIdBlockDialog]  = useState<{ role?: DossierRole } | null>(null)
+
+  /**
+   * Matérialise le contenu inséré quand l'utilisateur clique ou drag
+   * une brique. Les briques porteuses d'un `identityRole` posent un
+   * marqueur inline au lieu de leur contenu brut — ce placeholder sera
+   * résolu à l'instanciation du modèle dans un dossier.
+   */
+  const brickToInsertHtml = useCallback((b: Brick): string => {
+    if (b.identityRole) {
+      return makeIdentificationBlockHtml(
+        b.identityRole,
+        b.identitySeparator,
+        null,
+        b.label,
+      )
+    }
+    return brickContentToHtml(b.content)
+  }, [])
 
   const handleOpenPicker = useCallback((brick: Brick, rect: DOMRect) => {
     setPicker({
@@ -1438,7 +1616,15 @@ export function DocumentBricksPanel({
   const handleUpdate = useCallback(async (updated: Brick) => {
     const numId = Number(updated.id); if (!numId) return
     const existing = await db.bricks.get(numId); if (!existing) return
-    await db.bricks.put({ ...existing, title: updated.label, content: updated.content, tags: [updated.category, updated.icon, updated.color], updatedAt: new Date() } as DBBrick)
+    await db.bricks.put({
+      ...existing,
+      title:             updated.label,
+      content:           updated.content,
+      tags:              [updated.category, updated.icon, updated.color],
+      identityRole:      updated.identityRole,
+      identitySeparator: updated.identitySeparator,
+      updatedAt:         new Date(),
+    } as DBBrick)
   }, [])
 
   const handleDelete = useCallback(async (id: string) => {
@@ -1543,11 +1729,6 @@ export function DocumentBricksPanel({
                 {fields!.length > 0 && <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 4px', fontWeight: 700 }}>{fields!.length}</span>}
               </button>
             )}
-            {blocksTabEnabled && (
-              <button style={tabStyle(tab === 'blocks')} onClick={() => setTab('blocks')}>
-                <Users size={10} /> Blocs
-              </button>
-            )}
           </div>
         </div>
 
@@ -1560,7 +1741,7 @@ export function DocumentBricksPanel({
               <BrickGroupSection
                 key={g.id}
                 group={g}
-                onInsert={b => onInsertBrick(brickContentToHtml(b.content), b)}
+                onInsert={b => onInsertBrick(brickToInsertHtml(b), b)}
                 onOpenPicker={disableIntervenantPicker ? undefined : handleOpenPicker}
                 defaultOpen={i === 0}
               />
@@ -1574,15 +1755,6 @@ export function DocumentBricksPanel({
             onChange={onFieldsChange!}
             onInsertVariable={onInsertVariable!}
           />
-        )}
-
-        {tab === 'blocks' && blocksTabEnabled && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
-            <p style={{ fontSize: '10px', color: 'var(--color-text-faint)', marginBottom: '10px', lineHeight: 1.5 }}>
-              Un bloc se remplit automatiquement à l'instanciation du modèle dans un dossier, à partir des intervenants du rôle choisi.
-            </p>
-            <IdentificationBlockPresets onPick={(role) => setIdBlockDialog({ role })} />
-          </div>
         )}
 
         {tab === 'bricks' && (
@@ -1628,59 +1800,6 @@ export function DocumentBricksPanel({
         />
       )}
 
-      {idBlockDialog && onInsertIdentificationBlock && (
-        <IdentificationBlockDialog
-          open={true}
-          initial={{ role: idBlockDialog.role }}
-          onClose={() => setIdBlockDialog(null)}
-          onSubmit={(payload: IdentificationBlockPayload) => {
-            onInsertIdentificationBlock(payload.role, payload.separator)
-            setIdBlockDialog(null)
-          }}
-        />
-      )}
     </>
-  )
-}
-
-// ─── Liste des presets de blocs d'identification ─────────────────────────────
-// Dans l'onglet « Blocs » de la boîte à outils (mode éditeur de modèle).
-// Un clic ouvre le dialog de config, pré-rempli avec le rôle choisi.
-
-const ID_BLOCK_PRESETS: Array<{ role: DossierRole; label: string; icon: 'user' | 'gavel' | 'scale' | 'users' }> = [
-  { role: 'client',           label: 'Client',              icon: 'user'  },
-  { role: 'adversary',        label: 'Partie adverse',      icon: 'users' },
-  { role: 'ownCounsel',       label: 'Avocat du cabinet',   icon: 'scale' },
-  { role: 'adversaryCounsel', label: 'Confrère adverse',    icon: 'scale' },
-  { role: 'judge',            label: 'Magistrat',           icon: 'gavel' },
-  { role: 'court',            label: 'Juridiction',         icon: 'gavel' },
-]
-
-function IdentificationBlockPresets({ onPick }: { onPick: (role: DossierRole) => void }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-      {ID_BLOCK_PRESETS.map((p) => (
-        <button
-          key={p.role}
-          type="button"
-          onClick={() => onPick(p.role)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '8px',
-            padding: '8px 10px', borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--color-border)',
-            background: 'var(--color-surface-offset)',
-            color: 'var(--color-text)', fontSize: 'var(--text-xs)',
-            fontWeight: 500, cursor: 'pointer', textAlign: 'left',
-            transition: 'all 0.12s',
-          }}
-          onMouseEnter={(e) => { const b = e.currentTarget; b.style.borderColor = 'var(--color-primary)'; b.style.color = 'var(--color-primary)' }}
-          onMouseLeave={(e) => { const b = e.currentTarget; b.style.borderColor = 'var(--color-border)'; b.style.color = 'var(--color-text)' }}
-        >
-          <BrickIcon name={p.icon === 'user' ? 'user' : p.icon === 'gavel' ? 'gavel' : p.icon === 'scale' ? 'scale' : 'users'} size={13} />
-          <span style={{ flex: 1 }}>Bloc — {p.label}</span>
-          <Plus size={12} style={{ opacity: 0.5 }} />
-        </button>
-      ))}
-    </div>
   )
 }
