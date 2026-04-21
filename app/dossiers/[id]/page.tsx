@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { db } from '@/lib/db';
+import { db, markDossierOpened } from '@/lib/db';
 import { DossierDetail } from '@/components/dossiers/DossierDetail';
 import type { Dossier } from '@/types';
 
@@ -26,7 +26,12 @@ export default function DossierDetailPage() {
       .get(dossierId)
       .then((d) => {
         if (!d) setError('Dossier introuvable.');
-        else setDossier(d);
+        else {
+          setDossier(d);
+          // Horodatage local (non-synchronisé) de la dernière ouverture,
+          // utilisé par la liste pour le tri « Dernière ouverture ».
+          void markDossierOpened(dossierId);
+        }
       })
       .catch(() => setError('Impossible de charger le dossier.'))
       .finally(() => setLoading(false));

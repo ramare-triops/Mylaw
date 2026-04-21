@@ -37,6 +37,9 @@ const INTERNAL_SETTING_KEYS_DB = new Set<string>([
   'last_synced_at',
   'last_sync_error',
   'last_sync_success_at',
+  // Horodatages « dernière ouverture » par dossier — strictement locaux,
+  // par appareil. Ne pas propager via Drive.
+  'dossier_last_opened_v1',
 ]);
 
 /**
@@ -410,6 +413,27 @@ export async function saveDossier(dossier: Dossier): Promise<number> {
   return Number(id);
 }
 
+/**
+ * Horodatages « dernière ouverture » par dossier, stockés localement en
+ * `db.settings` sous la clé `dossier_last_opened_v1` (map id → ISO
+ * string). Cette clé est dans `INTERNAL_SETTING_KEYS` : elle ne voyage
+ * pas via Drive, chaque appareil conserve son propre historique d'accès.
+ */
+const DOSSIER_LAST_OPENED_KEY = 'dossier_last_opened_v1';
+export type DossierLastOpenedMap = Record<number, string>;
+
+export async function getDossierLastOpenedMap(): Promise<DossierLastOpenedMap> {
+  const v = await getSetting<unknown>(DOSSIER_LAST_OPENED_KEY, null);
+  if (!v || typeof v !== 'object') return {};
+  return v as DossierLastOpenedMap;
+}
+
+export async function markDossierOpened(id: number, when: Date = new Date()): Promise<void> {
+  const map = await getDossierLastOpenedMap();
+  map[id] = when.toISOString();
+  await setSetting(DOSSIER_LAST_OPENED_KEY, map);
+}
+
 export async function deleteDossier(id: number): Promise<void> {
   // On détache les documents mais on ne les supprime pas (ils restent dans la GED).
   const docs = await db.documents.where('dossierId').equals(id).toArray();
@@ -427,6 +451,12 @@ export async function deleteDossier(id: number): Promise<void> {
   await db.attachments.where('dossierId').equals(id).delete();
   await db.documentLinks.where('dossierId').equals(id).delete();
   await db.dossiers.delete(id);
+  // Nettoyage de l'horodatage local d'ouverture pour ce dossier.
+  const openedMap = await getDossierLastOpenedMap();
+  if (openedMap[id] !== undefined) {
+    delete openedMap[id];
+    await setSetting(DOSSIER_LAST_OPENED_KEY, openedMap);
+  }
   await logAudit({
     dossierId: id,
     entityType: 'dossier',

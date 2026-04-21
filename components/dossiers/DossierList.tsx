@@ -13,8 +13,16 @@ import {
   Filter,
   ChevronDown,
   ChevronUp,
+  Clock,
 } from 'lucide-react';
-import { db, saveDossier, deleteDossier, getSetting, setSetting } from '@/lib/db';
+import {
+  db,
+  saveDossier,
+  deleteDossier,
+  getSetting,
+  setSetting,
+  type DossierLastOpenedMap,
+} from '@/lib/db';
 import { cn, formatDate } from '@/lib/utils';
 import { NewDossierDialog } from './NewDossierDialog';
 import {
@@ -29,6 +37,8 @@ type TypeFilter = DossierType | 'all';
 
 // Colonnes triables de la liste des dossiers. L'ordre est celui des
 // cellules du tableau — sauf les actions qui ne sont pas triables.
+// `lastOpened` n'a pas de cellule visible : il est piloté par le bouton
+// « Dernière ouverture » de la barre d'outils.
 type SortColumn =
   | 'reference'
   | 'name'
@@ -36,7 +46,8 @@ type SortColumn =
   | 'status'
   | 'docs'
   | 'time'
-  | 'updated';
+  | 'updated'
+  | 'lastOpened';
 type SortDirection = 'asc' | 'desc';
 interface SortState {
   column: SortColumn;
@@ -53,7 +64,8 @@ function isSortColumn(v: unknown): v is SortColumn {
     v === 'status' ||
     v === 'docs' ||
     v === 'time' ||
-    v === 'updated'
+    v === 'updated' ||
+    v === 'lastOpened'
   );
 }
 function isSortDirection(v: unknown): v is SortDirection {
@@ -98,11 +110,20 @@ export function DossierList() {
     void setSetting(SORT_SETTING_KEY, sort);
   }, [sort, sortLoaded]);
 
+  function defaultDirectionFor(col: SortColumn): SortDirection {
+    // Colonnes « temporelles » ou numériques : desc est l'intuition
+    // première (le plus récent / le plus grand d'abord). Colonnes
+    // textuelles : asc alphabétique.
+    return col === 'updated' || col === 'lastOpened' || col === 'docs' || col === 'time'
+      ? 'desc'
+      : 'asc';
+  }
+
   function toggleSort(column: SortColumn) {
     setSort((prev) =>
       prev.column === column
         ? { column, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
-        : { column, direction: 'asc' }
+        : { column, direction: defaultDirectionFor(column) }
     );
   }
 
@@ -121,6 +142,14 @@ export function DossierList() {
   );
   const allDocs = useLiveQuery(() => db.documents.toArray(), []);
   const allTimes = useLiveQuery(() => db.timeEntries.toArray(), []);
+
+  // Horodatages locaux « dernière ouverture » par dossier. Lu en live
+  // pour que le tri reflète instantanément un aller-retour vers un détail.
+  const lastOpenedMap = useLiveQuery<DossierLastOpenedMap>(async () => {
+    const row = await db.settings.get('dossier_last_opened_v1');
+    const v = row?.value;
+    return v && typeof v === 'object' ? (v as DossierLastOpenedMap) : {};
+  }, []) ?? {};
 
   // Filet de sécurité d'affichage : on écarte les enregistrements qui
   // ne portent pas la forme attendue d'un Dossier. Cela protège la page
@@ -193,6 +222,13 @@ export function DossierList() {
           return byNum(docsByDossier.get(a.id!) ?? 0, docsByDossier.get(b.id!) ?? 0);
         case 'time':
           return byNum(timesByDossier.get(a.id!) ?? 0, timesByDossier.get(b.id!) ?? 0);
+        case 'lastOpened': {
+          // Dossiers jamais ouverts localement : timestamp 0 → relégués
+          // en bas en desc, en haut en asc.
+          const ta = a.id != null && lastOpenedMap[a.id] ? Date.parse(lastOpenedMap[a.id]) : 0;
+          const tb = b.id != null && lastOpenedMap[b.id] ? Date.parse(lastOpenedMap[b.id]) : 0;
+          return byNum(ta, tb);
+        }
         case 'updated':
         default:
           return byNum(
@@ -338,6 +374,8 @@ export function DossierList() {
               </MenuItem>
             ))}
           </FilterMenu>
+
+          <SortByLastOpenedButton sort={sort} onSort={toggleSort} />
         </div>
 
         {/* Header row */}
@@ -591,6 +629,48 @@ function SortHeader({
           <ChevronUp className="w-3 h-3" />
         ) : (
           <ChevronDown className="w-3 h-3" />
+        )
+      ) : (
+        <ChevronDown className="w-3 h-3 opacity-25" />
+      )}
+    </button>
+  );
+}
+
+/**
+ * Bouton de la barre d'outils qui pilote le tri « Dernière ouverture ».
+ * `lastOpened` n'a pas de colonne visible dans le tableau : l'horodatage
+ * vit en settings local et ne sert qu'au tri. Le comportement du bouton
+ * reste cohérent avec les en-têtes cliquables : premier clic → desc (le
+ * plus récent en haut, ce qui est la lecture attendue), deuxième clic
+ * → asc.
+ */
+function SortByLastOpenedButton({
+  sort,
+  onSort,
+}: {
+  sort: SortState;
+  onSort: (c: SortColumn) => void;
+}) {
+  const active = sort.column === 'lastOpened';
+  return (
+    <button
+      type="button"
+      onClick={() => onSort('lastOpened')}
+      title="Trier par dernière ouverture"
+      className={cn(
+        'flex items-center gap-1.5 px-3 py-2 text-sm rounded-md border transition-colors',
+        'border-[var(--color-border)] bg-[var(--color-surface-raised)]',
+        'text-[var(--color-text)] hover:bg-[var(--color-border)]',
+        active && 'border-[var(--color-primary)] text-[var(--color-primary)]'
+      )}
+    >
+      <Clock className="w-4 h-4" /> Dernière ouverture{' '}
+      {active ? (
+        sort.direction === 'asc' ? (
+          <ChevronUp className="w-3 h-3 opacity-80" />
+        ) : (
+          <ChevronDown className="w-3 h-3 opacity-80" />
         )
       ) : (
         <ChevronDown className="w-3 h-3 opacity-25" />

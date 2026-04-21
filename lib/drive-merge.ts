@@ -25,6 +25,9 @@ export const INTERNAL_SETTING_KEYS = new Set<string>([
   'last_synced_at',
   'last_sync_error',
   'last_sync_success_at',
+  // Horodatages « dernière ouverture » par dossier — par définition
+  // locaux, par appareil.
+  'dossier_last_opened_v1',
 ]);
 
 // ─── Extraction d'un timestamp comparable ───────────────────────────────────
