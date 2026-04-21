@@ -1471,12 +1471,21 @@ export function DocumentBricksPanel({
   const displayGroups = groups.filter(g => g.bricks.length > 0)
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
-    flex: 1, padding: '6px 4px', fontSize: 'var(--text-xs)',
+    flex: 1,
+    minWidth: 0,
+    padding: '6px 2px',
+    // Avec 3 onglets (« Bibliothèque », « Champs », « Mes briques »), on
+    // rétrécit la typo pour que les 3 libellés tiennent sur la ligne de
+    // 272 px sans rogner le texte ni le badge compteur.
+    fontSize: '10px',
     fontWeight: active ? 600 : 400,
     color: active ? 'var(--color-primary)' : 'var(--color-text-muted)',
     background: active ? 'var(--color-surface)' : 'transparent',
     borderBottom: active ? '2px solid var(--color-primary)' : '2px solid transparent',
-    cursor: 'pointer', transition: 'all 0.12s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+    cursor: 'pointer', transition: 'all 0.12s',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
   })
 
   if (!loaded) return (
@@ -1498,17 +1507,19 @@ export function DocumentBricksPanel({
               <Plus size={10} /> Nouvelle
             </button>
           </div>
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', marginLeft: '-14px', marginRight: '-14px', paddingLeft: '14px', paddingRight: '14px' }}>
-            <button style={tabStyle(tab === 'library')} onClick={() => setTab('library')}><Blocks size={11} /> Bibliothèque</button>
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', marginLeft: '-14px', marginRight: '-14px', paddingLeft: '6px', paddingRight: '6px' }}>
+            <button style={tabStyle(tab === 'library')} onClick={() => setTab('library')}>
+              <Blocks size={10} /> Bibliothèque
+            </button>
             {fieldsTabEnabled && (
               <button style={tabStyle(tab === 'fields')} onClick={() => setTab('fields')}>
-                <Tag size={11} /> Champs
-                {fields!.length > 0 && <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 5px', fontWeight: 700 }}>{fields!.length}</span>}
+                <Tag size={10} /> Champs
+                {fields!.length > 0 && <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 4px', fontWeight: 700 }}>{fields!.length}</span>}
               </button>
             )}
             <button style={tabStyle(tab === 'custom')} onClick={() => setTab('custom')}>
-              <Tag size={11} /> Mes briques
-              {customBricks.length > 0 && <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 5px', fontWeight: 700 }}>{customBricks.length}</span>}
+              <Tag size={10} /> Mes briques
+              {customBricks.length > 0 && <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 4px', fontWeight: 700 }}>{customBricks.length}</span>}
             </button>
           </div>
         </div>
