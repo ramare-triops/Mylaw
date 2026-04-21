@@ -1,18 +1,26 @@
 // components/templates/TemplateFieldsPanel.tsx
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import {
   Plus, Trash2, GripVertical, Tag,
   CalendarDays, User, MapPin, DollarSign, Clock, Hash, Type,
   Building2, Phone, Mail, Globe, CreditCard, FileText, Percent,
   Scale, Briefcase, ChevronDown, ChevronRight, Sparkles, GitBranch,
+  Settings2,
 } from 'lucide-react'
-import { getSetting } from '@/lib/db'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { db, getSetting } from '@/lib/db'
 import {
   DEFAULT_CONDITIONAL_TAGS,
   type CondVar,
 } from '@/lib/brick-variables'
+import {
+  FIELD_CATEGORIES,
+  seedFieldDefsIfNeeded,
+} from '@/lib/field-defs'
+import { FieldsEditorModal } from '@/components/editor/FieldsEditorModal'
+import type { FieldDef } from '@/types/field-def'
 
 export type FieldType =
   | 'text'
@@ -563,33 +571,33 @@ export function FieldsTabContent({
   onChange,
   onInsertVariable,
 }: Pick<TemplateFieldsPanelProps, 'fields' | 'onChange' | 'onInsertVariable'>) {
-  // Charge les variables conditionnelles depuis la DB (source partagée avec
-  // l'éditeur de briques). Fallback sur les valeurs par défaut si absent.
-  const [condVars, setCondVars] = useState<CondVar[]>(() =>
-    DEFAULT_CONDITIONAL_TAGS.map((t, i) => ({ id: `c${i}`, label: t.label, value: t.value })),
-  )
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const stored = await getSetting<CondVar[] | null>('brick_cond_vars', null)
-      if (cancelled) return
-      if (Array.isArray(stored) && stored.length > 0) setCondVars(stored)
-    })()
-    return () => { cancelled = true }
-  }, [])
+  const [editorOpen, setEditorOpen] = useState(false)
 
-  function addField() {
-    const newField: TemplateField = {
-      id: generateId(),
-      name: `champ_${fields.length + 1}`,
-      label: `Champ ${fields.length + 1}`,
-      type: 'text',
-      defaultValue: '',
-      required: false,
-      placeholder: '',
-    }
-    onChange([...fields, newField])
+  // Seed des définitions de champs au premier montage, puis lecture live.
+  useEffect(() => { void seedFieldDefsIfNeeded() }, [])
+  const fieldDefs = useLiveQuery<FieldDef[]>(() => db.fieldDefs.toArray(), []) ?? []
+
+  // Icône en fonction du type de champ — réutilise le mapping existant.
+  function iconForDef(def: FieldDef): React.ElementType {
+    if (def.type === 'conditional') return GitBranch
+    const t = FIELD_TYPES.find((ft) => ft.value === def.type)
+    return t?.icon ?? Type
   }
+
+  // Groupe les définitions par catégorie selon l'ordre de FIELD_CATEGORIES,
+  // avec tout le contenu rendu en chips arrondies (seeds + user-created
+  // indistinctement, sauf les conditionnels non-draggable).
+  const groupedDefs = useMemo(() => {
+    const byCat = new Map<string, FieldDef[]>()
+    for (const f of fieldDefs) {
+      const key = f.category || 'custom'
+      if (!byCat.has(key)) byCat.set(key, [])
+      byCat.get(key)!.push(f)
+    }
+    return FIELD_CATEGORIES
+      .map((c) => ({ cat: c, defs: byCat.get(c.id) ?? [] }))
+      .filter((g) => g.defs.length > 0)
+  }, [fieldDefs])
 
   function addFromPreset(preset: PresetField) {
     onInsertVariable(preset.name)
@@ -608,32 +616,19 @@ export function FieldsTabContent({
     }
   }
 
-  // Un champ perso existant → on l'affiche en chip au même format que la
-  // bibliothèque, via la structure `PresetField`. La couleur et l'icône
-  // sont dérivées du `type`, comme dans les presets.
-  const customFieldPresets: PresetField[] = fields.map((field) => {
-    const def = FIELD_TYPES.find((f) => f.value === field.type)
+  function defToPreset(def: FieldDef): PresetField {
+    const fallback = FIELD_TYPES.find((ft) => ft.value === def.type)
     return {
-      name: field.name,
-      label: field.label,
-      type: field.type,
-      placeholder: field.placeholder,
-      icon: def?.icon ?? Type,
-      color: def?.color ?? '#01696f',
+      name: def.name,
+      label: def.label,
+      // Pour les conditionnels, on repasse sur 'text' côté TemplateField :
+      // ils ne sont pas des champs saisis dans le form de document.
+      type: def.type === 'conditional' ? 'text' : (def.type as FieldType),
+      placeholder: def.placeholder ?? '',
+      icon: iconForDef(def),
+      color: def.color || fallback?.color || '#6b7280',
     }
-  })
-
-  // Variables conditionnelles → chips non-draggable (elles ne sont pas des
-  // champs saisis) dans un groupe dédié violet.
-  const CONDITIONAL_COLOR = '#6d28d9'
-  const conditionalPresets: PresetField[] = condVars.map((v) => ({
-    name: v.value,
-    label: v.label,
-    type: 'text',
-    placeholder: '',
-    icon: GitBranch,
-    color: CONDITIONAL_COLOR,
-  }))
+  }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -643,54 +638,43 @@ export function FieldsTabContent({
           <strong style={{ color: 'var(--color-text-muted)' }}>Glisser</strong> dans le document
         </p>
 
-        {customFieldPresets.length > 0 && (
+        {groupedDefs.map(({ cat, defs }, i) => (
           <PresetGroup
-            group="Mes champs"
-            color="#01696f"
-            items={customFieldPresets}
-            onInsert={(p) => onInsertVariable(p.name)}
-            defaultOpen
-          />
-        )}
-
-        {PRESET_GROUPS.map((g, i) => (
-          <PresetGroup
-            key={g.group}
-            group={g.group}
-            color={g.color}
-            items={g.items}
-            onInsert={addFromPreset}
-            defaultOpen={i === 0 && customFieldPresets.length === 0}
+            key={cat.id}
+            group={cat.label}
+            color={cat.color}
+            items={defs.map(defToPreset)}
+            onInsert={(p) => {
+              // Conditionnel → simple insertion, sans ajout à template.fields.
+              const def = defs.find((d) => d.name === p.name)
+              if (def?.type === 'conditional') { onInsertVariable(p.name); return }
+              addFromPreset(p)
+            }}
+            defaultOpen={i === 0}
+            draggable={cat.id !== 'conditional'}
           />
         ))}
-
-        <PresetGroup
-          group="Conditionnels"
-          color={CONDITIONAL_COLOR}
-          items={conditionalPresets}
-          onInsert={(p) => onInsertVariable(p.name)}
-          defaultOpen={false}
-          draggable={false}
-        />
       </div>
 
       <div style={{ padding: '8px 10px', borderTop: '1px solid var(--color-border)', flexShrink: 0 }}>
         <button
           type="button"
-          onClick={addField}
+          onClick={() => setEditorOpen(true)}
           style={{
             width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
             gap: '6px', padding: '7px', borderRadius: 'var(--radius-md)',
-            border: '1.5px dashed var(--color-border)', background: 'transparent',
+            border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)',
             color: 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: 500,
             cursor: 'pointer', transition: 'all 0.12s',
           }}
           onMouseEnter={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = 'var(--color-primary)'; b.style.color = 'var(--color-primary)' }}
           onMouseLeave={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = 'var(--color-border)'; b.style.color = 'var(--color-text-muted)' }}
         >
-          <Plus size={13} /> Créer un champ personnalisé
+          <Settings2 size={12} /> Éditeur de champs
         </button>
       </div>
+
+      <FieldsEditorModal open={editorOpen} onClose={() => setEditorOpen(false)} />
     </div>
   )
 }

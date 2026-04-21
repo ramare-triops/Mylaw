@@ -128,6 +128,7 @@ export async function buildBackup(): Promise<MylawBackup> {
     db.table('aiChats').toArray(),
     db.table('bricks').toArray(),
     db.table('infoLabels').toArray(),
+    db.table('fieldDefs').toArray(),
     db.table('sessions').toArray(),
     db.dossiers.toArray(),
     db.contacts.toArray(),
@@ -184,6 +185,13 @@ export async function mergeFromBackup(
   await mergeTable(db.table('aiChats'),       backup.aiChats,    opts);
   await mergeTable(db.table('bricks'),        backup.bricks,     opts);
   await mergeTable(db.table('infoLabels'),    backup.infoLabels, opts);
+  if (Array.isArray((backup as { fieldDefs?: unknown[] }).fieldDefs)) {
+    await mergeTable(
+      db.table('fieldDefs'),
+      (backup as { fieldDefs: Parameters<typeof mergeTable>[1] }).fieldDefs,
+      opts,
+    );
+  }
   await mergeTable(db.table('sessions'),      backup.sessions,   opts);
   // v4 — onglet Dossiers
   await mergeTable(db.dossiers,           backup.dossiers,         opts);

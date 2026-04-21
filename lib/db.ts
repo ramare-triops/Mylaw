@@ -89,6 +89,7 @@ export class MyLexDatabase extends Dexie {
   deadlines!: Table<Deadline>;
   bricks!: Table<Brick>;
   infoLabels!: Table<InfoLabel>;
+  fieldDefs!: Table<import('@/types/field-def').FieldDef>;
   // ─── v3 : onglet Dossiers ──────────────────────────────────────────────
   dossiers!: Table<Dossier>;
   contacts!: Table<Contact>;
@@ -152,6 +153,50 @@ export class MyLexDatabase extends Dexie {
       deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
       bricks: '++id, title, category, infoLabelId, updatedAt, *tags',
       infoLabels: '++id, name, color, createdAt',
+      dossiers:
+        '++id, reference, name, type, status, updatedAt, createdAt, *tags',
+      contacts:
+        '++id, type, lastName, companyName, email, updatedAt, *tags',
+      dossierContacts:
+        '++id, dossierId, contactId, role, [dossierId+contactId]',
+      documentContacts:
+        '++id, documentId, contactId, role, [documentId+contactId]',
+      timeEntries:
+        '++id, dossierId, documentId, contactId, date, billable, billed, invoiceId',
+      expenses:
+        '++id, dossierId, documentId, date, category, billed, invoiceId',
+      fixedFees:
+        '++id, dossierId, documentId, date, kind, billed, invoiceId',
+      invoices:
+        '++id, dossierId, reference, date, status',
+      attachments:
+        '++id, dossierId, documentId, name, mimeType, uploadedAt, *tags',
+      documentLinks:
+        '++id, documentId, dossierId, [documentId+dossierId]',
+      auditLog:
+        '++id, dossierId, entityType, entityId, action, timestamp',
+    });
+
+    // ─── Version 4 : table des définitions de champs réutilisables ────────
+    // Ajoute `fieldDefs` (catalogue global de champs : label, type, couleur,
+    // catégorie, options conditionnelles…) utilisée par le panneau Champs
+    // de l'éditeur de modèle. Les anciennes tables restent inchangées.
+    this.version(4).stores({
+      documents:
+        '++id, title, type, folderId, dossierId, status, category, updatedAt, tags, *searchTokens',
+      documentVersions: '++id, documentId, timestamp',
+      folders: '++id, name, parentId, color, createdAt',
+      tools: '++id, slug, name, pinned, order, config, lastUsedAt',
+      templates: '++id, name, category, content, variables, createdAt',
+      sessions: '++id, date, toolId, content, tags',
+      snippets: '++id, trigger, expansion, category',
+      aiChats: '++id, documentId, messages, createdAt',
+      settings: 'key',
+      history: '++id, action, entityId, entityType, timestamp',
+      deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
+      bricks: '++id, title, category, infoLabelId, updatedAt, *tags',
+      infoLabels: '++id, name, color, createdAt',
+      fieldDefs: '++id, name, type, category, updatedAt',
       dossiers:
         '++id, reference, name, type, status, updatedAt, createdAt, *tags',
       contacts:

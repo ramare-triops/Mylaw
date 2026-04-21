@@ -652,3 +652,5 @@ export interface AuditEntry {
   /** JSON-serializable détails (old→new values, nom fichier…). */
   details?: string;
 }
+
+export type { FieldDef, FieldDefType } from './field-def';
