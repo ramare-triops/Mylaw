@@ -44,12 +44,33 @@ export function DossierList() {
     void recoverFromFieldDefsScramble();
   }, []);
 
-  const dossiers = useLiveQuery(
+  const rawDossiers = useLiveQuery(
     () => db.dossiers.orderBy('updatedAt').reverse().toArray(),
     []
   );
   const allDocs = useLiveQuery(() => db.documents.toArray(), []);
   const allTimes = useLiveQuery(() => db.timeEntries.toArray(), []);
+
+  // Filet de sécurité d'affichage : on écarte les enregistrements qui
+  // ne portent pas la forme attendue d'un Dossier. Cela protège la page
+  // contre une table `dossiers` qui aurait été polluée par d'autres
+  // entités (fieldDefs, sessions, contacts…) lors d'un ancien bug de
+  // sync. Un dossier valide doit avoir une `reference` et un `type`
+  // présent dans la table des libellés de types.
+  const dossiers = rawDossiers?.filter((d): d is Dossier => {
+    if (!d || typeof d !== 'object') return false;
+    const r = d as Partial<Dossier>;
+    return (
+      typeof r.reference === 'string' &&
+      r.reference.length > 0 &&
+      typeof r.name === 'string' &&
+      typeof r.type === 'string' &&
+      r.type in DOSSIER_TYPE_LABELS &&
+      typeof r.status === 'string' &&
+      r.status in DOSSIER_STATUS_LABELS &&
+      Array.isArray(r.tags)
+    );
+  });
 
   const docsByDossier = new Map<number, number>();
   allDocs?.forEach((d) => {
