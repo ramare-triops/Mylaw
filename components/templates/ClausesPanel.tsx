@@ -349,7 +349,7 @@ interface ClauseFormProps {
 function ClauseForm({ mode, initial, existingClauses, onCancel, onSubmit }: ClauseFormProps) {
   const [label, setLabel] = useState(initial?.label ?? '')
   const [id, setId] = useState(initial?.id ?? '')
-  const [type, setType] = useState<ClauseType>(initial?.type ?? 'optional')
+  const [type, setType] = useState<ClauseType>(initial?.type ?? 'required')
   const [defaultChecked, setDefaultChecked] = useState(initial?.defaultChecked ?? false)
   const [dependsOn, setDependsOn] = useState<ClauseDependencyExpr | null>(
     initial?.dependsOn ?? null,

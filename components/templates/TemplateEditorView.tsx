@@ -22,7 +22,7 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import CharacterCount from '@tiptap/extension-character-count'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Save, Tag, ArrowLeft, Blocks, Shapes } from 'lucide-react'
+import { Save, ArrowLeft, Blocks, Shapes } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
 
 import { WordToolbar } from '@/components/editor/WordToolbar'
@@ -37,7 +37,7 @@ import {
   brickContentToHtml,
 } from '@/components/editor/DocumentBricksPanel'
 import type { Brick } from '@/components/editor/DocumentBricksPanel'
-import { TemplateFieldsPanel, DRAG_FIELD_KEY } from './TemplateFieldsPanel'
+import { DRAG_FIELD_KEY } from './TemplateFieldsPanel'
 import type { TemplateField } from './TemplateFieldsPanel'
 import type { Template } from './TemplateLibrary'
 import { DOCUMENT_CATEGORIES } from '@/components/dossiers/labels'
@@ -79,7 +79,6 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
   const [category, setCategory]       = useState(template.category)
   const [documentCategory, setDocumentCategory] = useState(template.documentCategory ?? '')
   const [fields, setFields]           = useState<TemplateField[]>(template.fields ?? [])
-  const [showFields, setShowFields]   = useState(true)
   const [showBricks, setShowBricks]   = useState(true)
   const [showClauses, setShowClauses] = useState(false)
   const [hasChanges, setHasChanges]   = useState(false)
@@ -289,10 +288,6 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
             {variableCount} variable{variableCount > 1 ? 's' : ''}
           </span>
         )}
-        <button onClick={() => setShowFields((v) => !v)}
-          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: showFields ? 'var(--color-primary-highlight)' : 'transparent', color: showFields ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: showFields ? 600 : 400, cursor: 'pointer', flexShrink: 0, transition: 'all 0.12s' }}>
-          <Tag size={12} /> Champs
-        </button>
         <button onClick={() => setShowBricks((v) => !v)}
           style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: showBricks ? 'var(--color-primary-highlight)' : 'transparent', color: showBricks ? 'var(--color-primary)' : 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: showBricks ? 600 : 400, cursor: 'pointer', flexShrink: 0, transition: 'all 0.12s' }}>
           <Blocks size={12} /> Briques
@@ -329,18 +324,13 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
           </div>
         </div>
 
-        {showFields && (
-          <TemplateFieldsPanel
-            fields={fields}
-            onChange={(f) => { setFields(f); setHasChanges(true) }}
-            onInsertVariable={handleInsertVariable}
-          />
-        )}
-
         {showBricks && (
           <DocumentBricksPanel
             onInsertBrick={handleInsertBrick}
             disableIntervenantPicker
+            fields={fields}
+            onFieldsChange={(f) => { setFields(f); setHasChanges(true) }}
+            onInsertVariable={handleInsertVariable}
           />
         )}
 

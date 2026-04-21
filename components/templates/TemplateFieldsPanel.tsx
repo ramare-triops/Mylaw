@@ -523,3 +523,121 @@ export function TemplateFieldsPanel({ fields, onChange, onInsertVariable, onDrag
     </div>
   )
 }
+
+// ─── Contenu "à plat" pour embarquer les champs dans un autre conteneur ────
+/**
+ * Rendu des champs sans le chrome de colonne (pas d'entête ni de sous-onglets).
+ * Utilisé par DocumentBricksPanel dans son onglet « Champs » qui fusionne
+ * l'ancienne colonne Champs avec la colonne Briques. Tout est présenté en
+ * une seule liste défilante :
+ *   - en haut : « Mes champs » (s'il y en a) avec la liste éditable ;
+ *   - au milieu : le bouton « + Créer un champ personnalisé » ;
+ *   - en bas : la bibliothèque de presets, groupée par catégorie.
+ */
+export function FieldsTabContent({
+  fields,
+  onChange,
+  onInsertVariable,
+}: Pick<TemplateFieldsPanelProps, 'fields' | 'onChange' | 'onInsertVariable'>) {
+  function addField() {
+    const newField: TemplateField = {
+      id: generateId(),
+      name: `champ_${fields.length + 1}`,
+      label: `Champ ${fields.length + 1}`,
+      type: 'text',
+      defaultValue: '',
+      required: false,
+      placeholder: '',
+    }
+    onChange([...fields, newField])
+  }
+
+  function addFromPreset(preset: PresetField) {
+    onInsertVariable(preset.name)
+    const exists = fields.some((f) => f.name === preset.name)
+    if (!exists) {
+      const newField: TemplateField = {
+        id: generateId(),
+        name: preset.name,
+        label: preset.label,
+        type: preset.type,
+        defaultValue: '',
+        required: false,
+        placeholder: preset.placeholder,
+      }
+      onChange([...fields, newField])
+    }
+  }
+
+  function updateField(id: string, updated: TemplateField) {
+    onChange(fields.map((f) => (f.id === id ? updated : f)))
+  }
+
+  function deleteField(id: string) {
+    onChange(fields.filter((f) => f.id !== id))
+  }
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px 12px' }}>
+      <p style={{ fontSize: '10px', color: 'var(--color-text-faint)', margin: '0 0 10px', lineHeight: 1.5 }}>
+        <strong style={{ color: 'var(--color-text-muted)' }}>Cliquer</strong> pour insérer au curseur ·{' '}
+        <strong style={{ color: 'var(--color-text-muted)' }}>Glisser</strong> dans le document
+      </p>
+
+      {fields.length > 0 && (
+        <section style={{ marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 2px 6px' }}>
+            <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)' }}>
+              Mes champs
+            </span>
+            <span style={{ fontSize: 9, color: 'var(--color-text-muted)', background: 'var(--color-surface-offset)', borderRadius: 10, padding: '1px 6px', fontWeight: 600 }}>
+              {fields.length}
+            </span>
+          </div>
+          {fields.map((field) => (
+            <FieldRow
+              key={field.id}
+              field={field}
+              onChange={(u) => updateField(field.id, u)}
+              onDelete={() => deleteField(field.id)}
+              onInsert={() => onInsertVariable(field.name)}
+            />
+          ))}
+        </section>
+      )}
+
+      <button
+        onClick={addField}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: '6px', padding: '7px', borderRadius: 'var(--radius-md)',
+          border: '1.5px dashed var(--color-border)', background: 'transparent',
+          color: 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: 500,
+          cursor: 'pointer', transition: 'all 0.12s', marginBottom: 14,
+        }}
+        onMouseEnter={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = 'var(--color-primary)'; b.style.color = 'var(--color-primary)' }}
+        onMouseLeave={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = 'var(--color-border)'; b.style.color = 'var(--color-text-muted)' }}
+      >
+        <Plus size={13} /> Créer un champ personnalisé
+      </button>
+
+      <section>
+        <div style={{ padding: '4px 2px 6px' }}>
+          <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)' }}>
+            Bibliothèque
+          </span>
+        </div>
+        {PRESET_GROUPS.map((g, i) => (
+          <PresetGroup
+            key={g.group}
+            group={g.group}
+            color={g.color}
+            items={g.items}
+            onInsert={addFromPreset}
+            defaultOpen={i === 0}
+          />
+        ))}
+      </section>
+    </div>
+  )
+}

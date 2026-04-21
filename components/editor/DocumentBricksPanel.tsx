@@ -12,6 +12,10 @@ import { db, getSetting, setSetting } from '@/lib/db'
 import type { Brick as DBBrick, InfoLabel, ContactType, DossierRole, Contact } from '@/types'
 import { BrickIntervenantPicker } from './BrickIntervenantPicker'
 import { applyContactToBrickContent } from '@/lib/contact-variables'
+import {
+  FieldsTabContent,
+  type TemplateField,
+} from '@/components/templates/TemplateFieldsPanel'
 
 // ─── Types UI ────────────────────────────────────────────────────────────────
 
@@ -1214,12 +1218,30 @@ interface DocumentBricksPanelProps {
    * sens : un modèle doit rester générique).
    */
   disableIntervenantPicker?: boolean
+  /**
+   * Champs du modèle courant. Si fournis, active l'onglet « Champs » qui
+   * fusionne la bibliothèque de presets et la gestion des champs
+   * personnalisés (ex-`TemplateFieldsPanel`). Utilisé par l'éditeur de
+   * modèle ; absent côté éditeur de document, où les champs ne sont pas
+   * éditables.
+   */
+  fields?: TemplateField[]
+  onFieldsChange?: (fields: TemplateField[]) => void
+  onInsertVariable?: (name: string) => void
 }
 
-export function DocumentBricksPanel({ onInsertBrick, dossierId, disableIntervenantPicker }: DocumentBricksPanelProps) {
+export function DocumentBricksPanel({
+  onInsertBrick,
+  dossierId,
+  disableIntervenantPicker,
+  fields,
+  onFieldsChange,
+  onInsertVariable,
+}: DocumentBricksPanelProps) {
+  const fieldsTabEnabled = !!(fields && onFieldsChange && onInsertVariable)
   const [groups,         setGroups]         = useState<BrickGroup[]>([])
   const [allCategories,  setAllCategories]  = useState<CategoryDef[]>([...SYSTEM_CATEGORIES.map(c => ({ ...c, iconName: c.id === 'parties' ? 'users' : c.id === 'structure' ? 'align-left' : c.id === 'formules' ? 'file-text' : 'blocks' }))])
-  const [tab,            setTab]            = useState<'library' | 'custom'>('library')
+  const [tab,            setTab]            = useState<'library' | 'fields' | 'custom'>('library')
   const [showEditor,     setShowEditor]     = useState(false)
   const [loaded,         setLoaded]         = useState(false)
   const [picker,         setPicker]         = useState<{ brick: Brick; rect: { top: number; left: number } } | null>(null)
@@ -1391,6 +1413,12 @@ export function DocumentBricksPanel({ onInsertBrick, dossierId, disableIntervena
           </div>
           <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', marginLeft: '-14px', marginRight: '-14px', paddingLeft: '14px', paddingRight: '14px' }}>
             <button style={tabStyle(tab === 'library')} onClick={() => setTab('library')}><Blocks size={11} /> Bibliothèque</button>
+            {fieldsTabEnabled && (
+              <button style={tabStyle(tab === 'fields')} onClick={() => setTab('fields')}>
+                <Tag size={11} /> Champs
+                {fields!.length > 0 && <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 5px', fontWeight: 700 }}>{fields!.length}</span>}
+              </button>
+            )}
             <button style={tabStyle(tab === 'custom')} onClick={() => setTab('custom')}>
               <Tag size={11} /> Mes briques
               {customBricks.length > 0 && <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 5px', fontWeight: 700 }}>{customBricks.length}</span>}
@@ -1413,6 +1441,14 @@ export function DocumentBricksPanel({ onInsertBrick, dossierId, disableIntervena
               />
             ))}
           </div>
+        )}
+
+        {tab === 'fields' && fieldsTabEnabled && (
+          <FieldsTabContent
+            fields={fields!}
+            onChange={onFieldsChange!}
+            onInsertVariable={onInsertVariable!}
+          />
         )}
 
         {tab === 'custom' && (
