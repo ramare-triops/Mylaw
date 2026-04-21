@@ -1311,7 +1311,7 @@ export function DocumentBricksPanel({
   const fieldsTabEnabled = !!(fields && onFieldsChange && onInsertVariable)
   const [groups,         setGroups]         = useState<BrickGroup[]>([])
   const [allCategories,  setAllCategories]  = useState<CategoryDef[]>([...SYSTEM_CATEGORIES.map(c => ({ ...c, iconName: c.id === 'parties' ? 'users' : c.id === 'structure' ? 'align-left' : c.id === 'formules' ? 'file-text' : 'blocks' }))])
-  const [tab,            setTab]            = useState<'library' | 'fields' | 'custom'>('library')
+  const [tab,            setTab]            = useState<'bricks' | 'fields'>('bricks')
   const [showEditor,     setShowEditor]     = useState(false)
   const [loaded,         setLoaded]         = useState(false)
   const [picker,         setPicker]         = useState<{ brick: Brick; rect: { top: number; left: number } } | null>(null)
@@ -1467,7 +1467,6 @@ export function DocumentBricksPanel({
     })
   }, [])
 
-  const customBricks  = groups.flatMap(g => g.bricks).filter(b => b.category === 'custom')
   const displayGroups = groups.filter(g => g.bricks.length > 0)
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
@@ -1508,8 +1507,8 @@ export function DocumentBricksPanel({
             </button>
           </div>
           <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', marginLeft: '-14px', marginRight: '-14px', paddingLeft: '6px', paddingRight: '6px' }}>
-            <button style={tabStyle(tab === 'library')} onClick={() => setTab('library')}>
-              <Blocks size={10} /> Bibliothèque
+            <button style={tabStyle(tab === 'bricks')} onClick={() => setTab('bricks')}>
+              <Blocks size={10} /> Briques
             </button>
             {fieldsTabEnabled && (
               <button style={tabStyle(tab === 'fields')} onClick={() => setTab('fields')}>
@@ -1517,14 +1516,10 @@ export function DocumentBricksPanel({
                 {fields!.length > 0 && <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 4px', fontWeight: 700 }}>{fields!.length}</span>}
               </button>
             )}
-            <button style={tabStyle(tab === 'custom')} onClick={() => setTab('custom')}>
-              <Tag size={10} /> Mes briques
-              {customBricks.length > 0 && <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 4px', fontWeight: 700 }}>{customBricks.length}</span>}
-            </button>
           </div>
         </div>
 
-        {tab === 'library' && (
+        {tab === 'bricks' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
             <p style={{ fontSize: '10px', color: 'var(--color-text-faint)', marginBottom: '10px', lineHeight: 1.5 }}>
               <strong style={{ color: 'var(--color-text-muted)' }}>Cliquer</strong> pour insérer au curseur · <strong style={{ color: 'var(--color-text-muted)' }}>Glisser</strong> dans le document
@@ -1547,25 +1542,6 @@ export function DocumentBricksPanel({
             onChange={onFieldsChange!}
             onInsertVariable={onInsertVariable!}
           />
-        )}
-
-        {tab === 'custom' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px 4px' }}>
-            {customBricks.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--color-text-faint)', fontSize: 'var(--text-xs)' }}>
-                <Blocks size={26} style={{ opacity: 0.15, margin: '0 auto 10px', display: 'block' }} />
-                Aucune brique personnalisée.<br />
-                <button onClick={() => setShowEditor(true)} style={{ color: 'var(--color-primary)', background: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 'inherit', marginTop: '4px' }}>Ouvrir l&apos;éditeur de briques</button>
-              </div>
-            ) : customBricks.map(b => (
-              <BrickChip
-                key={b.id}
-                brick={b}
-                onInsert={() => onInsertBrick(brickContentToHtml(b.content), b)}
-                onOpenPicker={disableIntervenantPicker ? undefined : handleOpenPicker}
-              />
-            ))}
-          </div>
         )}
 
         <div style={{ padding: '8px 10px', borderTop: '1px solid var(--color-border)', flexShrink: 0 }}>

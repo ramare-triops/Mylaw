@@ -526,22 +526,18 @@ export function TemplateFieldsPanel({ fields, onChange, onInsertVariable, onDrag
 
 // ─── Contenu "à plat" pour embarquer les champs dans un autre conteneur ────
 /**
- * Rendu des champs sans le chrome de colonne (pas de largeur fixe ni
- * d'entête de colonne). Reprend l'esthétique de la version standalone :
- * deux sous-onglets « Bibliothèque » et « Mes champs » avec les chips
- * arrondies pour les presets et le pied de page « + Créer un champ
- * personnalisé ».
+ * Rendu des champs sans le chrome de colonne : un seul scroll qui mélange
+ * presets (chips arrondies) et champs personnalisés (cartes éditables), sans
+ * distinction navigationnelle entre « Bibliothèque » et « Mes champs ». Le
+ * bouton « + Créer un champ personnalisé » est épinglé en pied.
  *
- * Utilisé par DocumentBricksPanel dans son onglet « Champs » qui fusionne
- * l'ancienne colonne Champs avec la colonne Briques.
+ * Utilisé par DocumentBricksPanel dans son onglet « Champs ».
  */
 export function FieldsTabContent({
   fields,
   onChange,
   onInsertVariable,
 }: Pick<TemplateFieldsPanelProps, 'fields' | 'onChange' | 'onInsertVariable'>) {
-  const [subTab, setSubTab] = useState<'library' | 'custom'>('library')
-
   function addField() {
     const newField: TemplateField = {
       id: generateId(),
@@ -553,7 +549,6 @@ export function FieldsTabContent({
       placeholder: '',
     }
     onChange([...fields, newField])
-    setSubTab('custom')
   }
 
   function addFromPreset(preset: PresetField) {
@@ -581,102 +576,66 @@ export function FieldsTabContent({
     onChange(fields.filter((f) => f.id !== id))
   }
 
-  const subTabStyle = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: '5px 4px',
-    fontSize: '10px',
-    fontWeight: active ? 600 : 400,
-    color: active ? 'var(--color-primary)' : 'var(--color-text-muted)',
-    background: active ? 'var(--color-surface)' : 'transparent',
-    borderBottom: active ? '2px solid var(--color-primary)' : '2px solid transparent',
-    cursor: 'pointer',
-    transition: 'all 0.12s',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '4px',
-  })
-
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Sous-onglets Bibliothèque / Mes champs */}
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', flexShrink: 0, padding: '0 10px' }}>
-        <button type="button" style={subTabStyle(subTab === 'library')} onClick={() => setSubTab('library')}>
-          <Sparkles size={10} /> Bibliothèque
-        </button>
-        <button type="button" style={subTabStyle(subTab === 'custom')} onClick={() => setSubTab('custom')}>
-          <Tag size={10} /> Mes champs
-          {fields.length > 0 && (
-            <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: '10px', fontSize: '9px', padding: '0 5px', fontWeight: 700 }}>{fields.length}</span>
-          )}
-        </button>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
+        <p style={{ fontSize: '10px', color: 'var(--color-text-faint)', margin: '0 0 10px', lineHeight: 1.5 }}>
+          <strong style={{ color: 'var(--color-text-muted)' }}>Cliquer</strong> pour insérer au curseur ·{' '}
+          <strong style={{ color: 'var(--color-text-muted)' }}>Glisser</strong> dans le document
+        </p>
+
+        {fields.length > 0 && (
+          <section style={{ marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 2px 6px' }}>
+              <Tag size={10} style={{ color: 'var(--color-primary)' }} />
+              <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)' }}>
+                Mes champs
+              </span>
+              <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--color-text-muted)', background: 'var(--color-surface-offset)', borderRadius: 10, padding: '1px 6px', fontWeight: 600 }}>
+                {fields.length}
+              </span>
+            </div>
+            {fields.map((field) => (
+              <FieldRow
+                key={field.id}
+                field={field}
+                onChange={(u) => updateField(field.id, u)}
+                onDelete={() => deleteField(field.id)}
+                onInsert={() => onInsertVariable(field.name)}
+              />
+            ))}
+          </section>
+        )}
+
+        {PRESET_GROUPS.map((g, i) => (
+          <PresetGroup
+            key={g.group}
+            group={g.group}
+            color={g.color}
+            items={g.items}
+            onInsert={addFromPreset}
+            defaultOpen={i === 0 && fields.length === 0}
+          />
+        ))}
       </div>
 
-      {subTab === 'library' && (
-        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
-          <p style={{ fontSize: '10px', color: 'var(--color-text-faint)', margin: '0 0 10px', lineHeight: 1.5 }}>
-            <strong style={{ color: 'var(--color-text-muted)' }}>Cliquer</strong> pour insérer au curseur ·{' '}
-            <strong style={{ color: 'var(--color-text-muted)' }}>Glisser</strong> dans le document
-          </p>
-          {PRESET_GROUPS.map((g, i) => (
-            <PresetGroup
-              key={g.group}
-              group={g.group}
-              color={g.color}
-              items={g.items}
-              onInsert={addFromPreset}
-              defaultOpen={i === 0}
-            />
-          ))}
-        </div>
-      )}
-
-      {subTab === 'custom' && (
-        <>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px 4px' }}>
-            {fields.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--color-text-faint)', fontSize: 'var(--text-xs)' }}>
-                <Tag size={26} style={{ opacity: 0.15, margin: '0 auto 10px', display: 'block' }} />
-                Aucun champ personnalisé.
-                <br />
-                <span style={{ color: 'var(--color-text-muted)' }}>
-                  Utilisez la{' '}
-                  <button type="button" onClick={() => setSubTab('library')} style={{ color: 'var(--color-primary)', background: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 'inherit' }}>bibliothèque</button>
-                  {' '}ou créez un champ.
-                </span>
-              </div>
-            ) : (
-              fields.map((field) => (
-                <FieldRow
-                  key={field.id}
-                  field={field}
-                  onChange={(u) => updateField(field.id, u)}
-                  onDelete={() => deleteField(field.id)}
-                  onInsert={() => onInsertVariable(field.name)}
-                />
-              ))
-            )}
-          </div>
-
-          <div style={{ padding: '8px 10px', borderTop: '1px solid var(--color-border)', flexShrink: 0 }}>
-            <button
-              type="button"
-              onClick={addField}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                gap: '6px', padding: '7px', borderRadius: 'var(--radius-md)',
-                border: '1.5px dashed var(--color-border)', background: 'transparent',
-                color: 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: 500,
-                cursor: 'pointer', transition: 'all 0.12s',
-              }}
-              onMouseEnter={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = 'var(--color-primary)'; b.style.color = 'var(--color-primary)' }}
-              onMouseLeave={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = 'var(--color-border)'; b.style.color = 'var(--color-text-muted)' }}
-            >
-              <Plus size={13} /> Créer un champ personnalisé
-            </button>
-          </div>
-        </>
-      )}
+      <div style={{ padding: '8px 10px', borderTop: '1px solid var(--color-border)', flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={addField}
+          style={{
+            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            gap: '6px', padding: '7px', borderRadius: 'var(--radius-md)',
+            border: '1.5px dashed var(--color-border)', background: 'transparent',
+            color: 'var(--color-text-muted)', fontSize: 'var(--text-xs)', fontWeight: 500,
+            cursor: 'pointer', transition: 'all 0.12s',
+          }}
+          onMouseEnter={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = 'var(--color-primary)'; b.style.color = 'var(--color-primary)' }}
+          onMouseLeave={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = 'var(--color-border)'; b.style.color = 'var(--color-text-muted)' }}
+        >
+          <Plus size={13} /> Créer un champ personnalisé
+        </button>
+      </div>
     </div>
   )
 }
