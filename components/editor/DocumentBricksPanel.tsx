@@ -1462,6 +1462,16 @@ interface DocumentBricksPanelProps {
   fields?: TemplateField[]
   onFieldsChange?: (fields: TemplateField[]) => void
   onInsertVariable?: (name: string) => void
+  /**
+   * Appelé quand l'utilisateur clique sur une brique porteuse d'un
+   * `identityRole` (catégorie « Dossier »). Permet à l'éditeur hôte
+   * d'insérer un nœud Tiptap `identificationBlock` via une spec de
+   * nœud — plus fiable qu'une insertion par chaîne HTML, qui dépend
+   * du `parseHTML` du schéma et de l'absence de collision avec des
+   * règles génériques (TextStyle, etc.).
+   * Fallback : si non fourni, on retombe sur l'insertion HTML classique.
+   */
+  onInsertIdentificationBlock?: (role: DossierRole, separator: string | null, label: string | null) => void
 }
 
 export function DocumentBricksPanel({
@@ -1471,6 +1481,7 @@ export function DocumentBricksPanel({
   fields,
   onFieldsChange,
   onInsertVariable,
+  onInsertIdentificationBlock,
 }: DocumentBricksPanelProps) {
   const fieldsTabEnabled = !!(fields && onFieldsChange && onInsertVariable)
   const [groups,         setGroups]         = useState<BrickGroup[]>([])
@@ -1481,22 +1492,27 @@ export function DocumentBricksPanel({
   const [picker,         setPicker]         = useState<{ brick: Brick; rect: { top: number; left: number } } | null>(null)
 
   /**
-   * Matérialise le contenu inséré quand l'utilisateur clique ou drag
-   * une brique. Les briques porteuses d'un `identityRole` posent un
-   * marqueur inline au lieu de leur contenu brut — ce placeholder sera
-   * résolu à l'instanciation du modèle dans un dossier.
+   * Gère le clic sur une brique en dispatchant selon son type :
+   *   - brique d'identité (`identityRole` défini) → appelle
+   *     `onInsertIdentificationBlock` pour poser un nœud Tiptap via
+   *     spec (insertion robuste au round-trip) ;
+   *   - brique classique → passe par `onInsertBrick` avec le HTML
+   *     converti depuis le contenu markdown-like de la brique.
+   *
+   * Si l'hôte ne fournit pas `onInsertIdentificationBlock`, on retombe
+   * sur le HTML — utile pour les endroits qui ne sont pas encore
+   * équipés (éditeur de document en lecture seule, etc.).
    */
-  const brickToInsertHtml = useCallback((b: Brick): string => {
-    if (b.identityRole) {
-      return makeIdentificationBlockHtml(
-        b.identityRole,
-        b.identitySeparator,
-        null,
-        b.label,
-      )
+  const handleBrickClick = useCallback((b: Brick) => {
+    if (b.identityRole && onInsertIdentificationBlock) {
+      onInsertIdentificationBlock(b.identityRole, b.identitySeparator ?? null, b.label)
+      return
     }
-    return brickContentToHtml(b.content)
-  }, [])
+    const html = b.identityRole
+      ? makeIdentificationBlockHtml(b.identityRole, b.identitySeparator, null, b.label)
+      : brickContentToHtml(b.content)
+    onInsertBrick(html, b)
+  }, [onInsertBrick, onInsertIdentificationBlock])
 
   const handleOpenPicker = useCallback((brick: Brick, rect: DOMRect) => {
     setPicker({
@@ -1763,7 +1779,7 @@ export function DocumentBricksPanel({
               <BrickGroupSection
                 key={g.id}
                 group={g}
-                onInsert={b => onInsertBrick(brickToInsertHtml(b), b)}
+                onInsert={handleBrickClick}
                 onOpenPicker={disableIntervenantPicker ? undefined : handleOpenPicker}
                 defaultOpen={i === 0}
               />

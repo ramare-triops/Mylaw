@@ -38,13 +38,11 @@ import {
   brickContentToHtml,
 } from '@/components/editor/DocumentBricksPanel'
 import type { Brick } from '@/components/editor/DocumentBricksPanel'
-import { makeIdentificationBlockHtml } from '@/components/editor/extensions/IdentificationBlock'
 import { DRAG_FIELD_KEY } from './TemplateFieldsPanel'
 import type { TemplateField } from './TemplateFieldsPanel'
 import type { Template } from './TemplateLibrary'
 import { DOCUMENT_CATEGORIES } from '@/components/dossiers/labels'
-// `DossierRole` n'est plus utilisé ici : le rôle est porté par la brique
-// elle-même (cf. `Brick.identityRole`) et propagé au helper.
+import type { DossierRole } from '@/types'
 
 interface TemplateEditorViewProps {
   template: Template
@@ -142,11 +140,9 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
   }, [])
 
   // ── Insertion d'une brique au curseur
-  // Dans l'éditeur de modèles, on insère la brique sans marqueur d'intervenant :
-  // un modèle doit rester générique, les variables seront remplies lors de
-  // l'utilisation dans un document. Les briques « Dossier » (marquées par
-  // un `identityRole`) posent leur marqueur inline : le panneau a déjà
-  // émis le HTML approprié via `makeIdentificationBlockHtml`.
+  // Dans l'éditeur de modèles, on insère la brique sans marqueur
+  // d'intervenant : un modèle doit rester générique, les variables
+  // seront remplies lors de l'utilisation dans un document.
   const handleInsertBrick = useCallback((brickHtml: string, _brick?: Brick) => {
     const ed = editorRef.current
     if (!ed) return
@@ -155,6 +151,31 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
     setSaved(false)
     setTimeout(() => setVariableCount(countVariables(ed)), 50)
   }, [])
+
+  // ── Insertion d'un bloc d'identification (catégorie « Dossier »)
+  // On insère un nœud Tiptap directement via spec `{type, attrs}`
+  // plutôt qu'en passant par un fragment HTML. Insertion robuste au
+  // round-trip : les attributs sont portés par le nœud, pas dépendants
+  // d'une règle parseHTML concurrente. C'est le chemin qui marchait
+  // dans la toute première itération et qu'on conserve désormais,
+  // simplement déclenché depuis le clic sur une brique « Dossier »
+  // plutôt que depuis un dialog séparé.
+  const handleInsertIdentificationBlock = useCallback(
+    (role: DossierRole, separator: string | null, label: string | null) => {
+      const ed = editorRef.current
+      if (!ed) return
+      ed.chain()
+        .focus()
+        .insertContent({
+          type: 'identificationBlock',
+          attrs: { role, separator, emptyFallback: null, label },
+        })
+        .run()
+      setHasChanges(true)
+      setSaved(false)
+    },
+    []
+  )
 
   // ── Drag & drop
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -180,17 +201,26 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
         const brick: Brick = JSON.parse(brickRaw)
         const ed = editorRef.current
         if (!ed) return
-        const html = brick.identityRole
-          ? makeIdentificationBlockHtml(
-              brick.identityRole,
-              brick.identitySeparator,
-              null,
-              brick.label,
-            )
-          : brickContentToHtml(brick.content)
         const pos = ed.view.posAtCoords({ left: e.clientX, top: e.clientY })
-        if (pos) ed.chain().focus().insertContentAt(pos.pos, html).run()
-        else ed.chain().focus().insertContent(html).run()
+        if (brick.identityRole) {
+          // Brique « Dossier » : on pose un nœud Tiptap spec. Chemin
+          // robuste au round-trip, identique au clic côté panel.
+          const nodeSpec = {
+            type: 'identificationBlock',
+            attrs: {
+              role:          brick.identityRole,
+              separator:     brick.identitySeparator ?? null,
+              emptyFallback: null,
+              label:         brick.label ?? null,
+            },
+          }
+          if (pos) ed.chain().focus().insertContentAt(pos.pos, nodeSpec).run()
+          else ed.chain().focus().insertContent(nodeSpec).run()
+        } else {
+          const html = brickContentToHtml(brick.content)
+          if (pos) ed.chain().focus().insertContentAt(pos.pos, html).run()
+          else ed.chain().focus().insertContent(html).run()
+        }
         setHasChanges(true)
         setSaved(false)
         setTimeout(() => setVariableCount(countVariables(ed)), 50)
@@ -345,6 +375,7 @@ export function TemplateEditorView({ template, onSave, onClose }: TemplateEditor
             fields={fields}
             onFieldsChange={(f) => { setFields(f); setHasChanges(true) }}
             onInsertVariable={handleInsertVariable}
+            onInsertIdentificationBlock={handleInsertIdentificationBlock}
           />
         )}
 
