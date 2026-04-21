@@ -386,6 +386,53 @@ export async function seedAdditionalDefaultsIfNeeded(): Promise<void> {
 }
 
 /**
+ * Resynchronisation tpl-7 : les balises `<!--OPT:resultat-->...<!--/OPT:resultat-->`
+ * qui délimitent la clause d'honoraire de résultat (article 2.2) sont des
+ * commentaires HTML. Elles peuvent être perdues si le modèle est chargé dans
+ * l'éditeur TipTap (qui ne les restitue pas lors d'un `getJSON` / `getHTML`)
+ * puis ré-enregistré. Sans ces balises, `applyOptionalClauses` ne sait plus
+ * retirer l'article 2.2 et la case à cocher n'a plus d'effet.
+ *
+ * Cette migration, idempotente, restaure le `content`, les `optionalClauses`
+ * et les `fields` canoniques de DEFAULT_TEMPLATES pour les lignes tpl-7 non
+ * customs dont les balises OPT ou la clause `resultat` sont absentes. Les
+ * modèles `isCustom` ne sont jamais touchés.
+ */
+export async function migrateTpl7OptionalClauseIfNeeded(): Promise<void> {
+  const done = await getSetting<boolean>('templates_tpl7_opt_resync_v1', false)
+  if (done) return
+  try {
+    const def = DEFAULT_TEMPLATES.find((t) => t.id === 'tpl-7')
+    if (!def) { await setSetting('templates_tpl7_opt_resync_v1', true); return }
+    const rows = await db.table('templates').toArray() as Array<Record<string, unknown> & {
+      id: number
+      name?: string
+      content?: string
+      isCustom?: boolean
+      optionalClauses?: TemplateOptionalClause[]
+    }>
+    for (const row of rows) {
+      if (row.isCustom) continue
+      if (row.name !== def.name) continue
+      const content = typeof row.content === 'string' ? row.content : ''
+      const hasMarker =
+        content.includes('<!--OPT:resultat-->') &&
+        content.includes('<!--/OPT:resultat-->')
+      const hasClause =
+        Array.isArray(row.optionalClauses) &&
+        row.optionalClauses.some((c) => c.id === 'resultat')
+      if (hasMarker && hasClause) continue
+      await db.table('templates').update(row.id, {
+        content: def.content,
+        optionalClauses: def.optionalClauses,
+        fields: def.fields,
+      })
+    }
+  } catch { /* migration best-effort */ }
+  await setSetting('templates_tpl7_opt_resync_v1', true)
+}
+
+/**
  * Migration v2 : pour les modèles par défaut seedés avant l'introduction du
  * champ `documentCategory`, on patche en place en faisant un match par nom
  * avec les valeurs canoniques de DEFAULT_TEMPLATES. On NE touche PAS aux
@@ -697,6 +744,7 @@ export function TemplateLibrary() {
       await seedDefaultsIfNeeded()
       await seedAdditionalDefaultsIfNeeded()
       await migrateDocumentCategoryIfNeeded()
+      await migrateTpl7OptionalClauseIfNeeded()
       const loaded = await loadTemplatesFromDexie()
       setTemplates(loaded)
       if (loaded.length > 0) setPreviewTemplate(loaded[0])

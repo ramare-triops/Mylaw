@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { db } from '@/lib/db';
 import {
   migrateDocumentCategoryIfNeeded,
+  migrateTpl7OptionalClauseIfNeeded,
   seedAdditionalDefaultsIfNeeded,
   type TemplateOptionalClause,
 } from '@/components/templates/TemplateLibrary';
@@ -36,6 +37,7 @@ async function loadTemplatesFromDexie(): Promise<DialogTemplate[]> {
   // les modèles ajoutés après le seed initial (ex : convention tarif horaire).
   await migrateDocumentCategoryIfNeeded();
   await seedAdditionalDefaultsIfNeeded();
+  await migrateTpl7OptionalClauseIfNeeded();
   const rows = await db
     .table('templates')
     .toArray() as Array<Record<string, unknown> & { id: number }>;
