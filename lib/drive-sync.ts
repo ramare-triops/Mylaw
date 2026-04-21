@@ -21,6 +21,8 @@ export interface MylawBackup {
   bricks: any[];
   /** Étiquettes d'information structurées */
   infoLabels: any[];
+  /** Définitions de champs (catalogue global — ajouté v4) */
+  fieldDefs?: any[];
   /** Sessions d'utilisation des outils (ajouté v3.1) */
   sessions?: any[];
   /** v4 — onglet Dossiers */

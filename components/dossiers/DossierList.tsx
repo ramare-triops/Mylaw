@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useRouter } from 'next/navigation';
+import { recoverFromFieldDefsScramble } from '@/lib/recover-backup-scramble';
 import {
   Plus,
   Search,
@@ -33,6 +34,15 @@ export function DossierList() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [openMenu, setOpenMenu] = useState<'status' | 'type' | null>(null);
+
+  // Filet de sécurité one-shot : si la DB locale a été corrompue par un
+  // bug de buildBackup qui a croisé les tables (voir
+  // lib/recover-backup-scramble.ts), on détecte le décalage au premier
+  // montage de la liste et on remet tout à sa place. Idempotent : aucun
+  // effet si la DB est saine.
+  useEffect(() => {
+    void recoverFromFieldDefsScramble();
+  }, []);
 
   const dossiers = useLiveQuery(
     () => db.dossiers.orderBy('updatedAt').reverse().toArray(),
