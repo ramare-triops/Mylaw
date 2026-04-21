@@ -30,6 +30,7 @@ export function DocumentEditor({ docId }: Props) {
   const [showVariables, setShowVariables] = useState(false);
 
   const editor = useEditor({
+    immediatelyRender: false,
     extensions: [
       StarterKit,
       Placeholder.configure({ placeholder: 'Commencez à rédiger…' }),

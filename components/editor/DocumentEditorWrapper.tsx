@@ -404,6 +404,10 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   })()
 
   const editor = useEditor({
+    // Tiptap v3 : SSR-safe init. Sans ce flag, l'éditeur tente un rendu
+    // immédiat côté serveur et remonte un avertissement de mismatch
+    // d'hydratation sur les pages Next.js en mode client-only.
+    immediatelyRender: false,
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
       Underline, TextStyle, FontFamily, FontSize, Color,
