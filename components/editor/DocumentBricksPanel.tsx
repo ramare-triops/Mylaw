@@ -1579,6 +1579,28 @@ export function DocumentBricksPanel({
       await setSetting('bricks_identity_kind_v1', true)
     }
 
+    // Migration « catégorie Dossier » : pour les utilisateurs déjà seedés
+    // (`bricks_seeded=true`), les nouvelles briques de la catégorie
+    // `dossier` (Client, Partie adverse, Avocat du cabinet…) n'ont
+    // jamais été insérées. On les ajoute ici, idempotent par titre ET
+    // par `identityRole` pour ne pas dupliquer les briques que
+    // l'utilisateur aurait renommées.
+    const dossierBricksSeeded = await getSetting<boolean>('bricks_dossier_v1_seeded', false)
+    if (!dossierBricksSeeded) {
+      const existing = await db.bricks.toArray() as DBBrick[]
+      const byTitle = new Set(existing.map((b) => b.title))
+      const byRole = new Set(existing.map((b) => b.identityRole).filter(Boolean))
+      const toAdd = SEED_BRICKS.filter((s) =>
+        s.identityRole &&
+        !byTitle.has(s.title) &&
+        !byRole.has(s.identityRole)
+      )
+      if (toAdd.length > 0) {
+        await db.bricks.bulkAdd(toAdd as DBBrick[])
+      }
+      await setSetting('bricks_dossier_v1_seeded', true)
+    }
+
     const savedLabels = await db.infoLabels.toArray() as (InfoLabel & { id: number })[]
     const customCats: CategoryDef[] = savedLabels.map(l => ({
       id:               `cat_${l.id}`,
