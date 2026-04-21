@@ -674,7 +674,6 @@ function BrickEditorForm({ brick, allCategories, textVars, condVars, onChangeTex
   const [icon,          setIcon]          = useState(brick.icon)
   const [color,         setColor]         = useState(brick.color)
   const [showPreview,   setShowPreview]   = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -750,23 +749,26 @@ function BrickEditorForm({ brick, allCategories, textVars, condVars, onChangeTex
       </div>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
         <div>
-          {onDelete && (confirmDelete ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '11px', color: 'var(--color-error)' }}>Supprimer définitivement ?</span>
-              <button onClick={onDelete} style={{ padding: '5px 10px', borderRadius: 'var(--radius-md)', background: 'var(--color-error)', color: '#fff', fontSize: '11px', fontWeight: 600, cursor: 'pointer', border: 'none' }}>Oui</button>
-              <button onClick={() => setConfirmDelete(false)} style={{ padding: '5px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: '11px', cursor: 'pointer' }}>Annuler</button>
-            </div>
-          ) : (
-            <button onClick={() => setConfirmDelete(true)} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-error)40', color: 'var(--color-error)', fontSize: '11px', cursor: 'pointer', background: 'transparent' }}>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={() => { if (confirm('Supprimer cette brique ?')) onDelete() }}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 12px', borderRadius: 8, border: '1px solid #ef4444', background: 'transparent', color: '#ef4444', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
+            >
               <Trash2 size={12} /> Supprimer
             </button>
-          ))}
+          )}
         </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button onClick={onCancel} style={{ padding: '7px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>Annuler</button>
-          <button onClick={() => { if (canSave) onSave({ ...brick, label: label.trim(), content: content.trim(), category, icon, color }) }}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-offset)', color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
+          >Annuler</button>
+          <button
+            onClick={() => { if (canSave) onSave({ ...brick, label: label.trim(), content: content.trim(), category, icon, color }) }}
             disabled={!canSave}
-            style={{ padding: '7px 16px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: canSave ? 'pointer' : 'not-allowed', opacity: canSave ? 1 : 0.5, border: 'none' }}
+            style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: canSave ? 'pointer' : 'not-allowed', opacity: canSave ? 1 : 0.5 }}
           >Enregistrer</button>
         </div>
       </div>
