@@ -228,7 +228,7 @@ function jsonToDocxChildren(raw: string): (Paragraph | Table)[] {
 
 // ─── Export DOCX ─────────────────────────────────────────────────────────────
 
-export async function exportDocx(title: string, rawContent: string): Promise<void> {
+export async function buildDocxBlob(rawContent: string): Promise<Blob> {
   const trimmed = (rawContent ?? '').trim();
   const children = (trimmed.startsWith('{') || trimmed.startsWith('['))
     ? jsonToDocxChildren(trimmed)
@@ -255,7 +255,11 @@ export async function exportDocx(title: string, rawContent: string): Promise<voi
     }],
   });
 
-  const blob = await Packer.toBlob(docxDoc);
+  return Packer.toBlob(docxDoc);
+}
+
+export async function exportDocx(title: string, rawContent: string): Promise<void> {
+  const blob = await buildDocxBlob(rawContent);
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

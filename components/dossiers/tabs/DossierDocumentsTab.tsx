@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useRouter } from 'next/navigation';
+import JSZip from 'jszip';
 import {
   Plus,
   FileText,
@@ -36,6 +37,7 @@ import {
   getDossierContactsWithRole,
   getSetting,
 } from '@/lib/db';
+import { buildDocxBlob } from '@/lib/export';
 import { resolveIdentificationBlocks } from '@/lib/identification-blocks';
 import {
   cabinetIdentityToContact,
@@ -69,12 +71,6 @@ function templateToEditorContent(raw: string): string {
   if (t.startsWith('{"type":"doc"')) return t;
   if (t.startsWith('<')) return t;
   return `<p>${t.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} o`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
 // ─── Office URI Scheme (ms-word:, ms-excel:, ms-powerpoint:) ─────────────────
@@ -268,6 +264,8 @@ export function DossierDocumentsTab({ dossier }: Props) {
   const [attachOpen, setAttachOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const docs = useLiveQuery<MylawDocument[]>(
@@ -550,6 +548,137 @@ export function DossierDocumentsTab({ dossier }: Props) {
     await deleteAttachment(att.id);
   }
 
+  // ─── Sélection multiple & actions groupées ──────────────────────────────────
+
+  function keyFor(item: UnifiedItem): string {
+    return `${item.kind}-${item.id}`;
+  }
+
+  function toggleSelection(key: string, selected: boolean) {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (selected) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }
+
+  function toggleSelectAll(selected: boolean) {
+    if (!selected) {
+      setSelectedKeys(new Set());
+      return;
+    }
+    setSelectedKeys(new Set(filteredItems.map(keyFor)));
+  }
+
+  function clearSelection() {
+    setSelectedKeys(new Set());
+  }
+
+  // Noms de fichier dé-dupliqués pour l'archive ZIP : en cas de collision,
+  // on suffixe avec "(2)", "(3)", etc., avant l'extension.
+  function uniquify(names: Set<string>, candidate: string): string {
+    if (!names.has(candidate)) {
+      names.add(candidate);
+      return candidate;
+    }
+    const dot = candidate.lastIndexOf('.');
+    const base = dot > 0 ? candidate.slice(0, dot) : candidate;
+    const ext = dot > 0 ? candidate.slice(dot) : '';
+    let i = 2;
+    while (names.has(`${base} (${i})${ext}`)) i++;
+    const name = `${base} (${i})${ext}`;
+    names.add(name);
+    return name;
+  }
+
+  function triggerBlobDownload(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const link = window.document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleBulkDownload() {
+    if (selectedKeys.size === 0 || bulkBusy) return;
+    const selected = filteredItems.filter((it) => selectedKeys.has(keyFor(it)));
+    if (selected.length === 0) return;
+
+    setBulkBusy(true);
+    try {
+      // Un seul élément → téléchargement direct dans son format natif.
+      if (selected.length === 1) {
+        const it = selected[0];
+        if (it.kind === 'doc') {
+          const blob = await buildDocxBlob(it.doc.contentRaw ?? it.doc.content ?? '');
+          triggerBlobDownload(blob, `${it.title}.docx`);
+          await logAudit({
+            dossierId: dossier.id,
+            entityType: 'document',
+            entityId: it.id,
+            action: 'download',
+          });
+        } else {
+          handleDownloadAttachment(it.id, it.title);
+        }
+        return;
+      }
+
+      // Plusieurs éléments → archive ZIP.
+      const zip = new JSZip();
+      const usedNames = new Set<string>();
+      for (const it of selected) {
+        if (it.kind === 'doc') {
+          const blob = await buildDocxBlob(it.doc.contentRaw ?? it.doc.content ?? '');
+          const name = uniquify(usedNames, `${it.title}.docx`);
+          zip.file(name, blob);
+        } else {
+          const fresh = await db.attachments.get(it.id);
+          const blob = fresh?.blob ?? it.attachment.blob;
+          if (!blob) continue;
+          const name = uniquify(usedNames, it.title);
+          zip.file(name, blob);
+        }
+      }
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const stamp = new Date().toISOString().slice(0, 10);
+      const safeRef = (dossier.reference || 'documents').replace(/[^A-Za-z0-9._-]+/g, '-');
+      triggerBlobDownload(zipBlob, `${safeRef}-documents-${stamp}.zip`);
+
+      for (const it of selected) {
+        await logAudit({
+          dossierId: dossier.id,
+          entityType: it.kind === 'doc' ? 'document' : 'attachment',
+          entityId: it.id,
+          action: 'download',
+        });
+      }
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (selectedKeys.size === 0 || bulkBusy) return;
+    const selected = filteredItems.filter((it) => selectedKeys.has(keyFor(it)));
+    if (selected.length === 0) return;
+    const count = selected.length;
+    if (!confirm(`Supprimer définitivement ${count} élément${count > 1 ? 's' : ''} ?`)) return;
+
+    setBulkBusy(true);
+    try {
+      for (const it of selected) {
+        if (it.kind === 'doc') await deleteDocument(it.id);
+        else await deleteAttachment(it.id);
+      }
+      clearSelection();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   return (
     <>
       <div
@@ -594,12 +723,65 @@ export function DossierDocumentsTab({ dossier }: Props) {
           <h3 className="text-sm font-semibold mb-2 text-[var(--color-text)]">
             Documents ({(docs?.length ?? 0) + (attachments?.length ?? 0)})
           </h3>
+          {selectedKeys.size > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-md bg-[var(--color-primary-light)] text-[var(--color-primary)] text-sm">
+              <span className="font-medium">
+                {selectedKeys.size} sélectionné{selectedKeys.size > 1 ? 's' : ''}
+              </span>
+              <button
+                onClick={clearSelection}
+                disabled={bulkBusy}
+                className="text-xs underline hover:opacity-80 disabled:opacity-50"
+              >
+                Annuler la sélection
+              </button>
+              <div className="flex-1" />
+              <button
+                onClick={handleBulkDownload}
+                disabled={bulkBusy}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium',
+                  'bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-50'
+                )}
+                title={selectedKeys.size > 1 ? 'Télécharger (ZIP)' : 'Télécharger'}
+              >
+                <Download className="w-3.5 h-3.5" />
+                Télécharger{selectedKeys.size > 1 ? ' (ZIP)' : ''}
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkBusy}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium',
+                  'bg-red-500 text-white hover:bg-red-600 disabled:opacity-50'
+                )}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Supprimer
+              </button>
+            </div>
+          )}
           <div className="border border-[var(--color-border)] rounded-md overflow-hidden">
-            <div className="grid grid-cols-[1fr_200px_120px_100px_130px_100px] gap-3 px-4 py-2 text-xs text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+            <div className="grid grid-cols-[28px_minmax(0,1fr)_160px_110px_110px_80px] gap-3 px-4 py-2 text-xs text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+              <input
+                type="checkbox"
+                aria-label="Tout sélectionner"
+                checked={
+                  filteredItems.length > 0 &&
+                  filteredItems.every((it) => selectedKeys.has(keyFor(it)))
+                }
+                ref={(el) => {
+                  if (!el) return;
+                  const someSelected = filteredItems.some((it) => selectedKeys.has(keyFor(it)));
+                  const allSelected = filteredItems.length > 0 && filteredItems.every((it) => selectedKeys.has(keyFor(it)));
+                  el.indeterminate = someSelected && !allSelected;
+                }}
+                onChange={(e) => toggleSelectAll(e.target.checked)}
+                className="cursor-pointer"
+              />
               <span>Titre</span>
               <span>Catégorie</span>
               <span>Statut</span>
-              <span className="text-right">Taille</span>
               <span className="text-right">Modifié</span>
               <span />
             </div>
@@ -610,14 +792,29 @@ export function DossierDocumentsTab({ dossier }: Props) {
               </div>
             ) : (
               filteredItems.map((item) => {
+                const key = keyFor(item);
+                const isSelected = selectedKeys.has(key);
                 if (item.kind === 'doc') {
                   const d = item.doc;
                   return (
                     <div
                       key={`doc-${item.id}`}
                       onClick={() => router.push(`/documents/${item.id}`)}
-                      className="grid grid-cols-[1fr_200px_120px_100px_130px_100px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
+                      className={cn(
+                        'grid grid-cols-[28px_minmax(0,1fr)_160px_110px_110px_80px] gap-3 px-4 py-2.5 text-sm items-center cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group',
+                        isSelected
+                          ? 'bg-[var(--color-primary-light)]/40'
+                          : 'hover:bg-[var(--color-surface-raised)]'
+                      )}
                     >
+                      <input
+                        type="checkbox"
+                        aria-label={`Sélectionner ${item.title}`}
+                        checked={isSelected}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => toggleSelection(key, e.target.checked)}
+                        className="cursor-pointer"
+                      />
                       <div className="flex items-center gap-2 min-w-0">
                         <FileTypeIcon kind="mylaw" size={16} />
                         <span className="truncate font-medium">{item.title}</span>
@@ -652,9 +849,6 @@ export function DossierDocumentsTab({ dossier }: Props) {
                           </option>
                         ))}
                       </select>
-                      <span className="text-xs text-right tabular-nums text-[var(--color-text-muted)]">
-                        {item.wordCount ?? 0} mots
-                      </span>
                       <span className="text-xs text-right text-[var(--color-text-muted)]">
                         {formatDateTime(item.updatedAt)}
                       </span>
@@ -676,8 +870,21 @@ export function DossierDocumentsTab({ dossier }: Props) {
                   <div
                     key={`att-${item.id}`}
                     onClick={() => handleOpenAttachment(a)}
-                    className="grid grid-cols-[1fr_200px_120px_100px_130px_100px] gap-3 px-4 py-2.5 text-sm items-center hover:bg-[var(--color-surface-raised)] cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group"
+                    className={cn(
+                      'grid grid-cols-[28px_minmax(0,1fr)_160px_110px_110px_80px] gap-3 px-4 py-2.5 text-sm items-center cursor-pointer border-b border-[var(--color-border)] last:border-b-0 group',
+                      isSelected
+                        ? 'bg-[var(--color-primary-light)]/40'
+                        : 'hover:bg-[var(--color-surface-raised)]'
+                    )}
                   >
+                    <input
+                      type="checkbox"
+                      aria-label={`Sélectionner ${item.title}`}
+                      checked={isSelected}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => toggleSelection(key, e.target.checked)}
+                      className="cursor-pointer"
+                    />
                     <div className="flex items-center gap-2 min-w-0">
                       <FileTypeIcon kind={detectFileKind(item.title, item.mimeType)} size={16} />
                       <span className="truncate font-medium">{item.title}</span>
@@ -687,9 +894,6 @@ export function DossierDocumentsTab({ dossier }: Props) {
                     </span>
                     <span className="text-xs text-[var(--color-text-muted)] truncate">
                       {item.mimeType || '—'}
-                    </span>
-                    <span className="text-xs text-right tabular-nums text-[var(--color-text-muted)]">
-                      {formatBytes(item.size)}
                     </span>
                     <span className="text-xs text-right text-[var(--color-text-muted)]">
                       {formatDateTime(item.updatedAt)}

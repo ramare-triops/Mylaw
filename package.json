@@ -36,6 +36,7 @@
     "@tiptap/extension-character-count": "^2.27.2",
     "dexie": "^3.2.7",
     "dexie-react-hooks": "^1.1.7",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.378.0",
     "@radix-ui/react-dialog": "^1.0.5",
     "@radix-ui/react-dropdown-menu": "^2.0.6",
