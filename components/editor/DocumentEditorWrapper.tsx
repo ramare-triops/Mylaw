@@ -45,6 +45,8 @@ import { VariablePopup } from './VariablePopup'
 import { FillAllVariablesDialog } from './FillAllVariablesDialog'
 import { DocumentBricksPanel, DRAG_BRICK_KEY, brickContentToHtml } from './DocumentBricksPanel'
 import type { Brick } from './DocumentBricksPanel'
+import { DRAG_FIELD_KEY } from '@/components/templates/TemplateFieldsPanel'
+import type { TemplateField } from '@/components/templates/TemplateFieldsPanel'
 import { BrickIntervenantPicker } from './BrickIntervenantPicker'
 import { BrickMarginIcons, wrapBrickHtmlWithMarker } from './BrickMarginIcons'
 import { contactVariableValue } from '@/lib/contact-variables'
@@ -171,6 +173,28 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
   const expansionsRef                 = useRef<TextExpansionEntry[]>([])
 
   const editorRef = useRef<Editor | null>(null)
+
+  // Champs insérés depuis le panneau « Champs » de la boîte à outils.
+  // Ephémère : ce n'est pas persisté côté document (le modèle est le seul
+  // porteur de définitions de champs) — on le suit uniquement pour que le
+  // panneau puisse signaler les presets déjà insérés.
+  const [docFields, setDocFields] = useState<TemplateField[]>([])
+  const docFieldsRef = useRef<TemplateField[]>(docFields)
+  useEffect(() => { docFieldsRef.current = docFields }, [docFields])
+
+  function generateFieldId(): string {
+    return Math.random().toString(36).slice(2, 9)
+  }
+
+  const handleInsertVariable = useCallback((name: string) => {
+    const ed = editorRef.current
+    if (!ed) return
+    ed.chain().focus().insertVariable(name).run()
+    setTimeout(() => {
+      const c = editorRef.current ? countVariables(editorRef.current) : 0
+      setVariableCount(c)
+    }, 50)
+  }, [])
 
   const [activeVariable, setActiveVariable] = useState<{ name: string; pos: number } | null>(null)
   const [popupAnchor, setPopupAnchor]       = useState<HTMLElement | null>(null)
@@ -345,8 +369,44 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     }, 50)
   }, [])
 
-  // ── Drop d'une brique depuis le panneau ─────────────────────────────────
+  // ── Drop d'une brique ou d'un champ depuis le panneau ───────────────────
   const handleEditorDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // 1) Drop d'un champ (variable)
+    const fieldRaw = e.dataTransfer.getData(DRAG_FIELD_KEY)
+    if (fieldRaw) {
+      e.preventDefault()
+      let data: { name: string; label: string; type: TemplateField['type']; placeholder: string }
+      try { data = JSON.parse(fieldRaw) } catch { return }
+      const ed = editorRef.current
+      if (!ed) return
+      const pos = ed.view.posAtCoords({ left: e.clientX, top: e.clientY })
+      if (pos) ed.chain().focus().setTextSelection(pos.pos).insertVariable(data.name).run()
+      else ed.chain().focus().insertVariable(data.name).run()
+      const current = docFieldsRef.current
+      if (!current.some((f) => f.name === data.name)) {
+        const newField: TemplateField = {
+          id: generateFieldId(),
+          name: data.name,
+          label: data.label,
+          type: data.type,
+          defaultValue: '',
+          required: false,
+          placeholder: data.placeholder,
+        }
+        setDocFields((prev) => {
+          const next = [...prev, newField]
+          docFieldsRef.current = next
+          return next
+        })
+      }
+      setTimeout(() => {
+        const c = editorRef.current ? countVariables(editorRef.current) : 0
+        setVariableCount(c)
+      }, 50)
+      return
+    }
+
+    // 2) Drop d'une brique depuis le panneau
     const brickData = e.dataTransfer.getData(DRAG_BRICK_KEY)
     if (!brickData) return // laisse TipTap gérer les autres drops
     e.preventDefault()
@@ -598,8 +658,11 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
             className="flex-1 overflow-y-auto overflow-x-auto bg-[#e8e8e8] dark:bg-[#2a2a2a] px-8 py-8"
             onDrop={handleEditorDrop}
             onDragOver={(e) => {
-              // Autorise le drop de briques
-              if (e.dataTransfer.types.includes(DRAG_BRICK_KEY)) e.preventDefault()
+              // Autorise le drop de briques et de champs
+              if (
+                e.dataTransfer.types.includes(DRAG_BRICK_KEY) ||
+                e.dataTransfer.types.includes(DRAG_FIELD_KEY)
+              ) e.preventDefault()
             }}
           >
             <div
@@ -627,10 +690,13 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
             </div>
           </div>
 
-          {/* Panneau Boîte à outils (briques) */}
+          {/* Panneau Boîte à outils (briques + champs) */}
           <DocumentBricksPanel
             onInsertBrick={handleInsertBrick}
             dossierId={document.dossierId}
+            fields={docFields}
+            onFieldsChange={setDocFields}
+            onInsertVariable={handleInsertVariable}
           />
         </div>
 
