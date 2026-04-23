@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 64" role="img" aria-label="Mylaw">
+  <defs>
+    
+  </defs>
+  <rect class="ml-bg" x="0" y="0" width="64" height="64" rx="6"></rect>
+  <rect class="ml-fg" x="14" y="18" width="4" height="30"></rect>
+  <rect class="ml-fg" x="30" y="18" width="4" height="30"></rect>
+  <rect class="ml-fg" x="46" y="18" width="4" height="30"></rect>
+  <rect class="ml-accent" x="10" y="14" width="44" height="3"></rect>
+  <rect class="ml-fg" x="10" y="48" width="44" height="2"></rect>
+  <text class="ml-word" x="80" y="42">Mylaw</text>
+</svg>

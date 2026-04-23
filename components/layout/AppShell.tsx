@@ -11,23 +11,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { sidebarCollapsed } = useUIState();
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[var(--color-surface)]">
-      {/* Sidebar */}
+    <div className="flex h-screen overflow-hidden bg-[var(--bg-canvas)]">
       <Sidebar />
 
-      {/* Main */}
       <div
         className={cn(
-          'flex flex-col flex-1 min-w-0 transition-all duration-150',
-          sidebarCollapsed ? 'ml-[52px]' : 'ml-[var(--sidebar-width)]'
+          'flex min-w-0 flex-1 flex-col',
+          'transition-[margin] duration-fast ease-standard',
+          sidebarCollapsed ? 'ml-[64px]' : 'ml-sidebar',
         )}
       >
         <Topbar />
         <TabBar />
-        <main className="flex-1 overflow-auto p-0">{children}</main>
+        <main className="flex-1 overflow-auto">{children}</main>
       </div>
 
-      {/* Floating AI Panel */}
       <AIPanel />
     </div>
   );

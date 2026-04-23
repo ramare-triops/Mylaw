@@ -1,96 +1,152 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
-  FileText,
-  FolderKanban,
+  Folder,
   Wrench,
+  FileText,
+  Settings,
+  ChevronsLeft,
+  ChevronsRight,
+  ChevronsUpDown,
+  Plus,
   FileCode,
   Sparkles,
-  Settings,
-  ChevronLeft,
-  ChevronRight,
-  Scale,
 } from 'lucide-react';
 import { useUIState } from '@/components/providers/UIStateProvider';
+import { Avatar, Button, Eyebrow } from '@/components/ui';
+import { MylawLogo } from '@/components/ui/MylawLogo';
 import { cn } from '@/lib/utils';
 
-const NAV_ITEMS = [
-  { href: '/', label: 'Tableau de bord', icon: LayoutDashboard },
-  { href: '/dossiers', label: 'Dossiers', icon: FolderKanban },
-  { href: '/documents', label: 'Documents', icon: FileText },
-  { href: '/tools', label: 'Outils', icon: Wrench },
-  { href: '/templates', label: 'Mod\u00e8les', icon: FileCode },
-  { href: '/ai', label: 'Intelligence IA', icon: Sparkles },
-  { href: '/settings', label: 'Param\u00e8tres', icon: Settings },
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
+
+const NAV_ITEMS: NavItem[] = [
+  { href: '/',          label: 'Tableau de bord', icon: LayoutDashboard },
+  { href: '/dossiers',  label: 'Dossiers',        icon: Folder          },
+  { href: '/documents', label: 'Documents',       icon: FileText        },
+  { href: '/tools',     label: 'Outils',          icon: Wrench          },
+  { href: '/templates', label: 'Modèles',         icon: FileCode        },
+  { href: '/ai',        label: 'Assistant IA',    icon: Sparkles        },
+  { href: '/settings',  label: 'Paramètres',      icon: Settings        },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { sidebarCollapsed, toggleSidebar } = useUIState();
+
+  const isActive = (href: string) =>
+    pathname === href || (href !== '/' && pathname.startsWith(href));
 
   return (
     <aside
       className={cn(
-        'fixed top-0 left-0 h-full flex flex-col z-20 transition-all duration-150',
-        'bg-[var(--color-sidebar)] border-r border-[var(--color-border)]',
-        sidebarCollapsed ? 'w-[52px]' : 'w-[var(--sidebar-width)]'
+        'fixed left-0 top-0 z-20 flex h-full flex-col',
+        'border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]',
+        'transition-[width] duration-fast ease-standard',
+        sidebarCollapsed ? 'w-[64px]' : 'w-sidebar',
       )}
     >
-      {/* Logo */}
+      {/* Brand */}
       <div
         className={cn(
-          'flex items-center gap-2 px-3 border-b border-[var(--color-border)]',
-          'h-[var(--topbar-height)]'
+          'flex items-center gap-2.5',
+          sidebarCollapsed ? 'justify-center px-2' : 'px-4',
+          'pt-4 pb-5',
         )}
       >
-        <Scale className="w-5 h-5 text-[var(--color-primary)] flex-shrink-0" />
+        <MylawLogo size={28} />
         {!sidebarCollapsed && (
-          <span className="font-bold text-[var(--color-primary)] tracking-tight text-base">
+          <span className="font-semibold text-[var(--fg-primary)] tracking-[-0.02em] text-[16px] leading-none">
             Mylaw
           </span>
         )}
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 py-2 overflow-y-auto">
+      {/* Quick create */}
+      <div className={cn(sidebarCollapsed ? 'px-2' : 'px-3', 'pb-3')}>
+        <Button
+          variant="primary"
+          size="md"
+          fullWidth
+          icon={<Plus className="h-3.5 w-3.5" />}
+          onClick={() => router.push('/dossiers')}
+          title="Nouveau dossier"
+        >
+          {!sidebarCollapsed && 'Nouveau dossier'}
+        </Button>
+      </div>
+
+      {/* Nav */}
+      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+        {!sidebarCollapsed && (
+          <Eyebrow className="px-2 pb-2 pt-3">Navigation</Eyebrow>
+        )}
         {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || (href !== '/' && pathname.startsWith(href));
+          const active = isActive(href);
           return (
             <Link
               key={href}
               href={href}
-              className={cn(
-                'flex items-center gap-3 px-3 py-2 mx-1 rounded-md text-sm transition-colors duration-100 min-h-[44px]',
-                'hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)]',
-                active
-                  ? 'bg-[var(--color-primary-light)] text-[var(--color-primary)] font-medium'
-                  : 'text-[var(--color-text-muted)]'
-              )}
               title={sidebarCollapsed ? label : undefined}
+              className={cn(
+                'flex items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13px]',
+                'transition-colors duration-fast ease-standard',
+                active
+                  ? 'bg-[var(--navy-900)] font-semibold text-[var(--ivory-50)]'
+                  : 'font-medium text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-alt)] hover:text-[var(--fg-primary)]',
+                sidebarCollapsed && 'justify-center px-0',
+              )}
             >
-              <Icon className="w-4 h-4 flex-shrink-0" />
+              <Icon className="h-4 w-4 shrink-0" />
               {!sidebarCollapsed && <span className="truncate">{label}</span>}
             </Link>
           );
         })}
       </nav>
 
+      {/* Account footer */}
+      <div
+        className={cn(
+          'flex items-center gap-2.5 border-t border-[var(--border-subtle)]',
+          sidebarCollapsed ? 'justify-center px-2 py-3' : 'px-3 py-3',
+        )}
+      >
+        <Avatar initials="CM" size={28} variant="brand" />
+        {!sidebarCollapsed && (
+          <>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[12px] font-semibold leading-tight text-[var(--fg-primary)]">
+                Me Claire Moreau
+              </div>
+              <div className="truncate text-[11px] leading-tight text-[var(--fg-tertiary)]">
+                Cabinet Moreau &amp; Associés
+              </div>
+            </div>
+            <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-[var(--fg-tertiary)]" />
+          </>
+        )}
+      </div>
+
       {/* Collapse toggle */}
       <button
         onClick={toggleSidebar}
         className={cn(
-          'flex items-center justify-center h-10 border-t border-[var(--color-border)]',
-          'text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors'
+          'flex h-9 items-center justify-center border-t border-[var(--border-subtle)]',
+          'text-[var(--fg-tertiary)] transition-colors duration-fast hover:text-[var(--fg-primary)]',
         )}
-        aria-label={sidebarCollapsed ? 'D\u00e9plier la sidebar' : 'R\u00e9duire la sidebar'}
+        aria-label={sidebarCollapsed ? 'Déplier la sidebar' : 'Réduire la sidebar'}
       >
         {sidebarCollapsed ? (
-          <ChevronRight className="w-4 h-4" />
+          <ChevronsRight className="h-4 w-4" />
         ) : (
-          <ChevronLeft className="w-4 h-4" />
+          <ChevronsLeft className="h-4 w-4" />
         )}
       </button>
     </aside>
