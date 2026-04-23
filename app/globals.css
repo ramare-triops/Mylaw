@@ -108,23 +108,23 @@
   --ivory-300: var(--lin-300);
 
   /* ============ SEMANTIC — LIGHT THEME ============ */
-  --bg-canvas:      var(--lin-50);
+  --bg-canvas:      #FFFFFF;
   --bg-surface:     #FFFFFF;
-  --bg-surface-alt: var(--lin-100);
-  --bg-sunken:      var(--lin-200);
+  --bg-surface-alt: #F6F7F8;
+  --bg-sunken:      #EFF1F4;
   --bg-inverse:     var(--verdigris-900);
 
   --fg-primary:   var(--encre-999);
   --fg-secondary: var(--slate-600);
   --fg-tertiary:  var(--slate-500);
   --fg-disabled:  var(--slate-400);
-  --fg-on-brand:  var(--lin-50);
+  --fg-on-brand:  #FFFFFF;
   --fg-on-accent: #FFFFFF;
   --fg-link:      var(--verdigris-700);
 
-  --border-subtle:  #E6DFC9;
-  --border-default: #D9D0AE;
-  --border-strong:  #C3B88C;
+  --border-subtle:  #E7E9EE;
+  --border-default: #D4D8E0;
+  --border-strong:  #B4BAC5;
   --border-brand:   var(--verdigris-900);
 
   --brand:          var(--verdigris-900);
