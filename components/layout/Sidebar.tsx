@@ -99,7 +99,7 @@ export function Sidebar() {
                 'flex items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13px]',
                 'transition-colors duration-fast ease-standard',
                 active
-                  ? 'bg-[var(--navy-900)] font-semibold text-[var(--ivory-50)]'
+                  ? 'bg-[var(--brand)] font-semibold text-[var(--fg-on-brand)]'
                   : 'font-medium text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-alt)] hover:text-[var(--fg-primary)]',
                 sidebarCollapsed && 'justify-center px-0',
               )}

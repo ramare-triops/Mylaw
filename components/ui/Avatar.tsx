@@ -12,10 +12,10 @@ export interface AvatarProps {
 }
 
 const PALETTE: Record<AvatarVariant, { bg: string; fg: string; border?: string }> = {
-  brand:  { bg: 'var(--navy-900)',   fg: 'var(--ivory-50)' },
-  accent: { bg: 'var(--gold-500)',   fg: 'var(--navy-950)' },
-  steel:  { bg: 'var(--navy-600)',   fg: 'var(--ivory-50)' },
-  paper:  { bg: 'var(--ivory-100)',  fg: 'var(--navy-900)', border: '1px solid var(--ivory-300)' },
+  brand:  { bg: 'var(--brand)',          fg: 'var(--fg-on-brand)' },
+  accent: { bg: 'var(--accent)',         fg: 'var(--fg-on-accent)' },
+  steel:  { bg: 'var(--verdigris-600)',  fg: 'var(--lin-50)' },
+  paper:  { bg: 'var(--lin-100)',        fg: 'var(--brand)', border: '1px solid var(--lin-300)' },
 };
 
 export function Avatar({

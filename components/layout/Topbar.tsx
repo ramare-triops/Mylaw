@@ -114,7 +114,7 @@ export function Topbar() {
           <Bell className="h-[18px] w-[18px]" />
           <span
             className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full"
-            style={{ background: 'var(--gold-500)' }}
+            style={{ background: 'var(--accent)' }}
             aria-hidden
           />
         </button>

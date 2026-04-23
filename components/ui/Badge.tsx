@@ -11,13 +11,13 @@ export interface BadgeProps {
 }
 
 const STYLES: Record<BadgeVariant, { bg: string; fg: string }> = {
-  neutral: { bg: 'var(--slate-50)',  fg: 'var(--slate-600)' },
-  success: { bg: 'var(--success-bg)', fg: 'var(--success)'  },
-  warning: { bg: 'var(--warning-bg)', fg: 'var(--warning)'  },
-  danger:  { bg: 'var(--danger-bg)',  fg: 'var(--danger)'   },
-  info:    { bg: 'var(--info-bg)',    fg: 'var(--info)'     },
-  brand:   { bg: 'var(--navy-900)',   fg: 'var(--ivory-50)' },
-  accent:  { bg: 'var(--gold-100)',   fg: 'var(--gold-900)' },
+  neutral: { bg: 'var(--slate-50)',   fg: 'var(--slate-600)' },
+  success: { bg: 'var(--success-bg)', fg: 'var(--success)'   },
+  warning: { bg: 'var(--warning-bg)', fg: 'var(--warning)'   },
+  danger:  { bg: 'var(--danger-bg)',  fg: 'var(--danger)'    },
+  info:    { bg: 'var(--info-bg)',    fg: 'var(--info)'      },
+  brand:   { bg: 'var(--brand)',      fg: 'var(--fg-on-brand)' },
+  accent:  { bg: 'var(--terre-100)',  fg: 'var(--terre-800)' },
 };
 
 export function Badge({ variant = 'neutral', dot = false, children, className }: BadgeProps) {

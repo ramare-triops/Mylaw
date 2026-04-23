@@ -3,8 +3,9 @@
 @tailwind utilities;
 
 /* ============================================================
-   MYLAW DESIGN SYSTEM — Colors, Type, Spacing, Radius, Shadows
-   Classique · institutionnel · navy / or / ivoire
+   MYLAW DESIGN SYSTEM — Palette Verdigris
+   Verdigris (primary · bronze patiné) · Émeraude (action · vigueur)
+   Terre (accent · chaleur) · Lin (papier) · Encre (texte)
    ============================================================ */
 
 /* Fraunces pour les moments éditoriaux (hero, empty states).
@@ -14,38 +15,56 @@
 :root {
   /* ============ CORE PALETTE ============ */
 
-  /* Bleu nuit — autorité, nuit d'étude */
-  --navy-950: #070E1C;
-  --navy-900: #0B1F3A;
-  --navy-800: #122C4E;
-  --navy-700: #1B3B65;
-  --navy-600: #27507F;
-  --navy-500: #3A6699;
-  --navy-400: #6687B3;
-  --navy-300: #9AB0CC;
-  --navy-200: #C8D3E2;
-  --navy-100: #E4EAF2;
-  --navy-50:  #F3F6FB;
+  /* Verdigris — primary (bronze patiné) */
+  --verdigris-50:  #F2F7F5;
+  --verdigris-100: #DEEEE8;
+  --verdigris-200: #B9DACE;
+  --verdigris-300: #85BAAE;
+  --verdigris-400: #529888;
+  --verdigris-500: #2D7566;
+  --verdigris-600: #1F5A4D;
+  --verdigris-700: #154438;
+  --verdigris-800: #10382D;
+  --verdigris-900: #0F3028;   /* brand primary */
+  --verdigris-950: #081A15;
 
-  /* Or — prestige, accent parcimonieux */
-  --gold-900: #6B4A05;
-  --gold-800: #8C6310;
-  --gold-700: #A87A1A;
-  --gold-600: #C79327;
-  --gold-500: #E0B243;
-  --gold-400: #ECC76A;
-  --gold-300: #F3D98E;
-  --gold-200: #F9E7B2;
-  --gold-100: #FDF2D4;
-  --gold-50:  #FEF9E9;
+  /* Émeraude — action, vigueur */
+  --emeraude-50:  #EEF8F3;
+  --emeraude-100: #D5EFE1;
+  --emeraude-200: #ABDCC1;
+  --emeraude-300: #7ECA9E;
+  --emeraude-400: #4FB880;
+  --emeraude-500: #33A06B;
+  --emeraude-600: #1E7F5C;   /* action */
+  --emeraude-700: #155F44;
+  --emeraude-800: #0E4631;
+  --emeraude-900: #082F1F;
 
-  /* Ivoire — papier, repos visuel */
-  --ivory-50:  #FAF8F3;
-  --ivory-100: #F5F2EC;
-  --ivory-200: #EDE8DE;
-  --ivory-300: #DDD6C6;
+  /* Terre — accent, chaleur (terracotta) */
+  --terre-50:  #FEF1EC;
+  --terre-100: #FDE2D6;
+  --terre-200: #FAC0AE;
+  --terre-300: #F69F86;
+  --terre-400: #F08160;
+  --terre-500: #E8623C;      /* accent */
+  --terre-600: #CC4D26;
+  --terre-700: #A33D1E;
+  --terre-800: #7A2E15;
+  --terre-900: #4D1B0C;
 
-  /* Ardoise — neutres froids */
+  /* Lin — papier, surfaces chaudes */
+  --lin-50:  #FAF5E6;         /* canvas papier */
+  --lin-100: #F3EDD9;
+  --lin-200: #E8E0C2;
+  --lin-300: #D9D0AE;
+  --lin-400: #C3B88C;
+
+  /* Encre — texte profond */
+  --encre-999: #0A1915;
+  --encre-900: #142822;
+  --encre-800: #1F3A32;
+
+  /* Ardoise — neutres froids (borders, texte secondaire) */
   --slate-950: #0A0F1A;
   --slate-900: #121826;
   --slate-800: #1E2637;
@@ -58,44 +77,77 @@
   --slate-100: #E7EAEF;
   --slate-50:  #F4F5F8;
 
-  /* ============ SEMANTIC — LIGHT THEME ============ */
-  --bg-canvas:      var(--ivory-50);
-  --bg-surface:     #FFFFFF;
-  --bg-surface-alt: var(--ivory-100);
-  --bg-sunken:      var(--ivory-200);
-  --bg-inverse:     var(--navy-900);
+  /* ============ LEGACY ALIASES (navy / gold / ivory → new palette) ============ */
+  /* Kept so existing components referencing the old names keep rendering. */
+  --navy-50:  var(--verdigris-50);
+  --navy-100: var(--verdigris-100);
+  --navy-200: var(--verdigris-200);
+  --navy-300: var(--verdigris-300);
+  --navy-400: var(--verdigris-400);
+  --navy-500: var(--verdigris-500);
+  --navy-600: var(--verdigris-600);
+  --navy-700: var(--verdigris-700);
+  --navy-800: var(--verdigris-800);
+  --navy-900: var(--verdigris-900);
+  --navy-950: var(--verdigris-950);
 
-  --fg-primary:   var(--navy-950);
+  --gold-50:  var(--terre-50);
+  --gold-100: var(--terre-100);
+  --gold-200: var(--terre-200);
+  --gold-300: var(--terre-300);
+  --gold-400: var(--terre-400);
+  --gold-500: var(--terre-500);
+  --gold-600: var(--terre-600);
+  --gold-700: var(--terre-700);
+  --gold-800: var(--terre-800);
+  --gold-900: var(--terre-900);
+
+  --ivory-50:  var(--lin-50);
+  --ivory-100: var(--lin-100);
+  --ivory-200: var(--lin-200);
+  --ivory-300: var(--lin-300);
+
+  /* ============ SEMANTIC — LIGHT THEME ============ */
+  --bg-canvas:      var(--lin-50);
+  --bg-surface:     #FFFFFF;
+  --bg-surface-alt: var(--lin-100);
+  --bg-sunken:      var(--lin-200);
+  --bg-inverse:     var(--verdigris-900);
+
+  --fg-primary:   var(--encre-999);
   --fg-secondary: var(--slate-600);
   --fg-tertiary:  var(--slate-500);
   --fg-disabled:  var(--slate-400);
-  --fg-on-brand:  var(--ivory-50);
-  --fg-on-accent: var(--navy-950);
-  --fg-link:      var(--navy-700);
+  --fg-on-brand:  var(--lin-50);
+  --fg-on-accent: #FFFFFF;
+  --fg-link:      var(--verdigris-700);
 
-  --border-subtle:  var(--slate-100);
-  --border-default: var(--slate-200);
-  --border-strong:  var(--slate-300);
-  --border-brand:   var(--navy-900);
+  --border-subtle:  #E6DFC9;
+  --border-default: #D9D0AE;
+  --border-strong:  #C3B88C;
+  --border-brand:   var(--verdigris-900);
 
-  --brand:          var(--navy-900);
-  --brand-hover:    var(--navy-800);
-  --brand-active:   var(--navy-950);
-  --brand-subtle:   var(--navy-50);
-  --accent:         var(--gold-500);
-  --accent-hover:   var(--gold-600);
-  --accent-subtle:  var(--gold-50);
+  --brand:          var(--verdigris-900);
+  --brand-hover:    var(--verdigris-800);
+  --brand-active:   var(--verdigris-950);
+  --brand-subtle:   var(--verdigris-50);
+  --accent:         var(--terre-500);
+  --accent-hover:   var(--terre-600);
+  --accent-subtle:  var(--terre-50);
+  --action:         var(--emeraude-600);
+  --action-hover:   var(--emeraude-700);
+  --action-subtle:  var(--emeraude-50);
 
-  --success:        #2E6B4F;
-  --success-bg:     #E8F1EC;
+  --success:        var(--emeraude-700);
+  --success-bg:     var(--emeraude-50);
   --warning:        #8A5A1C;
   --warning-bg:     #FBF0DD;
   --danger:         #8A2A2A;
   --danger-bg:      #F5E3E3;
-  --info:           var(--navy-700);
-  --info-bg:        var(--navy-50);
+  --info:           var(--verdigris-700);
+  --info-bg:        var(--verdigris-50);
 
-  --focus-ring:        #C9A961;
+  --focus-ring:        var(--terre-500);
   --focus-ring-offset: var(--bg-surface);
 
   /* ============ RADIUS ============ */
@@ -123,14 +175,14 @@
   --space-20: 80px;
   --space-24: 96px;
 
-  /* ============ SHADOWS — restrained, navy-tinted ============ */
-  --shadow-xs:   0 1px 0 rgba(11, 31, 58, 0.04);
-  --shadow-sm:   0 1px 2px rgba(11, 31, 58, 0.06), 0 1px 1px rgba(11, 31, 58, 0.04);
-  --shadow-md:   0 2px 4px rgba(11, 31, 58, 0.06), 0 4px 8px rgba(11, 31, 58, 0.04);
-  --shadow-lg:   0 4px 8px rgba(11, 31, 58, 0.06), 0 12px 24px rgba(11, 31, 58, 0.08);
-  --shadow-xl:   0 8px 16px rgba(11, 31, 58, 0.08), 0 24px 48px rgba(11, 31, 58, 0.12);
-  --shadow-inner: inset 0 1px 2px rgba(11, 31, 58, 0.06);
-  --shadow-focus: 0 0 0 3px rgba(201, 169, 97, 0.35);
+  /* ============ SHADOWS — restrained, verdigris-tinted ============ */
+  --shadow-xs:   0 1px 0 rgba(15, 48, 40, 0.05);
+  --shadow-sm:   0 1px 2px rgba(15, 48, 40, 0.07), 0 1px 1px rgba(15, 48, 40, 0.04);
+  --shadow-md:   0 2px 4px rgba(15, 48, 40, 0.07), 0 4px 8px rgba(15, 48, 40, 0.05);
+  --shadow-lg:   0 4px 8px rgba(15, 48, 40, 0.07), 0 12px 24px rgba(15, 48, 40, 0.09);
+  --shadow-xl:   0 8px 16px rgba(15, 48, 40, 0.09), 0 24px 48px rgba(15, 48, 40, 0.13);
+  --shadow-inner: inset 0 1px 2px rgba(15, 48, 40, 0.07);
+  --shadow-focus: 0 0 0 3px rgba(232, 98, 60, 0.35);
 
   /* ============ TYPOGRAPHY ============ */
   --font-sans:  'Inter', var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
@@ -183,8 +235,7 @@
   --topbar-h: 56px;
   --content-pad: 32px;
 
-  /* ============ LEGACY ALIASES ============
-     Kept so existing components keep working with the new palette. */
+  /* ============ LEGACY SEMANTIC ALIASES ============ */
   --color-primary:         var(--brand);
   --color-primary-hover:   var(--brand-hover);
   --color-primary-light:   var(--brand-subtle);
@@ -208,43 +259,46 @@
 /* ============ DARK THEME ============ */
 .dark,
 [data-theme="dark"] {
-  --bg-canvas:      var(--navy-950);
-  --bg-surface:     #0F1A2E;
-  --bg-surface-alt: #13223A;
-  --bg-sunken:      #091423;
-  --bg-inverse:     var(--ivory-50);
+  --bg-canvas:      #071410;
+  --bg-surface:     #0E1F19;
+  --bg-surface-alt: #152B23;
+  --bg-sunken:      #050F0C;
+  --bg-inverse:     var(--lin-50);
 
-  --fg-primary:   var(--ivory-50);
-  --fg-secondary: var(--slate-300);
-  --fg-tertiary:  var(--slate-400);
-  --fg-disabled:  var(--slate-600);
-  --fg-on-brand:  var(--ivory-50);
-  --fg-on-accent: var(--navy-950);
-  --fg-link:      var(--gold-400);
+  --fg-primary:   var(--lin-50);
+  --fg-secondary: #9CB3A6;
+  --fg-tertiary:  #6E8478;
+  --fg-disabled:  #4A5E54;
+  --fg-on-brand:  var(--lin-50);
+  --fg-on-accent: #FFFFFF;
+  --fg-link:      var(--terre-400);
 
-  --border-subtle:  #1A2840;
-  --border-default: #24365A;
-  --border-strong:  #32497A;
-  --border-brand:   var(--gold-500);
+  --border-subtle:  #14281F;
+  --border-default: #1E3A2E;
+  --border-strong:  #2E5244;
+  --border-brand:   var(--emeraude-500);
 
-  --brand:          var(--gold-500);
-  --brand-hover:    var(--gold-400);
-  --brand-active:   var(--gold-600);
-  --brand-subtle:   #1A2338;
-  --accent:         var(--gold-500);
-  --accent-hover:   var(--gold-400);
-  --accent-subtle:  #2A2413;
+  --brand:          var(--emeraude-500);
+  --brand-hover:    var(--emeraude-400);
+  --brand-active:   var(--emeraude-600);
+  --brand-subtle:   #102921;
+  --accent:         var(--terre-500);
+  --accent-hover:   var(--terre-400);
+  --accent-subtle:  #2B1A12;
+  --action:         var(--emeraude-500);
+  --action-hover:   var(--emeraude-400);
+  --action-subtle:  #102921;
 
-  --success:    #7FB69A;
-  --success-bg: #12261C;
+  --success:    var(--emeraude-400);
+  --success-bg: #0E2A1F;
   --warning:    #D4A968;
   --warning-bg: #2B200F;
   --danger:     #D47070;
   --danger-bg:  #2B1414;
-  --info:       var(--gold-400);
-  --info-bg:    #13223A;
+  --info:       var(--emeraude-300);
+  --info-bg:    #102921;
 
-  --focus-ring:  var(--gold-400);
+  --focus-ring:  var(--terre-400);
   --focus-ring-offset: var(--bg-surface);
 
   --shadow-xs:   0 1px 0 rgba(0, 0, 0, 0.3);
@@ -253,7 +307,7 @@
   --shadow-lg:   0 4px 8px rgba(0, 0, 0, 0.4), 0 12px 24px rgba(0, 0, 0, 0.5);
   --shadow-xl:   0 8px 16px rgba(0, 0, 0, 0.5), 0 24px 48px rgba(0, 0, 0, 0.6);
   --shadow-inner: inset 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-focus: 0 0 0 3px rgba(214, 186, 127, 0.4);
+  --shadow-focus: 0 0 0 3px rgba(240, 129, 96, 0.4);
 }
 
 /* ============ BASE ============ */
@@ -373,7 +427,7 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 
-/* ============ FOCUS — ring d'or conforme au DS ============ */
+/* ============ FOCUS — ring terre ============ */
 :where(button, a, input, select, textarea, [tabindex]):focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
