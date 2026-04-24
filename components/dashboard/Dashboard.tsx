@@ -4,9 +4,9 @@ import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useRouter } from 'next/navigation';
 import { addDays, differenceInCalendarDays } from 'date-fns';
-import { Check } from 'lucide-react';
+import { Check, AlertTriangle, Bell } from 'lucide-react';
 import { db } from '@/lib/db';
-import { Badge, Button, Card, Eyebrow } from '@/components/ui';
+import { Button, Card, Eyebrow } from '@/components/ui';
 import { useCabinetIdentity } from '@/lib/hooks/useCabinetIdentity';
 import type { Deadline, DeadlineType } from '@/types';
 import { PendingDossiersCard } from './PendingDossiersCard';
@@ -28,11 +28,17 @@ const DEADLINE_TYPE_LABEL: Record<DeadlineType, string> = {
   other:      'Échéance',
 };
 
-type Tone = 'neutral' | 'info' | 'warning' | 'danger';
+type Tone = 'neutral' | 'info' | 'warning' | 'danger' | 'overdue';
 
 function toneForDeadline(days: number, type: DeadlineType): Tone {
-  if (days < 0) return 'danger';
-  if (type === 'peremption' || type === 'forclusion') return 'danger';
+  if (days < 0) return 'overdue';
+  if (days === 0) return 'overdue';
+  if (days <= 1) return 'danger';
+  if (type === 'peremption' || type === 'forclusion') {
+    // Péremption/forclusion : critique même à moyenne distance.
+    if (days <= 7) return 'danger';
+    if (days <= 15) return 'warning';
+  }
   if (days <= 3) return 'danger';
   if (days <= 7) return 'warning';
   return 'neutral';
@@ -41,7 +47,8 @@ function toneForDeadline(days: number, type: DeadlineType): Tone {
 function formatRelativeDays(days: number): string {
   if (days < 0)   return `J+${Math.abs(days)}`;
   if (days === 0) return "Aujourd'hui";
-  return `${days} j.`;
+  if (days === 1) return 'Demain';
+  return `J-${days}`;
 }
 
 function currencyEUR(amount: number): string {
@@ -87,13 +94,13 @@ export function Dashboard() {
   const kpis = useMemo(() => {
     const all = dossiers ?? [];
 
-    // « Dossiers actifs » : ratio "actif strict" / "ouvert (non clôturé)".
-    // - dossiers ouverts = tout sauf 'archived' et 'closed'
-    // - dossiers actifs  = uniquement status === 'active'
-    const openDossiers = all.filter(
-      (d) => d.status !== 'archived' && d.status !== 'closed',
-    );
-    const activeDossiers = all.filter((d) => d.status === 'active');
+    // « Dossiers actifs » : dossiers sur lesquels l'utilisateur travaille
+    // actuellement = statut 'active' OU 'pending'. Les dossiers au statut
+    // 'open' (créés mais pas encore travaillés) ne sont PAS comptés ici
+    // pour éviter qu'un historique de tests ne gonfle le compteur.
+    const active = all.filter((d) => d.status === 'active');
+    const pending = all.filter((d) => d.status === 'pending');
+    const activeCount = active.length + pending.length;
 
     // « Échéances ≤ 7 j » : nombre de délais non terminés dont la date
     // d'échéance tombe dans la fenêtre [now, now + 7 jours].
@@ -112,10 +119,15 @@ export function Dashboard() {
       {
         key: 'dossiers',
         k: 'Dossiers actifs',
-        v: `${activeDossiers.length} / ${openDossiers.length}`,
-        sub: openDossiers.length === 0
-          ? 'Aucun dossier ouvert'
-          : `${openDossiers.length} ouvert${openDossiers.length > 1 ? 's' : ''} · ${activeDossiers.length} actif${activeDossiers.length > 1 ? 's' : ''}`,
+        v: activeCount.toString(),
+        sub:
+          activeCount === 0
+            ? 'Aucun dossier en cours'
+            : pending.length > 0
+              ? `dont ${pending.length} en attente`
+              : active.length > 1
+                ? 'En cours'
+                : 'En cours',
         onClick: () => router.push('/dossiers'),
       },
       {
@@ -343,6 +355,65 @@ function computeMonthlyFees(_dossierId?: number): number {
   return 0;
 }
 
+// ─── Palette des tonalités ────────────────────────────────────────────
+// Chaque niveau d'urgence pilote simultanément :
+//   - la bande verticale de gauche (4 px, très visible)
+//   - le fond de la ligne (légère teinte colorée)
+//   - la couleur du numéro du jour
+//   - le badge J-N avec son icône
+// On accentue franchement le rouge pour attirer l'œil sur les échéances
+// dépassées ou imminentes.
+const TONE_STYLE: Record<
+  Tone,
+  { stripe: string; bg: string; hover: string; dayText: string; badgeBg: string; badgeText: string; icon: React.ElementType | null }
+> = {
+  overdue: {
+    stripe: 'bg-red-600',
+    bg: 'bg-red-50',
+    hover: 'hover:bg-red-100',
+    dayText: 'text-red-700',
+    badgeBg: 'bg-red-600',
+    badgeText: 'text-white',
+    icon: AlertTriangle,
+  },
+  danger: {
+    stripe: 'bg-red-500',
+    bg: 'bg-red-50/60',
+    hover: 'hover:bg-red-50',
+    dayText: 'text-red-600',
+    badgeBg: 'bg-red-500',
+    badgeText: 'text-white',
+    icon: Bell,
+  },
+  warning: {
+    stripe: 'bg-amber-500',
+    bg: 'bg-amber-50/60',
+    hover: 'hover:bg-amber-50',
+    dayText: 'text-amber-700',
+    badgeBg: 'bg-amber-500',
+    badgeText: 'text-white',
+    icon: null,
+  },
+  info: {
+    stripe: 'bg-sky-400',
+    bg: 'bg-transparent',
+    hover: 'hover:bg-[var(--bg-surface-alt)]',
+    dayText: 'text-[var(--fg-primary)]',
+    badgeBg: 'bg-sky-500',
+    badgeText: 'text-white',
+    icon: null,
+  },
+  neutral: {
+    stripe: 'bg-transparent',
+    bg: 'bg-transparent',
+    hover: 'hover:bg-[var(--bg-surface-alt)]',
+    dayText: 'text-[var(--fg-primary)]',
+    badgeBg: 'bg-[var(--slate-100,#e5e7eb)]',
+    badgeText: 'text-[var(--fg-secondary)]',
+    icon: null,
+  },
+};
+
 function DeadlineRow({
   day,
   monthLabel,
@@ -364,20 +435,24 @@ function DeadlineRow({
   onOpen: () => void;
   onDone: () => void;
 }) {
-  const badgeVariant =
-    tone === 'danger' ? 'danger'
-    : tone === 'warning' ? 'warning'
-    : tone === 'info' ? 'info'
-    : 'neutral';
+  const s = TONE_STYLE[tone];
+  const isUrgent = tone === 'overdue' || tone === 'danger';
+  const Icon = s.icon;
 
   return (
     <div
       className={
-        'flex w-full items-center gap-4 px-5 py-3.5 transition-colors ' +
-        'hover:bg-[var(--bg-surface-alt)] ' +
+        'relative flex w-full items-center gap-4 pl-4 pr-5 py-3.5 transition-colors ' +
+        s.bg + ' ' + s.hover + ' ' +
         (isFirst ? '' : 'border-t border-[var(--border-subtle)]')
       }
     >
+      {/* Bande verticale de gauche (stripe) */}
+      <span
+        aria-hidden
+        className={'pointer-events-none absolute left-0 top-0 bottom-0 w-1 ' + s.stripe}
+      />
+
       <button
         onClick={(e) => {
           e.stopPropagation();
@@ -386,43 +461,76 @@ function DeadlineRow({
         aria-label="Marquer l'échéance comme terminée"
         title="Marquer comme terminé"
         className={
-          'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border ' +
-          'border-[var(--border-default)] hover:border-emerald-500 hover:bg-emerald-50 ' +
-          'transition-colors'
+          'group flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border ' +
+          (isUrgent
+            ? 'border-red-400 bg-white hover:border-emerald-500 hover:bg-emerald-50'
+            : 'border-[var(--border-default)] hover:border-emerald-500 hover:bg-emerald-50') +
+          ' transition-colors'
         }
       >
-        <Check className="h-3.5 w-3.5 opacity-0 hover:opacity-100" />
+        <Check className="h-3.5 w-3.5 opacity-0 group-hover:opacity-100 text-emerald-600" />
       </button>
 
       <button onClick={onOpen} className="flex flex-1 items-center gap-4 text-left">
         <div className="w-14 shrink-0 text-center">
           <div
-            className="font-semibold text-[var(--fg-primary)] tabular-nums"
-            style={{ fontSize: 22, lineHeight: 1 }}
+            className={'font-bold tabular-nums ' + s.dayText}
+            style={{ fontSize: 26, lineHeight: 1 }}
           >
             {day}
           </div>
           <div
-            className="mt-1 uppercase text-[var(--fg-tertiary)]"
-            style={{ fontSize: 11, letterSpacing: '0.04em', fontWeight: 500 }}
+            className={
+              'mt-1 uppercase ' +
+              (isUrgent ? 'text-red-600 font-semibold' : 'text-[var(--fg-tertiary)] font-medium')
+            }
+            style={{ fontSize: 11, letterSpacing: '0.04em' }}
           >
             {monthLabel}
           </div>
         </div>
+
         <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold text-[var(--fg-primary)]" style={{ fontSize: 14 }}>
-            {title}
+          <div className="flex items-center gap-1.5">
+            {Icon && (
+              <Icon
+                className={
+                  'h-4 w-4 flex-shrink-0 ' +
+                  (tone === 'overdue' ? 'text-red-600 animate-pulse' : 'text-red-500')
+                }
+              />
+            )}
+            <div
+              className={
+                'truncate font-semibold ' +
+                (isUrgent ? 'text-[var(--fg-primary)]' : 'text-[var(--fg-primary)]')
+              }
+              style={{ fontSize: 14 }}
+            >
+              {title}
+            </div>
           </div>
           <div
-            className="mt-0.5 truncate text-[var(--fg-secondary)]"
+            className={
+              'mt-0.5 truncate ' +
+              (isUrgent ? 'text-red-700/80' : 'text-[var(--fg-secondary)]')
+            }
             style={{ fontSize: 12, lineHeight: 1.4 }}
           >
             {subtitle}
           </div>
         </div>
-        <Badge variant={badgeVariant} dot>
+
+        {/* Badge relatif — plus grand et plus contrasté */}
+        <span
+          className={
+            'inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 ' +
+            'text-[11px] font-bold uppercase tracking-wide whitespace-nowrap ' +
+            s.badgeBg + ' ' + s.badgeText
+          }
+        >
           {rel}
-        </Badge>
+        </span>
       </button>
     </div>
   );
