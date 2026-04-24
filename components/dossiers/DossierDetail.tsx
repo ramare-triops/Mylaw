@@ -12,10 +12,14 @@ import {
   Pencil,
   Trash2,
   FolderKanban,
+  PauseCircle,
+  PlayCircle,
+  Clock,
 } from 'lucide-react';
 import { db, deleteDossier, saveDossier } from '@/lib/db';
 import { cn, formatDate } from '@/lib/utils';
 import { NewDossierDialog } from './NewDossierDialog';
+import { PendingStatusDialog } from './PendingStatusDialog';
 import { DossierDocumentsTab } from './tabs/DossierDocumentsTab';
 import { DossierContactsTab } from './tabs/DossierContactsTab';
 import { DossierFinanceTab } from './tabs/DossierFinanceTab';
@@ -44,12 +48,35 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
   );
   const [activeTab, setActiveTab] = useState<TabKey>('documents');
   const [editOpen, setEditOpen] = useState(false);
+  const [pendingOpen, setPendingOpen] = useState(false);
 
   if (!dossier) return null;
 
   async function handleEdit(d: Dossier) {
     await saveDossier(d);
     setEditOpen(false);
+  }
+
+  async function togglePending(note?: string) {
+    if (!dossier) return;
+    const now = new Date();
+    if (dossier.status === 'pending') {
+      // Reprise : retour au statut "active" et purge de la note.
+      await saveDossier({
+        ...dossier,
+        status: 'active',
+        pendingNote: undefined,
+        pendingSince: undefined,
+      });
+    } else {
+      await saveDossier({
+        ...dossier,
+        status: 'pending',
+        pendingNote: (note ?? '').trim() || undefined,
+        pendingSince: now,
+      });
+    }
+    setPendingOpen(false);
   }
 
   async function handleDelete() {
@@ -62,6 +89,8 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
     await deleteDossier(dossierId);
     router.push('/dossiers');
   }
+
+  const isPending = dossier.status === 'pending';
 
   return (
     <>
@@ -127,6 +156,26 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
               </div>
               <div className="flex gap-1 flex-shrink-0">
                 <button
+                  onClick={() => (isPending ? togglePending() : setPendingOpen(true))}
+                  title={isPending ? 'Reprendre le dossier' : 'Mettre le dossier en attente'}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border transition-colors',
+                    isPending
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                      : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                  )}
+                >
+                  {isPending ? (
+                    <>
+                      <PlayCircle className="w-3.5 h-3.5" /> Reprendre
+                    </>
+                  ) : (
+                    <>
+                      <PauseCircle className="w-3.5 h-3.5" /> Mettre en attente
+                    </>
+                  )}
+                </button>
+                <button
                   onClick={() => setEditOpen(true)}
                   className={cn(
                     'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md',
@@ -144,6 +193,33 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
                 </button>
               </div>
             </div>
+
+            {/* Bandeau "En attente" */}
+            {isPending && (
+              <div className="mt-4 flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
+                <PauseCircle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-amber-800">
+                    Dossier en attente
+                    {dossier.pendingSince && (
+                      <span className="flex items-center gap-1 font-normal text-amber-700">
+                        <Clock className="w-3 h-3" />
+                        depuis le {formatDate(dossier.pendingSince)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-sm text-amber-900 whitespace-pre-wrap">
+                    {dossier.pendingNote?.trim() || 'Aucun motif renseigné.'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setPendingOpen(true)}
+                  className="flex-shrink-0 text-xs text-amber-700 hover:text-amber-900 underline"
+                >
+                  Modifier la note
+                </button>
+              </div>
+            )}
 
             {/* Sub-tabs */}
             <div className="flex gap-1 mt-5 -mb-3">
@@ -188,6 +264,13 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
         initial={dossier}
         onClose={() => setEditOpen(false)}
         onSave={handleEdit}
+      />
+
+      <PendingStatusDialog
+        open={pendingOpen}
+        dossier={dossier}
+        onClose={() => setPendingOpen(false)}
+        onConfirm={togglePending}
       />
     </>
   );

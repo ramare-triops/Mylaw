@@ -120,7 +120,7 @@ export async function buildBackup(): Promise<MylawBackup> {
     templates, tools, aiChats, bricks, infoLabels, fieldDefs, sessions,
     dossiers, contacts, dossierContacts, documentContacts,
     timeEntries, expenses, fixedFees, invoices,
-    documentLinks, documentVersions,
+    documentLinks, documentVersions, jots,
   ] = await Promise.all([
     db.documents.toArray(),
     db.folders.toArray(),
@@ -143,6 +143,7 @@ export async function buildBackup(): Promise<MylawBackup> {
     db.invoices.toArray(),
     db.documentLinks.toArray(),
     db.documentVersions.toArray(),
+    db.table('jots').toArray().catch(() => []),
   ]);
 
   // Settings : on EXCLUT les clés internes pour ne pas polluer les autres appareils.
@@ -153,7 +154,7 @@ export async function buildBackup(): Promise<MylawBackup> {
   }
 
   return {
-    version: 4,
+    version: 5,
     exportedAt: new Date().toISOString(),
     documents, folders, snippets, deadlines,
     templates, tools, aiChats,
@@ -161,6 +162,7 @@ export async function buildBackup(): Promise<MylawBackup> {
     dossiers, contacts, dossierContacts, documentContacts,
     timeEntries, expenses, fixedFees, invoices,
     documentLinks, documentVersions,
+    jots,
     settings,
   };
 }
@@ -201,6 +203,8 @@ export async function mergeFromBackup(
   await mergeTable(db.invoices,           backup.invoices,         opts);
   await mergeTable(db.documentLinks,      backup.documentLinks,    opts);
   await mergeTable(db.documentVersions,   backup.documentVersions, opts);
+  // v5 — Jots / quick notes
+  if (backup.jots) await mergeTable(db.table('jots'), backup.jots, opts);
 
   // Settings : clé par clé, on ne touche JAMAIS aux clés internes locales.
   const remoteSettings = backup.settings ?? {};

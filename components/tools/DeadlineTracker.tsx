@@ -1,7 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Clock, Plus, Pencil, Trash2, AlertTriangle, CheckCircle, Calendar, Bell } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import {
+  Clock, Plus, Pencil, Trash2, AlertTriangle, CheckCircle, Calendar, Bell,
+  CalendarCheck, Link as LinkIcon, X as CloseIcon,
+} from 'lucide-react';
 import { db, getSetting, setSetting } from '@/lib/db';
 import type { Deadline as DBDeadline, DeadlineType as DBDeadlineType } from '@/types';
 
@@ -34,6 +37,8 @@ interface Deadline {
   notes?: string;
   done: boolean;
   createdAt: Date;
+  googleEventId?: string;
+  googleSyncedAt?: Date;
 }
 
 const DEADLINE_TYPES: Array<{ value: UIDeadlineType; label: string; color: string }> = [
@@ -105,10 +110,109 @@ export function DeadlineTracker() {
     folder: '',
     notes: '',
   });
+  const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null);
+  const [syncingId, setSyncingId] = useState<number | null>(null);
+
+  const checkCalendar = useCallback(async () => {
+    try {
+      const res = await fetch('/api/google-productivity/token');
+      setCalendarConnected(res.ok);
+    } catch {
+      setCalendarConnected(false);
+    }
+  }, []);
 
   useEffect(() => {
     void migrateAndLoad();
-  }, []);
+    void checkCalendar();
+  }, [checkCalendar]);
+
+  // Retour OAuth : rafraîchir l'état de connexion.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get('gprod')) {
+      void checkCalendar();
+      sp.delete('gprod');
+      sp.delete('reason');
+      const clean = sp.toString();
+      const url = window.location.pathname + (clean ? '?' + clean : '');
+      window.history.replaceState({}, '', url);
+    }
+  }, [checkCalendar]);
+
+  function connectCalendar() {
+    const returnTo = typeof window !== 'undefined' ? window.location.pathname : '/';
+    window.location.href =
+      `/api/google-productivity/start?return=${encodeURIComponent(returnTo)}`;
+  }
+
+  async function disconnectCalendar() {
+    await fetch('/api/google-productivity/logout', { method: 'POST' });
+    setCalendarConnected(false);
+  }
+
+  async function pushToCalendar(dl: Deadline) {
+    if (!dl.id || !calendarConnected) return;
+    setSyncingId(dl.id);
+    try {
+      const description = [
+        dl.folder ? `Dossier : ${dl.folder}` : null,
+        dl.notes || null,
+      ].filter(Boolean).join('\n\n');
+      const body = {
+        summary: `[${DEADLINE_TYPES.find(t => t.value === dl.type)?.label ?? 'Échéance'}] ${dl.title}`,
+        description: description || undefined,
+        dueDate: dl.dueDate.toISOString(),
+      };
+      const url = dl.googleEventId
+        ? `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId)}`
+        : '/api/google-calendar';
+      const res = await fetch(url, {
+        method: dl.googleEventId ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const eventId = data.event?.id ?? dl.googleEventId;
+      const patch: Partial<DBDeadline> = {
+        googleEventId: eventId,
+        googleSyncedAt: new Date(),
+      };
+      await db.deadlines.update(dl.id, patch);
+      setDeadlines((prev) =>
+        prev.map((x) => (x.id === dl.id ? { ...x, ...patch } as Deadline : x)),
+      );
+    } finally {
+      setSyncingId(null);
+    }
+  }
+
+  async function removeFromCalendar(dl: Deadline) {
+    if (!dl.id || !dl.googleEventId) return;
+    setSyncingId(dl.id);
+    try {
+      await fetch(
+        `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId)}`,
+        { method: 'DELETE' },
+      );
+      const patch: Partial<DBDeadline> = {
+        googleEventId: undefined,
+        googleSyncedAt: undefined,
+      };
+      await db.deadlines.update(dl.id, patch);
+      setDeadlines((prev) =>
+        prev.map((x) =>
+          x.id === dl.id
+            ? { ...x, googleEventId: undefined, googleSyncedAt: undefined }
+            : x,
+        ),
+      );
+    } finally {
+      setSyncingId(null);
+    }
+  }
 
   /**
    * Migration one-shot : les anciens délais étaient stockés dans `db.sessions`
@@ -146,14 +250,16 @@ export function DeadlineTracker() {
     try {
       const rows = await db.deadlines.toArray();
       const mapped: Deadline[] = rows.map((r) => ({
-        id:        r.id,
-        title:     r.title,
-        dueDate:   new Date(r.dueDate),
-        type:      DB_TO_UI_TYPE[r.type] ?? 'autre',
-        folder:    r.dossier,
-        notes:     r.notes,
-        done:      r.done,
-        createdAt: new Date(r.createdAt),
+        id:             r.id,
+        title:          r.title,
+        dueDate:        new Date(r.dueDate),
+        type:           DB_TO_UI_TYPE[r.type] ?? 'autre',
+        folder:         r.dossier,
+        notes:          r.notes,
+        done:           r.done,
+        createdAt:      new Date(r.createdAt),
+        googleEventId:  r.googleEventId,
+        googleSyncedAt: r.googleSyncedAt ? new Date(r.googleSyncedAt) : undefined,
       }));
       setDeadlines(mapped.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime()));
     } catch {}
@@ -242,15 +348,40 @@ export function DeadlineTracker() {
   async function toggleDone(id: number) {
     const dl = deadlines.find((d) => d.id === id);
     if (!dl) return;
-    const updated = { ...dl, done: !dl.done };
+    const wasPushed = !!dl.googleEventId;
+    const nowDone = !dl.done;
+    const updated = { ...dl, done: nowDone, googleEventId: nowDone ? undefined : dl.googleEventId };
     try {
-      await db.deadlines.update(id, { done: updated.done });
+      // Si on coche comme terminé, on retire l'événement distant en best-effort.
+      if (nowDone && wasPushed) {
+        try {
+          await fetch(
+            `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId!)}`,
+            { method: 'DELETE' },
+          );
+        } catch { /* best-effort */ }
+      }
+      await db.deadlines.update(id, {
+        done: nowDone,
+        googleEventId: nowDone ? undefined : dl.googleEventId,
+        googleSyncedAt: nowDone ? undefined : dl.googleSyncedAt,
+      });
       setDeadlines((prev) => prev.map((d) => (d.id === id ? updated : d)));
     } catch {}
   }
 
   async function deleteDeadline(id: number) {
+    const dl = deadlines.find((d) => d.id === id);
     try {
+      // Nettoyage Google Calendar si la deadline y est liée.
+      if (dl?.googleEventId) {
+        try {
+          await fetch(
+            `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId)}`,
+            { method: 'DELETE' },
+          );
+        } catch { /* best-effort */ }
+      }
       await db.deadlines.delete(id);
       setDeadlines((prev) => prev.filter((d) => d.id !== id));
     } catch {}
@@ -317,6 +448,46 @@ export function DeadlineTracker() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {/* Google Calendar connect/disconnect */}
+          {calendarConnected ? (
+            <button
+              onClick={disconnectCalendar}
+              title="Déconnecter Google Agenda"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: 'var(--text-xs)',
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'oklch(from var(--color-success) l c h / 0.1)',
+                color: 'var(--color-success)',
+                fontWeight: 500,
+              }}
+            >
+              <CalendarCheck size={13} /> Google Agenda
+              <CloseIcon size={12} />
+            </button>
+          ) : (
+            <button
+              onClick={connectCalendar}
+              title="Connecter Google Agenda pour synchroniser les échéances"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: 'var(--text-xs)',
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--color-surface-offset)',
+                color: 'var(--color-text-muted)',
+                fontWeight: 500,
+              }}
+            >
+              <LinkIcon size={13} /> Connecter Google Agenda
+            </button>
+          )}
+
           {/* Filter tabs */}
           {(['upcoming', 'all', 'done'] as const).map((f) => (
             <button
@@ -546,6 +717,39 @@ export function DeadlineTracker() {
               )}
               {level === 'critical' && (
                 <Bell size={16} style={{ color: 'var(--color-error)', flexShrink: 0 }} />
+              )}
+
+              {/* Calendar sync */}
+              {calendarConnected && !dl.done && (
+                dl.googleEventId ? (
+                  <button
+                    onClick={() => removeFromCalendar(dl)}
+                    disabled={syncingId === dl.id}
+                    aria-label="Retirer de Google Agenda"
+                    title="Retirer de Google Agenda"
+                    style={{
+                      flexShrink: 0,
+                      color: 'var(--color-success)',
+                      opacity: syncingId === dl.id ? 0.5 : 1,
+                    }}
+                  >
+                    <CalendarCheck size={14} />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => pushToCalendar(dl)}
+                    disabled={syncingId === dl.id}
+                    aria-label="Ajouter à Google Agenda"
+                    title="Ajouter à Google Agenda"
+                    style={{
+                      flexShrink: 0,
+                      color: 'var(--color-text-muted)',
+                      opacity: syncingId === dl.id ? 0.5 : 1,
+                    }}
+                  >
+                    <Calendar size={14} />
+                  </button>
+                )
               )}
 
               {/* Edit */}

@@ -36,6 +36,8 @@ export interface MylawBackup {
   invoices?: any[];
   documentLinks?: any[];
   documentVersions?: any[];
+  /** v5 — Jots / quick notes (tableau de bord) */
+  jots?: any[];
   // ⚠️ attachments (blobs) et auditLog (journal local) NE sont PAS sync.
 }
 

@@ -224,6 +224,27 @@ export interface Deadline {
   notes?: string;
   done: boolean;
   createdAt: Date;
+  /** ID de l'événement Google Calendar si la deadline y est synchronisée. */
+  googleEventId?: string;
+  /** Dernière synchronisation vers Google Calendar. */
+  googleSyncedAt?: Date;
+}
+
+// ─── Jot / Quick notes (to-do) ─────────────────────────────────────────────
+/** Note rapide / to-do affichée sur le tableau de bord. Peut être poussée
+ *  vers Google Tasks pour la retrouver dans l'écosystème Google. */
+export interface Jot {
+  id?: number;
+  content: string;
+  done: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  /** Identifiant de la tâche Google Tasks liée, si synchronisée. */
+  googleTaskId?: string;
+  /** Identifiant de la liste Google Tasks (généralement '@default'). */
+  googleTaskListId?: string;
+  /** Dernier push vers Google Tasks. */
+  googleSyncedAt?: Date;
 }
 
 // ─── UI State ──────────────────────────────────────────────────────────────
@@ -356,6 +377,10 @@ export interface Dossier {
   color?: string;
   /** IDs d'autres dossiers liés (liens croisés / copies de pièces). */
   linkedDossierIds?: number[];
+  /** Note explicative affichée quand le dossier est en attente (ce que l'on attend, motif). */
+  pendingNote?: string;
+  /** Horodatage de la dernière mise en attente, pour tri/affichage sur le tableau de bord. */
+  pendingSince?: Date;
   createdAt: Date;
   updatedAt: Date;
   closedAt?: Date;

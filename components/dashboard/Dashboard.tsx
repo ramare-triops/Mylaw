@@ -4,9 +4,14 @@ import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useRouter } from 'next/navigation';
 import { addDays, differenceInCalendarDays } from 'date-fns';
+import { Check } from 'lucide-react';
 import { db } from '@/lib/db';
-import { Avatar, Badge, Button, Card, Eyebrow } from '@/components/ui';
+import { Badge, Button, Card, Eyebrow } from '@/components/ui';
 import type { Deadline, DeadlineType } from '@/types';
+import { PendingDossiersCard } from './PendingDossiersCard';
+import { RecentDossiersCard } from './RecentDossiersCard';
+import { JotCard } from './JotCard';
+import { OutlookCard } from './OutlookCard';
 
 const MONTH_ABBR_FR = [
   'janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin',
@@ -74,7 +79,7 @@ export function Dashboard() {
     return allDeadlines
       .filter((d) => !d.done)
       .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
-      .slice(0, 3);
+      .slice(0, 5);
   }, [allDeadlines]);
 
   const kpis = useMemo(() => {
@@ -115,6 +120,25 @@ export function Dashboard() {
       },
     ];
   }, [dossiers, allDeadlines, recentDocs, now]);
+
+  async function markDeadlineDone(deadline: Deadline) {
+    if (deadline.id == null) return;
+    await db.deadlines.update(deadline.id, { done: true });
+    // Si l'échéance était synchronisée avec Google Calendar, on supprime
+    // aussi l'événement distant en best-effort (pas bloquant si offline).
+    if (deadline.googleEventId) {
+      try {
+        await fetch(
+          `/api/google-calendar?id=${encodeURIComponent(deadline.googleEventId)}`,
+          { method: 'DELETE' },
+        );
+        await db.deadlines.update(deadline.id, {
+          googleEventId: undefined,
+          googleSyncedAt: undefined,
+        });
+      } catch { /* best-effort */ }
+    }
+  }
 
   const dateHeader = useMemo(() => {
     const weekday = weekdayFR(now);
@@ -177,7 +201,7 @@ export function Dashboard() {
         ))}
       </section>
 
-      {/* Échéances + Activité */}
+      {/* Échéances à venir (avec cases à cocher) + Dossiers en attente */}
       <section className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
         <Card
           title="Échéances à venir"
@@ -214,46 +238,26 @@ export function Dashboard() {
                   tone={tone}
                   rel={formatRelativeDays(days)}
                   isFirst={i === 0}
-                  onClick={() => router.push('/tools/deadline-tracker')}
+                  onOpen={() => router.push('/tools/deadline-tracker')}
+                  onDone={() => markDeadlineDone(d)}
                 />
               );
             })
           )}
         </Card>
 
-        <Card title="Activité récente" padding={0}>
-          {(recentDocs ?? []).length === 0 ? (
-            <div
-              className="px-5 py-8 text-center text-[var(--fg-secondary)]"
-              style={{ fontFamily: 'var(--font-serif)', fontSize: 15 }}
-            >
-              Aucune activité pour l’instant.
-            </div>
-          ) : (
-            (recentDocs ?? []).map((doc, i) => {
-              const updated = new Date(doc.updatedAt);
-              const relative = formatUpdatedRelative(updated, now);
-              return (
-                <ActivityRow
-                  key={doc.id ?? i}
-                  variant={i % 2 === 0 ? 'brand' : 'steel'}
-                  who="CM"
-                  headline={
-                    <>
-                      <strong className="font-semibold text-[var(--fg-primary)]">
-                        Vous
-                      </strong>{' '}
-                      avez mis à jour <em className="not-italic font-medium">{doc.title}</em>
-                    </>
-                  }
-                  when={relative}
-                  isFirst={i === 0}
-                  onClick={() => doc.id && router.push(`/documents/${doc.id}`)}
-                />
-              );
-            })
-          )}
-        </Card>
+        <PendingDossiersCard />
+      </section>
+
+      {/* Dossiers récents + Jot */}
+      <section className="grid gap-4 lg:grid-cols-2">
+        <RecentDossiersCard />
+        <JotCard />
+      </section>
+
+      {/* Outlook sur toute la largeur */}
+      <section>
+        <OutlookCard />
       </section>
     </div>
   );
@@ -267,7 +271,8 @@ function DeadlineRow({
   tone,
   rel,
   isFirst,
-  onClick,
+  onOpen,
+  onDone,
 }: {
   day: string;
   monthLabel: string;
@@ -276,7 +281,8 @@ function DeadlineRow({
   tone: Tone;
   rel: string;
   isFirst: boolean;
-  onClick: () => void;
+  onOpen: () => void;
+  onDone: () => void;
 }) {
   const badgeVariant =
     tone === 'danger' ? 'danger'
@@ -285,91 +291,60 @@ function DeadlineRow({
     : 'neutral';
 
   return (
-    <button
-      onClick={onClick}
+    <div
       className={
-        'flex w-full items-center gap-4 px-5 py-3.5 text-left transition-colors ' +
+        'flex w-full items-center gap-4 px-5 py-3.5 transition-colors ' +
         'hover:bg-[var(--bg-surface-alt)] ' +
         (isFirst ? '' : 'border-t border-[var(--border-subtle)]')
       }
     >
-      <div className="w-14 shrink-0 text-center">
-        <div
-          className="font-semibold text-[var(--fg-primary)] tabular-nums"
-          style={{ fontSize: 22, lineHeight: 1 }}
-        >
-          {day}
-        </div>
-        <div
-          className="mt-1 uppercase text-[var(--fg-tertiary)]"
-          style={{ fontSize: 11, letterSpacing: '0.04em', fontWeight: 500 }}
-        >
-          {monthLabel}
-        </div>
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-semibold text-[var(--fg-primary)]" style={{ fontSize: 14 }}>
-          {title}
-        </div>
-        <div
-          className="mt-0.5 truncate text-[var(--fg-secondary)]"
-          style={{ fontSize: 12, lineHeight: 1.4 }}
-        >
-          {subtitle}
-        </div>
-      </div>
-      <Badge variant={badgeVariant} dot>
-        {rel}
-      </Badge>
-    </button>
-  );
-}
+      {/* Case à cocher pour marquer « terminé » */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onDone();
+        }}
+        aria-label="Marquer l'échéance comme terminée"
+        title="Marquer comme terminé"
+        className={
+          'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border ' +
+          'border-[var(--border-default)] hover:border-emerald-500 hover:bg-emerald-50 ' +
+          'transition-colors'
+        }
+      >
+        <Check className="h-3.5 w-3.5 opacity-0 hover:opacity-100" />
+      </button>
 
-function ActivityRow({
-  variant,
-  who,
-  headline,
-  when,
-  isFirst,
-  onClick,
-}: {
-  variant: 'brand' | 'steel';
-  who: string;
-  headline: React.ReactNode;
-  when: string;
-  isFirst: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={
-        'flex w-full items-start gap-3 px-5 py-3 text-left transition-colors ' +
-        'hover:bg-[var(--bg-surface-alt)] ' +
-        (isFirst ? '' : 'border-t border-[var(--border-subtle)]')
-      }
-    >
-      <Avatar initials={who} size={28} variant={variant} />
-      <div className="min-w-0 flex-1">
-        <div className="text-[var(--fg-primary)]" style={{ fontSize: 13, lineHeight: 1.4 }}>
-          {headline}
+      <button onClick={onOpen} className="flex flex-1 items-center gap-4 text-left">
+        <div className="w-14 shrink-0 text-center">
+          <div
+            className="font-semibold text-[var(--fg-primary)] tabular-nums"
+            style={{ fontSize: 22, lineHeight: 1 }}
+          >
+            {day}
+          </div>
+          <div
+            className="mt-1 uppercase text-[var(--fg-tertiary)]"
+            style={{ fontSize: 11, letterSpacing: '0.04em', fontWeight: 500 }}
+          >
+            {monthLabel}
+          </div>
         </div>
-        <div className="mt-1 text-[var(--fg-tertiary)]" style={{ fontSize: 11 }}>
-          {when}
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold text-[var(--fg-primary)]" style={{ fontSize: 14 }}>
+            {title}
+          </div>
+          <div
+            className="mt-0.5 truncate text-[var(--fg-secondary)]"
+            style={{ fontSize: 12, lineHeight: 1.4 }}
+          >
+            {subtitle}
+          </div>
         </div>
-      </div>
-    </button>
+        <Badge variant={badgeVariant} dot>
+          {rel}
+        </Badge>
+      </button>
+    </div>
   );
-}
-
-function formatUpdatedRelative(date: Date, now: Date): string {
-  const minutes = Math.floor((now.getTime() - date.getTime()) / 60_000);
-  if (minutes < 1) return "à l'instant";
-  if (minutes < 60) return `il y a ${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `il y a ${hours} h`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return 'hier';
-  if (days < 7) return `il y a ${days} jours`;
-  return date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
 }

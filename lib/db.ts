@@ -25,6 +25,7 @@ import type {
   Attachment,
   DocumentLink,
   AuditEntry,
+  Jot,
 } from '@/types';
 
 type SettingsRecord = { key: string; value: unknown };
@@ -105,6 +106,8 @@ export class MyLexDatabase extends Dexie {
   attachments!: Table<Attachment>;
   documentLinks!: Table<DocumentLink>;
   auditLog!: Table<AuditEntry>;
+  /** Notes rapides / to-do du tableau de bord (synchronisable Google Tasks). */
+  jots!: Table<Jot>;
 
   constructor() {
     super('MyLexDB');
@@ -222,6 +225,50 @@ export class MyLexDatabase extends Dexie {
         '++id, documentId, dossierId, [documentId+dossierId]',
       auditLog:
         '++id, dossierId, entityType, entityId, action, timestamp',
+    });
+
+    // ─── Version 5 : Jots / quick notes (dashboard) ────────────────────────
+    // Notes rapides connectables à Google Tasks. Les anciennes tables restent
+    // inchangées ; seule la table `jots` est ajoutée.
+    this.version(5).stores({
+      documents:
+        '++id, title, type, folderId, dossierId, status, category, updatedAt, tags, *searchTokens',
+      documentVersions: '++id, documentId, timestamp',
+      folders: '++id, name, parentId, color, createdAt',
+      tools: '++id, slug, name, pinned, order, config, lastUsedAt',
+      templates: '++id, name, category, content, variables, createdAt',
+      sessions: '++id, date, toolId, content, tags',
+      snippets: '++id, trigger, expansion, category',
+      aiChats: '++id, documentId, messages, createdAt',
+      settings: 'key',
+      history: '++id, action, entityId, entityType, timestamp',
+      deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
+      bricks: '++id, title, category, infoLabelId, updatedAt, *tags',
+      infoLabels: '++id, name, color, createdAt',
+      fieldDefs: '++id, name, type, category, updatedAt',
+      dossiers:
+        '++id, reference, name, type, status, updatedAt, createdAt, *tags',
+      contacts:
+        '++id, type, lastName, companyName, email, updatedAt, *tags',
+      dossierContacts:
+        '++id, dossierId, contactId, role, [dossierId+contactId]',
+      documentContacts:
+        '++id, documentId, contactId, role, [documentId+contactId]',
+      timeEntries:
+        '++id, dossierId, documentId, contactId, date, billable, billed, invoiceId',
+      expenses:
+        '++id, dossierId, documentId, date, category, billed, invoiceId',
+      fixedFees:
+        '++id, dossierId, documentId, date, kind, billed, invoiceId',
+      invoices:
+        '++id, dossierId, reference, date, status',
+      attachments:
+        '++id, dossierId, documentId, name, mimeType, uploadedAt, *tags',
+      documentLinks:
+        '++id, documentId, dossierId, [documentId+dossierId]',
+      auditLog:
+        '++id, dossierId, entityType, entityId, action, timestamp',
+      jots: '++id, createdAt, done, googleTaskId',
     });
 
     // ─── Middleware : déclenche le sync Drive sur toute mutation ───
@@ -864,4 +911,26 @@ export async function computeDossierFinanceTotals(dossierId: number): Promise<Do
     expenseTotal, expenseRebillable,
     feeTotal,
   };
+}
+
+// ─── Jots / Quick notes ───────────────────────────────────────────────────
+export async function saveJot(jot: Jot): Promise<number> {
+  const now = new Date();
+  const payload: Jot = {
+    ...jot,
+    updatedAt: now,
+    createdAt: jot.createdAt ?? now,
+  };
+  const id = await db.jots.put(payload);
+  return Number(id);
+}
+
+export async function deleteJot(id: number): Promise<void> {
+  await db.jots.delete(id);
+}
+
+export async function toggleJotDone(id: number): Promise<void> {
+  const j = await db.jots.get(id);
+  if (!j) return;
+  await db.jots.update(id, { done: !j.done, updatedAt: new Date() });
 }

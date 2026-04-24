@@ -30,6 +30,7 @@ export function NewDossierDialog({
   const [clientName, setClientName] = useState('');
   const [description, setDescription] = useState('');
   const [tagsInput, setTagsInput] = useState('');
+  const [pendingNote, setPendingNote] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -41,6 +42,7 @@ export function NewDossierDialog({
       setClientName(initial.clientName ?? '');
       setDescription(initial.description ?? '');
       setTagsInput((initial.tags ?? []).join(', '));
+      setPendingNote(initial.pendingNote ?? '');
     } else {
       // Suggestion immédiate (placeholder optimiste) puis valeur exacte
       // récupérée depuis Dexie via nextDossierReference().
@@ -51,6 +53,7 @@ export function NewDossierDialog({
       setClientName('');
       setDescription('');
       setTagsInput('');
+      setPendingNote('');
       let cancelled = false;
       void nextDossierReference().then((ref) => {
         if (!cancelled) setReference(ref);
@@ -68,6 +71,9 @@ export function NewDossierDialog({
       .split(',')
       .map((t) => t.trim())
       .filter(Boolean);
+    const previousStatus = initial?.status;
+    const isNowPending = status === 'pending';
+    const wasPending = previousStatus === 'pending';
     const payload: Dossier = {
       ...(initial ?? {}),
       reference: reference.trim() || `DOS-${Date.now()}`,
@@ -77,6 +83,10 @@ export function NewDossierDialog({
       clientName: clientName.trim() || undefined,
       description: description.trim() || undefined,
       tags,
+      pendingNote: isNowPending ? (pendingNote.trim() || undefined) : undefined,
+      pendingSince: isNowPending
+        ? (wasPending ? (initial?.pendingSince ?? now) : now)
+        : undefined,
       createdAt: initial?.createdAt ?? now,
       updatedAt: now,
     };
@@ -184,6 +194,18 @@ export function NewDossierDialog({
               placeholder="Quelques lignes pour situer le dossier…"
             />
           </Field>
+
+          {status === 'pending' && (
+            <Field label="Raison de la mise en attente (ce qui est attendu)">
+              <textarea
+                value={pendingNote}
+                onChange={(e) => setPendingNote(e.target.value)}
+                rows={2}
+                className={cn(inputCls, 'resize-none')}
+                placeholder="Ex. En attente de la pièce du client, réponse du Greffe, retour de l'expert…"
+              />
+            </Field>
+          )}
 
           <Field label="Tags (séparés par des virgules)">
             <input
