@@ -7,6 +7,7 @@ import { addDays, differenceInCalendarDays } from 'date-fns';
 import { Check } from 'lucide-react';
 import { db } from '@/lib/db';
 import { Badge, Button, Card, Eyebrow } from '@/components/ui';
+import { useCabinetIdentity } from '@/lib/hooks/useCabinetIdentity';
 import type { Deadline, DeadlineType } from '@/types';
 import { PendingDossiersCard } from './PendingDossiersCard';
 import { RecentDossiersCard } from './RecentDossiersCard';
@@ -66,13 +67,10 @@ function weekdayFR(date: Date): string {
 export function Dashboard() {
   const router = useRouter();
   const now = useMemo(() => new Date(), []);
+  const identity = useCabinetIdentity();
 
   const dossiers = useLiveQuery(() => db.dossiers.toArray(), []);
   const allDeadlines = useLiveQuery(() => db.deadlines.toArray(), []);
-  const recentDocs = useLiveQuery(
-    () => db.documents.orderBy('updatedAt').reverse().limit(4).toArray(),
-    [],
-  );
 
   const upcomingDeadlines = useMemo(() => {
     if (!allDeadlines) return [];
@@ -82,50 +80,79 @@ export function Dashboard() {
       .slice(0, 5);
   }, [allDeadlines]);
 
+  // ── KPIs ────────────────────────────────────────────────────────────────
+  // Tous les compteurs lisent en direct depuis Dexie via `useLiveQuery`.
+  // Toute mutation (changement de statut de dossier, ajout d'échéance, etc.)
+  // déclenche automatiquement un re-render — pas de cache à invalider.
   const kpis = useMemo(() => {
-    const activeDossiers = (dossiers ?? []).filter(
-      (d) => d.status === 'active' || d.status === 'pending',
-    ).length;
+    const all = dossiers ?? [];
+
+    // « Dossiers actifs » : ratio "actif strict" / "ouvert (non clôturé)".
+    // - dossiers ouverts = tout sauf 'archived' et 'closed'
+    // - dossiers actifs  = uniquement status === 'active'
+    const openDossiers = all.filter(
+      (d) => d.status !== 'archived' && d.status !== 'closed',
+    );
+    const activeDossiers = all.filter((d) => d.status === 'active');
+
+    // « Échéances ≤ 7 j » : nombre de délais non terminés dont la date
+    // d'échéance tombe dans la fenêtre [now, now + 7 jours].
     const weekEnd = addDays(now, 7);
     const openDeadlines = (allDeadlines ?? []).filter((d) => !d.done);
-    const dueThisWeek = openDeadlines.filter(
-      (d) => new Date(d.dueDate) <= weekEnd,
-    ).length;
-    const urgent = openDeadlines.filter((d) => {
+    const dueThisWeek = openDeadlines.filter((d) => {
+      const due = new Date(d.dueDate);
+      return due <= weekEnd && due >= startOfDay(now);
+    });
+    const urgent = dueThisWeek.filter((d) => {
       const days = differenceInCalendarDays(new Date(d.dueDate), now);
       return days <= 3;
     }).length;
-    const signaturesPending = (recentDocs ?? []).filter((d) => d.status === 'review').length;
 
     return [
       {
+        key: 'dossiers',
         k: 'Dossiers actifs',
-        v: activeDossiers.toString(),
-        sub: `${(dossiers ?? []).length} au total`,
+        v: `${activeDossiers.length} / ${openDossiers.length}`,
+        sub: openDossiers.length === 0
+          ? 'Aucun dossier ouvert'
+          : `${openDossiers.length} ouvert${openDossiers.length > 1 ? 's' : ''} · ${activeDossiers.length} actif${activeDossiers.length > 1 ? 's' : ''}`,
+        onClick: () => router.push('/dossiers'),
       },
       {
+        key: 'deadlines',
         k: 'Échéances ≤ 7 j',
-        v: dueThisWeek.toString(),
-        sub: urgent > 0 ? `${urgent} urgente${urgent > 1 ? 's' : ''}` : 'Aucune urgence',
+        v: dueThisWeek.length.toString(),
+        sub: dueThisWeek.length === 0
+          ? 'Aucune urgence'
+          : urgent > 0
+            ? `${urgent} urgente${urgent > 1 ? 's' : ''}`
+            : `${dueThisWeek.length} cette semaine`,
+        onClick: () => router.push('/tools/deadline-tracker'),
       },
       {
+        key: 'fees',
+        // Reset volontaire : la donnée statique 12 450 € a été retirée.
+        // Le widget est branché sur 0 le temps que la facturation soit
+        // câblée à la base. Voir `computeMonthlyFees` ci-dessous pour le
+        // point d'ancrage API.
         k: 'Honoraires · mois',
-        v: currencyEUR(12_450),
-        sub: '+8,4 % vs mois précédent',
+        v: currencyEUR(computeMonthlyFees(/* dossierId? */)),
+        sub: 'Donnée à venir — branché sur les factures',
+        onClick: undefined as undefined | (() => void),
       },
       {
+        key: 'signatures',
         k: 'Actes à signer',
-        v: signaturesPending.toString(),
-        sub: signaturesPending === 0 ? 'Aucune signature en attente' : 'En attente',
+        v: '0',
+        sub: 'Aucune signature en attente',
+        onClick: undefined as undefined | (() => void),
       },
     ];
-  }, [dossiers, allDeadlines, recentDocs, now]);
+  }, [dossiers, allDeadlines, now, router]);
 
   async function markDeadlineDone(deadline: Deadline) {
     if (deadline.id == null) return;
     await db.deadlines.update(deadline.id, { done: true });
-    // Si l'échéance était synchronisée avec Google Calendar, on supprime
-    // aussi l'événement distant en best-effort (pas bloquant si offline).
     if (deadline.googleEventId) {
       try {
         await fetch(
@@ -145,6 +172,8 @@ export function Dashboard() {
     return `${formatDateFR(now)} · ${weekday}`;
   }, [now]);
 
+  const dueThisWeekCount = Number(kpis.find((k) => k.key === 'deadlines')?.v ?? '0');
+
   return (
     <div
       className="flex flex-col gap-6"
@@ -162,7 +191,7 @@ export function Dashboard() {
             fontFamily: 'var(--font-sans)',
           }}
         >
-          Bonjour, Maître Moreau.
+          Bonjour {identity.displayName}.
         </h1>
         <p
           className="mt-1.5 text-[var(--fg-secondary)]"
@@ -170,89 +199,107 @@ export function Dashboard() {
         >
           Vous avez{' '}
           <strong className="font-semibold text-[var(--fg-primary)]">
-            {kpis[1].v} échéance{Number(kpis[1].v) > 1 ? 's' : ''}
+            {dueThisWeekCount} échéance{dueThisWeekCount > 1 ? 's' : ''}
           </strong>{' '}
-          cette semaine et{' '}
-          <strong className="font-semibold text-[var(--fg-primary)]">
-            {kpis[3].v} acte{Number(kpis[3].v) > 1 ? 's' : ''}
-          </strong>{' '}
-          en attente de signature.
+          cette semaine.
         </p>
       </header>
 
       {/* KPI row */}
       <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {kpis.map((kpi) => (
-          <Card key={kpi.k} flat padding={18}>
-            <Eyebrow>{kpi.k}</Eyebrow>
-            <div
-              className="mt-2.5 font-semibold text-[var(--fg-primary)] tabular-nums"
-              style={{ fontSize: 26, lineHeight: 1, letterSpacing: 'var(--tracking-snug)' }}
+        {kpis.map((kpi) => {
+          const Tag = kpi.onClick ? 'button' : 'div';
+          return (
+            <Tag
+              key={kpi.key}
+              onClick={kpi.onClick}
+              className={
+                kpi.onClick
+                  ? 'text-left transition-colors hover:bg-[var(--bg-surface-alt)]'
+                  : ''
+              }
+              style={{ display: 'block', width: '100%' }}
             >
-              {kpi.v}
-            </div>
-            <div
-              className="mt-1.5 text-[var(--fg-secondary)]"
-              style={{ fontSize: 12, lineHeight: 1.4 }}
-            >
-              {kpi.sub}
-            </div>
-          </Card>
-        ))}
+              <Card flat padding={18}>
+                <Eyebrow>{kpi.k}</Eyebrow>
+                <div
+                  className="mt-2.5 font-semibold text-[var(--fg-primary)] tabular-nums"
+                  style={{ fontSize: 26, lineHeight: 1, letterSpacing: 'var(--tracking-snug)' }}
+                >
+                  {kpi.v}
+                </div>
+                <div
+                  className="mt-1.5 text-[var(--fg-secondary)]"
+                  style={{ fontSize: 12, lineHeight: 1.4 }}
+                >
+                  {kpi.sub}
+                </div>
+              </Card>
+            </Tag>
+          );
+        })}
       </section>
 
-      {/* Échéances à venir (avec cases à cocher) + Dossiers en attente */}
-      <section className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
-        <Card
-          title="Échéances à venir"
-          padding={0}
-          actions={
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => router.push('/tools/deadline-tracker')}
-            >
-              Voir tout
-            </Button>
-          }
-        >
-          {upcomingDeadlines.length === 0 ? (
-            <div
-              className="px-5 py-8 text-center text-[var(--fg-secondary)]"
-              style={{ fontFamily: 'var(--font-serif)', fontSize: 15 }}
-            >
-              Aucune échéance pour l’instant.
-            </div>
-          ) : (
-            upcomingDeadlines.map((d, i) => {
-              const due = new Date(d.dueDate);
-              const days = differenceInCalendarDays(due, now);
-              const tone = toneForDeadline(days, d.type);
-              return (
-                <DeadlineRow
-                  key={d.id ?? i}
-                  day={String(due.getDate()).padStart(2, '0')}
-                  monthLabel={MONTH_ABBR_FR[due.getMonth()]}
-                  title={d.title}
-                  subtitle={`${DEADLINE_TYPE_LABEL[d.type]}${d.dossier ? ` · ${d.dossier}` : ''}`}
-                  tone={tone}
-                  rel={formatRelativeDays(days)}
-                  isFirst={i === 0}
-                  onOpen={() => router.push('/tools/deadline-tracker')}
-                  onDone={() => markDeadlineDone(d)}
-                />
-              );
-            })
-          )}
-        </Card>
-
-        <PendingDossiersCard />
-      </section>
-
-      {/* Dossiers récents + Jot */}
+      {/* Grille principale (2 colonnes sur desktop) :
+       *   ┌─────────────────────┬─────────────────────┐
+       *   │ Échéances à venir   │ Jot / Notes rapides │
+       *   ├─────────────────────┼─────────────────────┤
+       *   │ Dossiers en attente │ Dossiers récents    │
+       *   └─────────────────────┴─────────────────────┘
+       *   Boîte Outlook (toute la largeur)
+       */}
       <section className="grid gap-4 lg:grid-cols-2">
-        <RecentDossiersCard />
-        <JotCard />
+        <div className="flex flex-col gap-4">
+          <Card
+            title="Échéances à venir"
+            padding={0}
+            actions={
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push('/tools/deadline-tracker')}
+              >
+                Voir tout
+              </Button>
+            }
+          >
+            {upcomingDeadlines.length === 0 ? (
+              <div
+                className="px-5 py-8 text-center text-[var(--fg-secondary)]"
+                style={{ fontFamily: 'var(--font-serif)', fontSize: 15 }}
+              >
+                Aucune échéance pour l’instant.
+              </div>
+            ) : (
+              upcomingDeadlines.map((d, i) => {
+                const due = new Date(d.dueDate);
+                const days = differenceInCalendarDays(due, now);
+                const tone = toneForDeadline(days, d.type);
+                return (
+                  <DeadlineRow
+                    key={d.id ?? i}
+                    day={String(due.getDate()).padStart(2, '0')}
+                    monthLabel={MONTH_ABBR_FR[due.getMonth()]}
+                    title={d.title}
+                    subtitle={`${DEADLINE_TYPE_LABEL[d.type]}${d.dossier ? ` · ${d.dossier}` : ''}`}
+                    tone={tone}
+                    rel={formatRelativeDays(days)}
+                    isFirst={i === 0}
+                    onOpen={() => router.push('/tools/deadline-tracker')}
+                    onDone={() => markDeadlineDone(d)}
+                  />
+                );
+              })
+            )}
+          </Card>
+
+          <PendingDossiersCard />
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <JotCard />
+          <RecentDossiersCard />
+        </div>
       </section>
 
       {/* Outlook sur toute la largeur */}
@@ -261,6 +308,39 @@ export function Dashboard() {
       </section>
     </div>
   );
+}
+
+function startOfDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+/**
+ * Honoraires du mois.
+ *
+ * 🔌 Point d'ancrage API future : ce calcul doit additionner les factures
+ * (`db.invoices`) émises ou payées dans le mois en cours, ventilées par
+ * dossier. Les helpers existants `computeDossierFinanceTotals(dossierId)`
+ * dans `lib/db.ts` exposent déjà :
+ *   - billableAmount / billedAmount par dossier,
+ *   - expenseTotal / feeTotal,
+ *   - billableMinutes / billedMinutes.
+ *
+ * Implémentation cible :
+ *   const start = startOfMonth(now);
+ *   const invoices = await db.invoices
+ *     .where('date').between(start, now).toArray();
+ *   return invoices
+ *     .filter((i) => i.status === 'issued' || i.status === 'paid')
+ *     .reduce((sum, i) => sum + (i.amount ?? 0), 0);
+ *
+ * Tant que la connexion factures ↔ dashboard n'est pas câblée côté UI,
+ * la fonction renvoie 0 pour ne pas afficher de chiffre fictif.
+ */
+function computeMonthlyFees(_dossierId?: number): number {
+  // TODO: brancher sur db.invoices + computeDossierFinanceTotals().
+  return 0;
 }
 
 function DeadlineRow({
@@ -298,7 +378,6 @@ function DeadlineRow({
         (isFirst ? '' : 'border-t border-[var(--border-subtle)]')
       }
     >
-      {/* Case à cocher pour marquer « terminé » */}
       <button
         onClick={(e) => {
           e.stopPropagation();

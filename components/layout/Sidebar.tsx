@@ -18,6 +18,7 @@ import {
 import { useUIState } from '@/components/providers/UIStateProvider';
 import { Avatar, Button, Eyebrow } from '@/components/ui';
 import { MylawLogo } from '@/components/ui/MylawLogo';
+import { useCabinetIdentity } from '@/lib/hooks/useCabinetIdentity';
 import { cn } from '@/lib/utils';
 
 type NavItem = {
@@ -37,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export function Sidebar() {
+  const identity = useCabinetIdentity();
   const pathname = usePathname();
   const router = useRouter();
   const { sidebarCollapsed, toggleSidebar } = useUIState();
@@ -118,16 +120,18 @@ export function Sidebar() {
           sidebarCollapsed ? 'justify-center px-2 py-3' : 'px-3 py-3',
         )}
       >
-        <Avatar initials="CM" size={28} variant="brand" />
+        <Avatar initials={identity.initials} size={28} variant="brand" />
         {!sidebarCollapsed && (
           <>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[12px] font-semibold leading-tight text-[var(--fg-primary)]">
-                Me Claire Moreau
+                {identity.displayName}
               </div>
-              <div className="truncate text-[11px] leading-tight text-[var(--fg-tertiary)]">
-                Cabinet Moreau &amp; Associés
-              </div>
+              {identity.cabinet && (
+                <div className="truncate text-[11px] leading-tight text-[var(--fg-tertiary)]">
+                  {identity.cabinet}
+                </div>
+              )}
             </div>
             <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-[var(--fg-tertiary)]" />
           </>
