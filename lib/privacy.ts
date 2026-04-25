@@ -20,7 +20,7 @@
  */
 
 import type { Contact } from '@/types';
-import type { FieldDef } from '@/types/field-def';
+import type { FieldDef, FieldDefType } from '@/types/field-def';
 import { contactValueFromPath } from './contact-variables';
 
 /** Préfixes de civilité reconnus en tête de partie de nom. */
@@ -223,8 +223,88 @@ export function maskClientName(name: string | null | undefined): string {
 export interface MaskingEntry {
   /** Valeur à chercher dans le texte (telle qu'elle a été insérée). */
   value: string;
-  /** Chaîne de remplacement (ex. « [Date de naissance] » ou « Phi...e »). */
+  /**
+   * Remplacement texte brut (utilisé par `maskText` — titres, libellés
+   * courts hors HTML). Ex. « [Date de naissance] » ou « Phi...e ».
+   */
   replacement: string;
+  /**
+   * Remplacement HTML utilisé par `maskHtml` quand le contexte
+   * supporte les chips (rendu d'un document). Quand absent, on
+   * retombe sur `replacement` échappé. Ex. `<span …>Adresse</span>`.
+   */
+  htmlReplacement?: string;
+}
+
+/**
+ * Couleur de chip par type de champ — alignée sur le styling des
+ * variables / briques du document (voir `DocumentEditorWrapper.tsx`,
+ * sélecteurs `[data-variable-field][data-variable-type="…"]`).
+ *
+ * On fournit deux teintes : `fg` pour la bordure / texte, `bg` pour le
+ * fond translucide. Les valeurs sont en RGBA pour rester lisibles sur
+ * un fond clair comme sombre.
+ */
+const CHIP_COLORS: Record<string, { fg: string; bg: string }> = {
+  date:      { fg: '#4f46e5', bg: 'rgba(79, 70, 229, 0.10)' },
+  name:      { fg: '#01696f', bg: 'rgba(1, 105, 111, 0.10)' },
+  address:   { fg: '#c2410c', bg: 'rgba(194, 65, 12, 0.10)' },
+  price:     { fg: '#15803d', bg: 'rgba(21, 128, 61, 0.10)' },
+  duration:  { fg: '#7c3aed', bg: 'rgba(124, 58, 237, 0.10)' },
+  reference: { fg: '#be185d', bg: 'rgba(190, 24, 93, 0.10)' },
+  default:   { fg: '#6b7280', bg: 'rgba(107, 114, 128, 0.10)' },
+};
+
+/** Mappe un `FieldDefType` sur une catégorie de chip. */
+function chipTypeFor(fieldType: FieldDefType | undefined): string {
+  switch (fieldType) {
+    case 'date':                return 'date';
+    case 'name':                return 'name';
+    case 'address':             return 'address';
+    case 'price':               return 'price';
+    case 'duration':            return 'duration';
+    case 'reference':
+    case 'phone':
+    case 'email':
+    case 'url':
+    case 'number':              return 'reference';
+    default:                    return 'default';
+  }
+}
+
+/** Échappe une chaîne pour la sortir en HTML sans risque d'injection. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Génère le HTML d'une chip de label (encadré coloré) pour un nom de
+ * champ. Le markup ré-utilise les attributs `data-variable-field` /
+ * `data-variable-type` des variables existantes — il hérite donc des
+ * styles de l'éditeur quand il y est rendu — tout en embarquant des
+ * styles inline pour fonctionner dans la prévisualisation où la CSS
+ * de l'éditeur n'est pas chargée.
+ */
+function fieldChip(label: string, fieldType?: FieldDefType): string {
+  const type = chipTypeFor(fieldType);
+  const c = CHIP_COLORS[type] ?? CHIP_COLORS.default;
+  const escaped = escapeHtml(label);
+  const style =
+    `display:inline-flex;align-items:center;` +
+    `padding:0 5px;border-radius:4px;` +
+    `border:1.5px solid ${c.fg};background:${c.bg};color:${c.fg};` +
+    `font-size:0.85em;font-weight:500;line-height:1.5;` +
+    `letter-spacing:0.01em;margin:0 1px;vertical-align:baseline`;
+  return (
+    `<span data-variable-field="" data-variable-type="${type}" ` +
+    `data-privacy-mask="field" data-variable-name="${escaped}" ` +
+    `style="${style}">${escaped}</span>`
+  );
 }
 
 /**
@@ -240,6 +320,16 @@ export function buildMaskingEntries(
   const entries: MaskingEntry[] = [];
   const seen = new Set<string>();
 
+  /** Helper : enregistre une entrée avec sa version chip HTML. */
+  const pushField = (
+    value: string | null | undefined,
+    label: string,
+    type?: FieldDefType,
+  ) => {
+    if (!value || !value.trim()) return;
+    pushEntry(entries, seen, value, `[${label}]`, fieldChip(label, type));
+  };
+
   for (const contact of contacts) {
     // 1. Bindings déterministes via FieldDef.contactPath.
     for (const def of fieldDefs) {
@@ -247,17 +337,22 @@ export function buildMaskingEntries(
       const value = contactValueFromPath(contact, def.contactPath);
       if (!value) continue;
 
-      let replacement: string;
       if (def.contactPath === 'firstName') {
-        replacement = maskFirstName(value);
+        pushEntry(entries, seen, value, maskFirstName(value));
       } else if (def.contactPath === 'lastName') {
-        replacement = maskLastName(value);
+        pushEntry(entries, seen, value, maskLastName(value));
       } else if (def.contactPath === 'fullName') {
-        replacement = `${maskFirstName(contact.firstName)} ${maskLastName(contact.lastName)}`.trim();
+        const masked = `${maskFirstName(contact.firstName)} ${maskLastName(contact.lastName)}`.trim();
+        pushEntry(entries, seen, value, masked);
       } else {
-        replacement = `[${def.label}]`;
+        pushEntry(
+          entries,
+          seen,
+          value,
+          `[${def.label}]`,
+          fieldChip(def.label, def.type),
+        );
       }
-      pushEntry(entries, seen, value, replacement);
     }
 
     // 2. Filet de sécurité : noms / prénoms et raison sociale du
@@ -272,46 +367,39 @@ export function buildMaskingEntries(
       pushEntry(entries, seen, contact.lastName, maskLastName(contact.lastName));
     }
     if (contact.companyName) {
-      pushEntry(entries, seen, contact.companyName, `[${'Nom de la société'}]`);
+      pushField(contact.companyName, 'Nom de la société', 'name');
     }
 
     // Évite l'oubli des paths de naissance / coordonnées même si le
-    // FieldDef n'expose pas le contactPath dans la base courante.
-    pushIfPresent(entries, seen, contact.birthPlace, '[Lieu de naissance]');
-    pushIfPresent(entries, seen, contact.nationality, '[Nationalité]');
-    pushIfPresent(entries, seen, contact.profession, '[Profession]');
-    pushIfPresent(entries, seen, contact.email, '[Email]');
-    pushIfPresent(entries, seen, contact.phone, '[Téléphone]');
-    pushIfPresent(entries, seen, contact.address, '[Adresse]');
-    pushIfPresent(entries, seen, contact.addressStreet, '[Rue]');
-    pushIfPresent(entries, seen, contact.addressNumber, '[Numéro]');
-    pushIfPresent(entries, seen, contact.addressComplement, "[Complément d'adresse]");
-    pushIfPresent(entries, seen, contact.addressPostalCode, '[Code postal]');
-    pushIfPresent(entries, seen, contact.addressCity, '[Ville]');
-    pushIfPresent(
-      entries,
-      seen,
-      contact.addressCity ? contact.addressCity.toUpperCase() : undefined,
-      '[Ville]',
-    );
-    pushIfPresent(entries, seen, contact.addressCountry, '[Pays]');
-    pushIfPresent(entries, seen, contact.legalForm, '[Forme juridique]');
-    pushIfPresent(entries, seen, contact.siret, '[SIRET]');
-    pushIfPresent(entries, seen, contact.rcs, '[RCS]');
-    pushIfPresent(entries, seen, contact.rcsCity, '[Ville RCS]');
-    pushIfPresent(entries, seen, contact.representative, '[Représentant légal]');
-    pushIfPresent(entries, seen, contact.representativeRole, '[Qualité]');
+    // FieldDef n'expose pas le contactPath dans la base courante. On
+    // associe à chaque champ son type de chip pour la couleur.
+    pushField(contact.birthPlace, 'Lieu de naissance', 'address');
+    pushField(contact.nationality, 'Nationalité', 'text');
+    pushField(contact.profession, 'Profession', 'text');
+    pushField(contact.email, 'Email', 'email');
+    pushField(contact.phone, 'Téléphone', 'phone');
+    pushField(contact.address, 'Adresse', 'address');
+    pushField(contact.addressStreet, 'Rue', 'address');
+    pushField(contact.addressNumber, 'Numéro', 'address');
+    pushField(contact.addressComplement, "Complément d'adresse", 'address');
+    pushField(contact.addressPostalCode, 'Code postal', 'address');
+    pushField(contact.addressCity, 'Ville', 'address');
+    if (contact.addressCity) {
+      pushField(contact.addressCity.toUpperCase(), 'Ville', 'address');
+    }
+    pushField(contact.addressCountry, 'Pays', 'address');
+    pushField(contact.legalForm, 'Forme juridique', 'text');
+    pushField(contact.siret, 'SIRET', 'reference');
+    pushField(contact.rcs, 'RCS', 'reference');
+    pushField(contact.rcsCity, 'Ville RCS', 'address');
+    pushField(contact.representative, 'Représentant légal', 'name');
+    pushField(contact.representativeRole, 'Qualité', 'text');
     if (contact.capital != null) {
-      pushIfPresent(
-        entries,
-        seen,
-        contact.capital.toLocaleString('fr-FR'),
-        '[Capital social]',
-      );
+      pushField(contact.capital.toLocaleString('fr-FR'), 'Capital social', 'price');
     }
     if (contact.birthDate) {
       const formatted = formatDate(contact.birthDate);
-      if (formatted) pushEntry(entries, seen, formatted, '[Date de naissance]');
+      if (formatted) pushField(formatted, 'Date de naissance', 'date');
     }
   }
 
@@ -327,21 +415,13 @@ function pushEntry(
   seen: Set<string>,
   value: string,
   replacement: string,
+  htmlReplacement?: string,
 ): void {
   const v = value.trim();
   if (!v || v.length < 2) return;
   if (seen.has(v)) return;
   seen.add(v);
-  entries.push({ value: v, replacement });
-}
-
-function pushIfPresent(
-  entries: MaskingEntry[],
-  seen: Set<string>,
-  value: string | undefined | null,
-  replacement: string,
-): void {
-  if (value && value.trim()) pushEntry(entries, seen, value, replacement);
+  entries.push({ value: v, replacement, htmlReplacement });
 }
 
 function formatDate(d: Date | string | undefined): string {
@@ -388,12 +468,48 @@ export function maskText(text: string, entries: MaskingEntry[]): string {
 }
 
 /**
+ * Applique le masquage au texte d'un nœud, en respectant les
+ * remplacements HTML quand ils existent. Renvoie un fragment HTML
+ * (déjà échappé) qui peut être ré-injecté via `innerHTML`.
+ *
+ * Stratégie de tokenisation : on insère des marqueurs sentinelles
+ * `\x00<index>\x00` à la place des matches, on échappe la chaîne
+ * résiduelle en HTML, puis on ré-hydrate les marqueurs avec leur
+ * remplacement HTML (chip ou texte). Cela évite que le HTML d'une
+ * chip soit double-échappé tout en protégeant le texte autour
+ * contre une éventuelle injection.
+ */
+function maskTextToHtml(text: string, entries: MaskingEntry[]): string {
+  if (!text) return '';
+  if (entries.length === 0) return escapeHtml(text);
+
+  const tokens: string[] = [];
+  let work = text;
+  for (const { value, replacement, htmlReplacement } of entries) {
+    if (!value) continue;
+    const startsWord = /^\w/.test(value);
+    const endsWord = /\w$/.test(value);
+    const left = startsWord ? '\\b' : '';
+    const right = endsWord ? '\\b' : '';
+    const re = new RegExp(`${left}${escapeRegex(value)}${right}`, 'gi');
+    work = work.replace(re, () => {
+      tokens.push(htmlReplacement ?? escapeHtml(replacement));
+      return `\x00${tokens.length - 1}\x00`;
+    });
+  }
+
+  const escaped = escapeHtml(work);
+  return escaped.replace(/\x00(\d+)\x00/g, (_, idx) => tokens[Number(idx)] ?? '');
+}
+
+/**
  * Applique le masquage à un contenu HTML. Walks la structure du DOM
  * et n'altère que les nœuds texte, en préservant balises / attributs.
+ * Quand l'entrée fournit un `htmlReplacement`, le texte du nœud est
+ * remplacé par un fragment HTML (chip colorée).
  *
- * Si `DOMParser` n'est pas disponible (SSR), retourne le HTML brut
- * — le composant appelant est censé être rendu côté client (`'use
- * client'`).
+ * Si `DOMParser` n'est pas disponible (SSR), retourne le HTML brut —
+ * le composant appelant est censé être rendu côté client.
  */
 export function maskHtml(html: string, entries: MaskingEntry[]): string {
   if (!html || entries.length === 0) return html;
@@ -410,10 +526,22 @@ export function maskHtml(html: string, entries: MaskingEntry[]): string {
   while ((current = walker.nextNode())) {
     targets.push(current as Text);
   }
+
   for (const node of targets) {
     const before = node.nodeValue ?? '';
-    const after = maskText(before, entries);
-    if (after !== before) node.nodeValue = after;
+    const replaced = maskTextToHtml(before, entries);
+    // Si rien n'a changé (pas de match dans ce nœud), on évite la
+    // bascule HTML pour préserver les whitespaces tels quels.
+    if (replaced === escapeHtml(before)) continue;
+
+    const parent = node.parentNode;
+    if (!parent) continue;
+    const fragment = doc.createElement('span');
+    fragment.innerHTML = replaced;
+    while (fragment.firstChild) {
+      parent.insertBefore(fragment.firstChild, node);
+    }
+    parent.removeChild(node);
   }
 
   return doc.body.innerHTML;
