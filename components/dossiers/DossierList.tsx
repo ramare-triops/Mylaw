@@ -54,8 +54,15 @@ interface SortState {
   column: SortColumn;
   direction: SortDirection;
 }
-const DEFAULT_SORT: SortState = { column: 'updated', direction: 'desc' };
-const SORT_SETTING_KEY = 'dossiers_list_sort_v1';
+// Tri par défaut : « Dernière ouverture » — on remonte en tête les
+// dossiers récemment consultés sur cet appareil. La préférence stockée
+// dans `db.settings[SORT_SETTING_KEY]` peut écraser ce défaut.
+const DEFAULT_SORT: SortState = { column: 'lastOpened', direction: 'desc' };
+// v2 : changement du défaut historique 'updated' → 'lastOpened'. On
+// bumpe la clé pour que tous les appareils repartent du nouveau défaut
+// (l'utilisateur peut toujours changer manuellement, son choix sera
+// alors sauvegardé sous v2).
+const SORT_SETTING_KEY = 'dossiers_list_sort_v2';
 
 function isSortColumn(v: unknown): v is SortColumn {
   return (
