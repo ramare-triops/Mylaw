@@ -276,16 +276,15 @@ export function Dashboard() {
             padding={0}
             actions={
               <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<Maximize2 className="h-3.5 w-3.5" />}
+                <button
+                  type="button"
                   onClick={() => setDeadlinesFullscreen(true)}
                   title="Voir toutes les échéances en plein écran"
                   aria-label="Plein écran"
+                  className="rounded-sm p-1.5 text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-alt)] hover:text-[var(--fg-primary)] transition-colors"
                 >
-                  Plein écran
-                </Button>
+                  <Maximize2 className="h-3.5 w-3.5" />
+                </button>
                 <Button
                   variant="ghost"
                   size="sm"
