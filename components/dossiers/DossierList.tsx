@@ -24,6 +24,7 @@ import {
   type DossierLastOpenedMap,
 } from '@/lib/db';
 import { cn, formatDate } from '@/lib/utils';
+import { isValidDossier } from '@/lib/dossier-validation';
 import { NewDossierDialog } from './NewDossierDialog';
 import {
   DOSSIER_TYPE_LABELS,
@@ -155,22 +156,9 @@ export function DossierList() {
   // ne portent pas la forme attendue d'un Dossier. Cela protège la page
   // contre une table `dossiers` qui aurait été polluée par d'autres
   // entités (fieldDefs, sessions, contacts…) lors d'un ancien bug de
-  // sync. Un dossier valide doit avoir une `reference` et un `type`
-  // présent dans la table des libellés de types.
-  const dossiers = rawDossiers?.filter((d): d is Dossier => {
-    if (!d || typeof d !== 'object') return false;
-    const r = d as Partial<Dossier>;
-    return (
-      typeof r.reference === 'string' &&
-      r.reference.length > 0 &&
-      typeof r.name === 'string' &&
-      typeof r.type === 'string' &&
-      r.type in DOSSIER_TYPE_LABELS &&
-      typeof r.status === 'string' &&
-      r.status in DOSSIER_STATUS_LABELS &&
-      Array.isArray(r.tags)
-    );
-  });
+  // sync. Le filtre vit dans `lib/dossier-validation.ts` pour que le
+  // tableau de bord puisse l'utiliser à l'identique.
+  const dossiers = rawDossiers?.filter(isValidDossier);
 
   const docsByDossier = new Map<number, number>();
   allDocs?.forEach((d) => {

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { addDays, differenceInCalendarDays } from 'date-fns';
 import { Check, AlertTriangle, Bell, Maximize2 } from 'lucide-react';
 import { db } from '@/lib/db';
+import { isValidDossier } from '@/lib/dossier-validation';
 import { Button, Card, Eyebrow } from '@/components/ui';
 import { useCabinetIdentity } from '@/lib/hooks/useCabinetIdentity';
 import type { Deadline, DeadlineType } from '@/types';
@@ -94,15 +95,20 @@ export function Dashboard() {
   // Toute mutation (changement de statut de dossier, ajout d'échéance, etc.)
   // déclenche automatiquement un re-render — pas de cache à invalider.
   const kpis = useMemo(() => {
-    const all = dossiers ?? [];
+    // Même filtre de validité que la liste Dossiers (cf. /lib/dossier-validation.ts)
+    // pour garantir un compteur aligné avec « N dossiers au cabinet ».
+    const all = (dossiers ?? []).filter(isValidDossier);
 
-    // « Dossiers actifs » : dossiers sur lesquels l'utilisateur travaille
-    // actuellement = statut 'active' OU 'pending'. Les dossiers au statut
-    // 'open' (créés mais pas encore travaillés) ne sont PAS comptés ici
-    // pour éviter qu'un historique de tests ne gonfle le compteur.
-    const active = all.filter((d) => d.status === 'active');
-    const pending = all.filter((d) => d.status === 'pending');
-    const activeCount = active.length + pending.length;
+    // « Dossiers ouverts » : tous les dossiers vivants, c.-à-d. tout
+    // sauf 'archived' et 'closed'. Cela inclut donc les statuts 'open',
+    // 'active' et 'pending' — ce que l'utilisateur compte réellement
+    // dans son activité quotidienne.
+    const openDossiers = all.filter(
+      (d) => d.status !== 'archived' && d.status !== 'closed',
+    );
+    const active = openDossiers.filter((d) => d.status === 'active');
+    const pending = openDossiers.filter((d) => d.status === 'pending');
+    const openCount = openDossiers.length;
 
     // « Échéances ≤ 7 j » : nombre de délais non terminés dont la date
     // d'échéance tombe dans la fenêtre [now, now + 7 jours].
@@ -120,16 +126,17 @@ export function Dashboard() {
     return [
       {
         key: 'dossiers',
-        k: 'Dossiers actifs',
-        v: activeCount.toString(),
+        k: 'Dossiers ouverts',
+        v: openCount.toString(),
         sub:
-          activeCount === 0
-            ? 'Aucun dossier en cours'
-            : pending.length > 0
-              ? `dont ${pending.length} en attente`
-              : active.length > 1
-                ? 'En cours'
-                : 'En cours',
+          openCount === 0
+            ? 'Aucun dossier ouvert'
+            : [
+                active.length > 0 && `${active.length} en cours`,
+                pending.length > 0 && `${pending.length} en attente`,
+              ]
+                .filter(Boolean)
+                .join(' · ') || 'Au cabinet',
         onClick: () => router.push('/dossiers'),
       },
       {
