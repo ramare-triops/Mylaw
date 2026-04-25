@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   Folder,
@@ -11,12 +11,11 @@ import {
   ChevronsLeft,
   ChevronsRight,
   ChevronsUpDown,
-  Plus,
   FileCode,
   Sparkles,
 } from 'lucide-react';
 import { useUIState } from '@/components/providers/UIStateProvider';
-import { Avatar, Button, Eyebrow } from '@/components/ui';
+import { Avatar, Eyebrow } from '@/components/ui';
 import { MylawLogo } from '@/components/ui/MylawLogo';
 import { useCabinetIdentity } from '@/lib/hooks/useCabinetIdentity';
 import { cn } from '@/lib/utils';
@@ -40,7 +39,6 @@ const NAV_ITEMS: NavItem[] = [
 export function Sidebar() {
   const identity = useCabinetIdentity();
   const pathname = usePathname();
-  const router = useRouter();
   const { sidebarCollapsed, toggleSidebar } = useUIState();
 
   const isActive = (href: string) =>
@@ -69,20 +67,6 @@ export function Sidebar() {
             Mylaw
           </span>
         )}
-      </div>
-
-      {/* Quick create */}
-      <div className={cn(sidebarCollapsed ? 'px-2' : 'px-3', 'pb-3')}>
-        <Button
-          variant="primary"
-          size="md"
-          fullWidth
-          icon={<Plus className="h-3.5 w-3.5" />}
-          onClick={() => router.push('/dossiers')}
-          title="Nouveau dossier"
-        >
-          {!sidebarCollapsed && 'Nouveau dossier'}
-        </Button>
       </div>
 
       {/* Nav */}
