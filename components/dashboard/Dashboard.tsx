@@ -1,10 +1,10 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useRouter } from 'next/navigation';
 import { addDays, differenceInCalendarDays } from 'date-fns';
-import { Check, AlertTriangle, Bell } from 'lucide-react';
+import { Check, AlertTriangle, Bell, Maximize2 } from 'lucide-react';
 import { db } from '@/lib/db';
 import { Button, Card, Eyebrow } from '@/components/ui';
 import { useCabinetIdentity } from '@/lib/hooks/useCabinetIdentity';
@@ -13,6 +13,7 @@ import { PendingDossiersCard } from './PendingDossiersCard';
 import { RecentDossiersCard } from './RecentDossiersCard';
 import { JotCard } from './JotCard';
 import { OutlookCard } from './OutlookCard';
+import { DeadlinesFullscreen } from './DeadlinesFullscreen';
 
 const MONTH_ABBR_FR = [
   'janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin',
@@ -75,6 +76,7 @@ export function Dashboard() {
   const router = useRouter();
   const now = useMemo(() => new Date(), []);
   const identity = useCabinetIdentity();
+  const [deadlinesFullscreen, setDeadlinesFullscreen] = useState(false);
 
   const dossiers = useLiveQuery(() => db.dossiers.toArray(), []);
   const allDeadlines = useLiveQuery(() => db.deadlines.toArray(), []);
@@ -266,13 +268,25 @@ export function Dashboard() {
             title="Échéances à venir"
             padding={0}
             actions={
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => router.push('/tools/deadline-tracker')}
-              >
-                Voir tout
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Maximize2 className="h-3.5 w-3.5" />}
+                  onClick={() => setDeadlinesFullscreen(true)}
+                  title="Voir toutes les échéances en plein écran"
+                  aria-label="Plein écran"
+                >
+                  Plein écran
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => router.push('/tools/deadline-tracker')}
+                >
+                  Voir tout
+                </Button>
+              </div>
             }
           >
             {upcomingDeadlines.length === 0 ? (
@@ -318,6 +332,12 @@ export function Dashboard() {
       <section>
         <OutlookCard />
       </section>
+
+      {/* Plein écran des échéances — overlay rendu au-dessus du dashboard. */}
+      <DeadlinesFullscreen
+        open={deadlinesFullscreen}
+        onClose={() => setDeadlinesFullscreen(false)}
+      />
     </div>
   );
 }
