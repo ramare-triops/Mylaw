@@ -17,6 +17,29 @@ interface NewDossierDialogProps {
   onSave: (dossier: Dossier) => void;
 }
 
+/**
+ * Le nom de dossier est saisi en deux champs côte à côte (POUR /
+ * CONTRE) et stocké en base sous la forme « POUR / CONTRE ». Quand
+ * une seule des deux parties est renseignée, on stocke uniquement
+ * cette partie sans séparateur — pour rester compatible avec les
+ * dossiers à un seul intervenant identifié.
+ */
+function splitDossierName(name: string): { pour: string; contre: string } {
+  if (!name) return { pour: '', contre: '' };
+  const parts = name.split(/\s*\/\s*/);
+  return {
+    pour: (parts[0] ?? '').trim(),
+    contre: parts.slice(1).join(' / ').trim(),
+  };
+}
+
+function joinDossierName(pour: string, contre: string): string {
+  const p = pour.trim();
+  const c = contre.trim();
+  if (p && c) return `${p} / ${c}`;
+  return p || c;
+}
+
 export function NewDossierDialog({
   open,
   initial,
@@ -24,7 +47,8 @@ export function NewDossierDialog({
   onSave,
 }: NewDossierDialogProps) {
   const [reference, setReference] = useState('');
-  const [name, setName] = useState('');
+  const [pourName, setPourName] = useState('');
+  const [contreName, setContreName] = useState('');
   const [type, setType] = useState<DossierType>('judiciary');
   const [status, setStatus] = useState<DossierStatus>('open');
   const [clientName, setClientName] = useState('');
@@ -36,7 +60,9 @@ export function NewDossierDialog({
     if (!open) return;
     if (initial) {
       setReference(initial.reference);
-      setName(initial.name);
+      const { pour, contre } = splitDossierName(initial.name);
+      setPourName(pour);
+      setContreName(contre);
       setType(initial.type);
       setStatus(initial.status);
       setClientName(initial.clientName ?? '');
@@ -47,7 +73,8 @@ export function NewDossierDialog({
       // Suggestion immédiate (placeholder optimiste) puis valeur exacte
       // récupérée depuis Dexie via nextDossierReference().
       setReference('');
-      setName('');
+      setPourName('');
+      setContreName('');
       setType('judiciary');
       setStatus('open');
       setClientName('');
@@ -74,10 +101,11 @@ export function NewDossierDialog({
     const previousStatus = initial?.status;
     const isNowPending = status === 'pending';
     const wasPending = previousStatus === 'pending';
+    const composedName = joinDossierName(pourName, contreName);
     const payload: Dossier = {
       ...(initial ?? {}),
       reference: reference.trim() || `DOS-${Date.now()}`,
-      name: name.trim() || 'Nouveau dossier',
+      name: composedName || 'Nouveau dossier',
       type,
       status,
       clientName: clientName.trim() || undefined,
@@ -124,27 +152,47 @@ export function NewDossierDialog({
           onSubmit={handleSubmit}
           className="flex flex-col gap-4 px-6 py-5"
         >
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Référence">
+          <Field label="Référence">
+            <input
+              type="text"
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="26001"
+              className={cn(inputCls, 'max-w-[200px]')}
+              autoFocus
+            />
+          </Field>
+
+          {/* Nom du dossier saisi en deux parties POUR / CONTRE pour
+              que le mode confidentialité puisse masquer chaque partie
+              indépendamment (« Dup...t / Mic...l »). Une seule des
+              deux suffit pour les dossiers à un seul intervenant. */}
+          <Field label="Nom du dossier (Pour / Contre)">
+            <div className="flex items-center gap-2">
               <input
                 type="text"
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-                placeholder="26001"
+                value={pourName}
+                onChange={(e) => setPourName(e.target.value)}
+                placeholder="POUR"
                 className={inputCls}
-                autoFocus
+                aria-label="Nom du dossier — partie POUR"
               />
-            </Field>
-            <Field label="Nom du dossier">
+              <span
+                aria-hidden
+                className="select-none text-base font-medium text-[var(--color-text-muted)]"
+              >
+                /
+              </span>
               <input
                 type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ex. Dupont c/ SCI Martin"
+                value={contreName}
+                onChange={(e) => setContreName(e.target.value)}
+                placeholder="CONTRE"
                 className={inputCls}
+                aria-label="Nom du dossier — partie CONTRE"
               />
-            </Field>
-          </div>
+            </div>
+          </Field>
 
           <Field label="Client (libellé rapide)">
             <input

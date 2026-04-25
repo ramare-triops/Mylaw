@@ -57,6 +57,8 @@ import type { Document } from '@/lib/db'
 import type { EditorPrefs } from '@/components/settings/Settings'
 import { DEFAULT_EDITOR_PREFS } from '@/components/settings/Settings'
 import type { TextExpansionEntry } from './extensions/TextExpansion'
+import { usePrivacyMasking } from '@/lib/hooks/usePrivacyMasking'
+import { EyeOff } from 'lucide-react'
 
 interface DocumentEditorWrapperProps {
   document: Document
@@ -203,6 +205,12 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
 
   const { isSaved, isSaving, lastSavedAt, hasUnsavedChanges, saveNow, markAsChanged } =
     useDocumentSave(document.id, prefs.autoSave ? Number(prefs.autoSaveDelay) * 1000 : 0)
+
+  // Mode confidentialité : on bâtit la table de remplacement à partir
+  // des intervenants du dossier rattaché, puis on affiche par dessus
+  // l'éditeur une vue lecture-seule masquée. L'éditeur reste monté
+  // mais inerte tant que le toggle est actif.
+  const masking = usePrivacyMasking(document.dossierId ?? null)
 
   // Charge les préférences éditeur et initialise le zoom à partir de defaultZoom
   useEffect(() => {
@@ -510,6 +518,15 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
     if (editor) setVariableCount(countVariables(editor))
   }, [editor])
 
+  // Désactive l'édition en mode confidentialité : la vue masquée
+  // recouvre l'éditeur, mais on coupe aussi `setEditable` pour
+  // empêcher les commandes via toolbar / raccourcis qui pourraient
+  // muter le document sans retour visuel pour l'utilisateur.
+  useEffect(() => {
+    if (!editor) return
+    editor.setEditable(!masking.privacyMode)
+  }, [editor, masking.privacyMode])
+
   useEffect(() => {
     if (!editor || !prefsLoaded.current) return
     editor.chain().focus().setFontFamily(prefs.fontFamily).setFontSize(`${prefs.fontSize}pt`).run()
@@ -650,6 +667,18 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
           </div>
         </div>
 
+        {/* Bandeau mode confidentialité — visible uniquement quand
+            l'avocat travaille en public. Rappelle que l'édition est
+            suspendue tant que le toggle est actif. */}
+        {masking.privacyMode && (
+          <div className="flex items-center gap-2 px-4 py-2 text-xs bg-[var(--brand-subtle)] text-[var(--brand)] border-b border-[var(--color-border)] flex-shrink-0">
+            <EyeOff className="w-3.5 h-3.5" />
+            Mode confidentialité actif — édition désactivée. Désactivez
+            le bouton « œil » de la barre du haut pour reprendre la
+            rédaction.
+          </div>
+        )}
+
         {/* Ligne principale : éditeur + panneau briques */}
         <div className="flex flex-1 overflow-hidden">
 
@@ -683,9 +712,26 @@ export function DocumentEditorWrapper({ document, onClose }: DocumentEditorWrapp
                   transformOrigin: 'top left',
                   transform: `scale(${scaleFactor})`,
                   transition: 'transform 0.15s ease',
+                  position: 'relative',
                 }}
               >
                 <EditorContent editor={editor} />
+                {masking.privacyMode && (
+                  <div
+                    aria-label="Aperçu masqué (mode confidentialité)"
+                    className="mylex-editor-content"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      padding: pagePadding,
+                      background: 'white',
+                      overflow: 'auto',
+                    }}
+                    dangerouslySetInnerHTML={{
+                      __html: masking.maskHtml(editor?.getHTML() ?? ''),
+                    }}
+                  />
+                )}
               </div>
             </div>
           </div>

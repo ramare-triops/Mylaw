@@ -3,13 +3,15 @@
  *
  * Lorsque l'avocat travaille en public, ce module masque les données
  * sensibles affichées à l'écran :
- *  - Noms de dossiers : remplacés par la civilité + initiale du nom
- *    de famille (ex. « Monsieur Dupont » → « Monsieur D. »).
- *  - Prénoms / noms : remplacés par leur initiale suivie d'une ellipse
- *    (ex. « Philippe » → « P… », « COUDERT » → « C… »).
+ *  - Noms de dossiers : chaque partie du nom est ramenée à ses trois
+ *    premières lettres + une ellipse + sa dernière lettre
+ *    (ex. « Dupont » → « Dup...t », « Charpentier » → « Cha...r »).
+ *    Quand le dossier nomme deux parties séparées par « / »
+ *    (ex. « Dupont / Michel »), le format devient « Dup...t / Mic...l ».
+ *  - Prénoms / noms : même règle de masquage.
  *  - Contenu des documents : les valeurs filles d'un FieldDef ou d'une
  *    brique sont restaurées en `[Label]`. Les noms / prénoms suivent
- *    le masquage par initiale.
+ *    le masquage par troncature.
  *
  * Le but est de pouvoir consulter et travailler sur un dossier en
  * audience ou dans les transports sans exposer l'identité du client.
@@ -18,30 +20,30 @@
  */
 
 import type { Contact } from '@/types';
-import type { FieldDef, ContactFieldPath } from '@/types/field-def';
+import type { FieldDef } from '@/types/field-def';
 import { contactValueFromPath } from './contact-variables';
 
-/** Préfixes de civilité reconnus en tête de nom de dossier. */
-const CIVILITY_PREFIXES = [
-  'Monsieur',
-  'Madame',
-  'Mademoiselle',
-  'Maître',
-  'Maitre',
-  'Mr',
-  'Mme',
-  'Mlle',
-  'Me',
-  'M.',
-  'Pr.',
-  'Dr.',
-  'M',
-];
+/** Préfixes de civilité reconnus en tête de partie de nom. */
+const CIVILITY_PREFIXES = new Set([
+  'monsieur',
+  'madame',
+  'mademoiselle',
+  'maître',
+  'maitre',
+  'mr',
+  'mme',
+  'mlle',
+  'me',
+  'm.',
+  'pr.',
+  'dr.',
+  'm',
+]);
 
 /**
- * Préfixes additionnels (formes juridiques, libellés cabinet) pour
- * lesquels on conserve le premier mot et on masque le suivant. Permet
- * p. ex. à « SARL TechCorp » de devenir « SARL T. ».
+ * Préfixes additionnels (formes juridiques, libellés cabinet) qui
+ * sont conservés intacts en tête de partie ; le mot suivant reçoit le
+ * masquage par troncature.
  */
 const EXTRA_PREFIXES = new Set([
   'sarl',
@@ -54,7 +56,6 @@ const EXTRA_PREFIXES = new Set([
   'sel',
   'selarl',
   'selafa',
-  'sci',
   'gie',
   'scop',
   'société',
@@ -65,119 +66,148 @@ const EXTRA_PREFIXES = new Set([
   'succession',
 ]);
 
-/** Marqueur d'ellipse pour les masques (« P… »). */
-const ELLIPSIS = '…';
+/** Marqueur d'ellipse pour les masques. */
+const ELLIPSIS = '...';
 
 /**
- * Masque un nom de dossier en conservant la civilité et la première
- * lettre du nom de famille (point final).
+ * Tronque un mot en gardant ses trois premières lettres, une ellipse
+ * et sa dernière lettre.
+ *
+ *   « Dupont »      → « Dup...t »
+ *   « Charpentier » → « Cha...r »
+ *   « Élise »       → « Éli...e »
+ *
+ * Pour les mots trop courts, on dégrade gracieusement :
+ *   « Lo »  → « Lo »      (3 lettres ou moins : on laisse tel quel)
+ *   « Léa » → « Léa »
+ *   « Léon »→ « Léo...n »
+ *   « Lou »→ « Lou »
+ *
+ * Tient compte des caractères non-alphabétiques en tête (apostrophes,
+ * parenthèses) qui sont préservés.
+ */
+export function maskWord(token: string): string {
+  if (!token) return '';
+  // Sépare un éventuel préfixe non-alphabétique (apostrophes, ouvrant)
+  // d'un éventuel suffixe (ponctuation finale) du corps alphabétique.
+  const m = token.match(/^([^A-Za-zÀ-ÖØ-öø-ÿ]*)(.*?)([^A-Za-zÀ-ÖØ-öø-ÿ]*)$/);
+  if (!m) return token;
+  const prefix = m[1];
+  const core = m[2];
+  const suffix = m[3];
+  if (!core) return token;
+
+  const chars = Array.from(core);
+  if (chars.length <= 3) return token;
+  if (chars.length === 4) {
+    // « Léon » → « Léo...n » (3 + ellipse + 1 = même longueur, mais
+    // visuellement masqué).
+    return `${prefix}${chars.slice(0, 3).join('')}${ELLIPSIS}${chars[chars.length - 1]}${suffix}`;
+  }
+  return `${prefix}${chars.slice(0, 3).join('')}${ELLIPSIS}${chars[chars.length - 1]}${suffix}`;
+}
+
+/**
+ * Masque une « partie » de nom de dossier (un côté du « / »).
+ *
+ * Logique :
+ *   - Conserve un éventuel préfixe (civilité ou forme juridique) tel
+ *     quel, masque le mot suivant.
+ *   - Sinon, masque le premier mot avec `maskWord`.
  *
  * Exemples :
- *   « Monsieur Dupont »     → « Monsieur D. »
- *   « Madame Michèle »      → « Madame M. »
- *   « SARL TechCorp »       → « SARL T. »
- *   « Affaire Untel c/ X »  → « Affaire U. »
- *   « Dupont »              → « D. »
+ *   « Dupont »            → « Dup...t »
+ *   « Monsieur Dupont »   → « Monsieur Dup...t »
+ *   « Madame Charpentier »→ « Madame Cha...r »
+ *   « SARL TechCorp »     → « SARL Tec...p »
+ */
+export function maskNamePart(part: string | null | undefined): string {
+  if (!part) return '';
+  const trimmed = part.trim();
+  if (!trimmed) return '';
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.length === 0) return '';
+
+  if (tokens.length === 1) {
+    return maskWord(tokens[0]);
+  }
+
+  const head = tokens[0];
+  const headLower = head.toLowerCase();
+  const isPrefix =
+    CIVILITY_PREFIXES.has(headLower) ||
+    CIVILITY_PREFIXES.has(headLower.replace(/\.$/, '')) ||
+    EXTRA_PREFIXES.has(headLower);
+
+  if (isPrefix) {
+    return `${head} ${maskWord(tokens[1])}`;
+  }
+
+  // Pas de préfixe reconnu : on masque uniquement le premier mot,
+  // ce qui suffit à protéger l'identité dans la plupart des cas.
+  return maskWord(head);
+}
+
+/**
+ * Masque un nom de dossier complet, en gérant le séparateur « / »
+ * couramment utilisé pour opposer deux parties.
+ *
+ * Exemples :
+ *   « Dupont »                → « Dup...t »
+ *   « Dupont / Michel »       → « Dup...t / Mic...l »
+ *   « Monsieur D. c/ SARL X » → « Monsieur D. c/ SARL X » (préservé,
+ *     mais la partie nominale est masquée si reconnue)
  */
 export function maskDossierName(name: string | null | undefined): string {
   if (!name) return '';
   const trimmed = name.trim();
   if (!trimmed) return '';
 
-  const tokens = trimmed.split(/\s+/);
-  if (tokens.length === 0) return '';
-  if (tokens.length === 1) {
-    return firstLetterDot(tokens[0]);
-  }
-
-  const head = tokens[0];
-  const headLower = head.toLowerCase();
-  const isPrefix =
-    CIVILITY_PREFIXES.some((p) => p.toLowerCase() === headLower) ||
-    EXTRA_PREFIXES.has(headLower);
-
-  if (isPrefix) {
-    return `${head} ${firstLetterDot(tokens[1])}`;
-  }
-
-  // Pas de préfixe reconnu : on prend l'initiale du premier mot.
-  return firstLetterDot(head);
+  // Sépare sur « / » entouré ou non d'espaces. Conserve le séparateur
+  // d'origine pour ré-assembler à l'identique. Les formes « c/ » ou
+  // « C/ » très courtes sont traitées comme un séparateur normal.
+  const segments = trimmed.split(/\s*\/\s*/);
+  return segments.map(maskNamePart).join(' / ');
 }
 
 /**
- * Renvoie la première lettre majuscule d'un mot suivie d'un point
- * (ex. « Dupont » → « D. »). Tient compte des accents en utilisant
- * le caractère natif (« Élise » → « É. »).
- */
-function firstLetterDot(token: string): string {
-  const letter = firstLetter(token);
-  return letter ? `${letter}.` : '';
-}
-
-/**
- * Renvoie la première lettre d'un mot, en majuscule, sans diacritiques
- * supprimés (préserve « É », « Â »…). Filtre les caractères non
- * alphabétiques en tête (apostrophe, parenthèse, etc.).
- */
-function firstLetter(token: string): string {
-  if (!token) return '';
-  for (const ch of token) {
-    if (/[a-zA-ZÀ-ÖØ-öø-ÿ]/.test(ch)) return ch.toUpperCase();
-  }
-  return '';
-}
-
-/**
- * Masque un prénom en initiale + ellipse : « Philippe » → « P… ».
- * Utilisé dans le contenu des documents (briques d'identification)
- * où la spec demande de conserver l'initiale plutôt que le label
- * `[Prénom]`.
+ * Masque un prénom : « Philippe » → « Phi...e ». Utilisé dans le
+ * contenu des documents pour les valeurs identifiées comme prénoms,
+ * où la spec impose la troncature plutôt que le label `[Prénom]`.
  */
 export function maskFirstName(firstName: string | null | undefined): string {
   if (!firstName) return '';
-  const letter = firstLetter(firstName);
-  return letter ? `${letter}${ELLIPSIS}` : '';
+  return maskWord(firstName.trim());
 }
 
 /**
- * Masque un nom de famille : « COUDERT » → « C… ». Conserve la casse
- * d'origine de l'initiale (les noms en SHOUT case restent en majuscule).
+ * Masque un nom de famille : « COUDERT » → « COU...T ». Conserve la
+ * casse d'origine (les noms en SHOUT case restent en majuscule dans
+ * la troncature).
  */
 export function maskLastName(lastName: string | null | undefined): string {
   if (!lastName) return '';
-  for (const ch of lastName) {
-    if (/[a-zA-ZÀ-ÖØ-öø-ÿ]/.test(ch)) {
-      return `${ch}${ELLIPSIS}`;
-    }
-  }
-  return '';
+  return maskWord(lastName.trim());
 }
 
 /**
- * Masque un nom client / personnel libre (sans civilité). Si le nom
- * ressemble à un nom complet « Prénom NOM », on conserve l'ordre et on
- * masque chaque partie. Sinon on prend l'initiale du dernier mot.
+ * Masque un nom client / personnel libre. Applique `maskWord` à
+ * chaque mot du nom, en préservant les espaces.
  *
- * Exemples :
- *   « Jean Dupont »   → « J… D… »
- *   « Dupont »        → « D… »
+ *   « Jean Dupont » → « Jean Dup...t » (« Jean » fait 4 lettres → « Jea...n » ?
+ *   non, on préfère ne masquer QUE le nom de famille — on conserve donc
+ *   les prénoms intacts et on tronque uniquement le dernier mot.)
+ *
+ *   « Dupont »      → « Dup...t »
+ *   « Jean Dupont » → « Jean Dup...t »
  */
 export function maskClientName(name: string | null | undefined): string {
   if (!name) return '';
   const trimmed = name.trim();
   if (!trimmed) return '';
-  const tokens = trimmed.split(/\s+/);
-  if (tokens.length === 1) {
-    const l = firstLetter(tokens[0]);
-    return l ? `${l}${ELLIPSIS}` : '';
-  }
-  return tokens
-    .map((t) => {
-      const l = firstLetter(t);
-      return l ? `${l}${ELLIPSIS}` : '';
-    })
-    .filter(Boolean)
-    .join(' ');
+  // On délègue à `maskNamePart` qui sait gérer civilité + nom et qui
+  // ne masque que la composante identifiante. Adapté à un libellé court.
+  return maskNamePart(trimmed);
 }
 
 /**
@@ -193,7 +223,7 @@ export function maskClientName(name: string | null | undefined): string {
 export interface MaskingEntry {
   /** Valeur à chercher dans le texte (telle qu'elle a été insérée). */
   value: string;
-  /** Chaîne de remplacement (ex. « [Date de naissance] » ou « P… »). */
+  /** Chaîne de remplacement (ex. « [Date de naissance] » ou « Phi...e »). */
   replacement: string;
 }
 
@@ -209,9 +239,6 @@ export function buildMaskingEntries(
 ): MaskingEntry[] {
   const entries: MaskingEntry[] = [];
   const seen = new Set<string>();
-
-  // Chemins traités de façon spéciale (initiale + ellipse au lieu du label).
-  const NAME_PATHS: ContactFieldPath[] = ['firstName', 'lastName', 'fullName'];
 
   for (const contact of contacts) {
     // 1. Bindings déterministes via FieldDef.contactPath.
