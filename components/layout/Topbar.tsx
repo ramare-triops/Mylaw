@@ -3,8 +3,9 @@
 import { useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Bell, ChevronRight, Moon, Search, Sparkles, Sun } from 'lucide-react';
+import { Bell, ChevronRight, Eye, EyeOff, Moon, Search, Sparkles, Sun } from 'lucide-react';
 import { useTheme } from '@/components/providers/ThemeProvider';
+import { usePrivacy } from '@/components/providers/PrivacyProvider';
 import { GlobalSearch } from '@/components/search/GlobalSearch';
 import { cn } from '@/lib/utils';
 
@@ -38,6 +39,7 @@ export function Topbar() {
   const pathname = usePathname();
   const crumbs = useBreadcrumb(pathname ?? '/');
   const { resolvedTheme, setTheme } = useTheme();
+  const { privacyMode, togglePrivacyMode } = usePrivacy();
   const [searchOpen, setSearchOpen] = useState(false);
 
   return (
@@ -103,6 +105,34 @@ export function Topbar() {
             <Sun className="h-[18px] w-[18px]" />
           ) : (
             <Moon className="h-[18px] w-[18px]" />
+          )}
+        </button>
+
+        {/* Privacy / secret professionnel toggle */}
+        <button
+          onClick={togglePrivacyMode}
+          className={cn(
+            'flex h-8 w-8 items-center justify-center rounded-sm transition-colors duration-fast',
+            privacyMode
+              ? 'bg-[var(--brand-subtle)] text-[var(--brand)] hover:opacity-80'
+              : 'text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-alt)] hover:text-[var(--fg-primary)]',
+          )}
+          aria-pressed={privacyMode}
+          aria-label={
+            privacyMode
+              ? 'Désactiver le mode confidentialité'
+              : 'Activer le mode confidentialité'
+          }
+          title={
+            privacyMode
+              ? 'Mode confidentialité activé — cliquez pour révéler'
+              : 'Mode confidentialité — masquer les noms et données sensibles'
+          }
+        >
+          {privacyMode ? (
+            <EyeOff className="h-[18px] w-[18px]" />
+          ) : (
+            <Eye className="h-[18px] w-[18px]" />
           )}
         </button>
 

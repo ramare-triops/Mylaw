@@ -25,6 +25,8 @@ import {
 } from '@/lib/db';
 import { cn, formatDate } from '@/lib/utils';
 import { isValidDossier } from '@/lib/dossier-validation';
+import { usePrivacy } from '@/components/providers/PrivacyProvider';
+import { maskDossierName, maskClientName } from '@/lib/privacy';
 import { NewDossierDialog } from './NewDossierDialog';
 import {
   DOSSIER_TYPE_LABELS,
@@ -82,6 +84,7 @@ function isSortDirection(v: unknown): v is SortDirection {
 
 export function DossierList() {
   const router = useRouter();
+  const { privacyMode } = usePrivacy();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Dossier | null>(null);
@@ -447,12 +450,12 @@ export function DossierList() {
                   <div className="flex items-center gap-2 min-w-0">
                     <FolderKanban className="w-4 h-4 flex-shrink-0 text-[var(--color-primary)]" />
                     <span className="text-sm font-medium truncate">
-                      {d.name}
+                      {privacyMode ? maskDossierName(d.name) : d.name}
                     </span>
                   </div>
                   {d.clientName && (
                     <div className="text-xs text-[var(--color-text-muted)] truncate pl-6">
-                      {d.clientName}
+                      {privacyMode ? maskClientName(d.clientName) : d.clientName}
                     </div>
                   )}
                 </div>

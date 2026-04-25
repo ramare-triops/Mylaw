@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { db, searchDocuments, contactDisplayName } from '@/lib/db';
 import { cn } from '@/lib/utils';
+import { usePrivacy } from '@/components/providers/PrivacyProvider';
+import { maskDossierName, maskClientName } from '@/lib/privacy';
 import type { Document, Dossier, Contact, Deadline } from '@/types';
 
 interface Props {
@@ -126,6 +128,7 @@ function formatDeadlineDate(date: Date | string): string {
 
 export function GlobalSearch({ open, onClose }: Props) {
   const router = useRouter();
+  const { privacyMode } = usePrivacy();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -150,6 +153,8 @@ export function GlobalSearch({ open, onClose }: Props) {
     setQuery(q);
     if (q.length < 2) { setResults([]); setLoading(false); return; }
     setLoading(true);
+    // Le bloc lit `privacyMode` depuis la closure pour appliquer le
+    // masquage immédiatement quand le toggle est actif.
     // Lance toutes les recherches en parallèle et merge les résultats.
     const [docs, dossiers, contacts, deadlines, templates] = await Promise.all([
       searchDocuments(q).then((r) => r.slice(0, 5)),
@@ -169,15 +174,28 @@ export function GlobalSearch({ open, onClose }: Props) {
       ...dossiers.map<SearchResult>((d) => ({
         kind: 'dossier',
         id: d.id!,
-        title: d.name,
-        subtitle: [d.reference, d.clientName].filter(Boolean).join(' · '),
+        title: privacyMode ? maskDossierName(d.name) : d.name,
+        subtitle: [
+          d.reference,
+          d.clientName
+            ? privacyMode
+              ? maskClientName(d.clientName)
+              : d.clientName
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
         href: `/dossiers/${d.id}`,
       })),
       ...contacts.map<SearchResult>((c) => ({
         kind: 'contact',
         id: c.id!,
-        title: contactDisplayName(c),
-        subtitle: [c.email, c.phone, c.profession].filter(Boolean).join(' · '),
+        title: privacyMode
+          ? maskClientName(contactDisplayName(c))
+          : contactDisplayName(c),
+        subtitle: privacyMode
+          ? '— masqué —'
+          : [c.email, c.phone, c.profession].filter(Boolean).join(' · '),
         // Les contacts n'ont pas de page dédiée ; on redirige vers la liste
         // des dossiers, depuis laquelle l'onglet Intervenants est accessible.
         href: `/dossiers`,
@@ -199,7 +217,7 @@ export function GlobalSearch({ open, onClose }: Props) {
     ];
     setResults(merged);
     setLoading(false);
-  }, []);
+  }, [privacyMode]);
 
   if (!open) return null;
 

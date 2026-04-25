@@ -2,11 +2,14 @@
 
 import { ThemeProvider } from './ThemeProvider';
 import { UIStateProvider } from './UIStateProvider';
+import { PrivacyProvider } from './PrivacyProvider';
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider>
-      <UIStateProvider>{children}</UIStateProvider>
+      <PrivacyProvider>
+        <UIStateProvider>{children}</UIStateProvider>
+      </PrivacyProvider>
     </ThemeProvider>
   );
 }

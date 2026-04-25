@@ -17,6 +17,8 @@ import { db, saveDocument } from '@/lib/db';
 import { EditorToolbar } from './EditorToolbar';
 import { VariablePanel } from './VariablePanel';
 import { countWords, extractVariables } from '@/lib/utils';
+import { usePrivacyMasking } from '@/lib/hooks/usePrivacyMasking';
+import { EyeOff } from 'lucide-react';
 import type { Document } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -28,6 +30,10 @@ export function DocumentEditor({ docId }: Props) {
   const [doc, setDoc] = useState<Document | null>(null);
   const [saving, setSaving] = useState(false);
   const [showVariables, setShowVariables] = useState(false);
+  // En mode confidentialité, on rend une vue lecture-seule masquée par
+  // dessus l'éditeur (qui reste monté pour conserver son état). Le
+  // masquage interroge les intervenants du dossier rattaché.
+  const masking = usePrivacyMasking(doc?.dossierId ?? null);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -103,6 +109,13 @@ export function DocumentEditor({ docId }: Props) {
   const wordCount = editor?.storage.characterCount?.words() ?? 0;
   const variables = extractVariables(doc.content);
 
+  // En mode confidentialité, on calcule un rendu HTML masqué à partir
+  // du contenu courant de l'éditeur (et non du contenu en base) pour
+  // refléter immédiatement les éditions en cours. La vue masquée est
+  // affichée par dessus l'éditeur, qui reste monté mais inerte.
+  const liveHtml = editor?.getHTML() ?? doc.content;
+  const maskedHtml = masking.privacyMode ? masking.maskHtml(liveHtml) : '';
+
   return (
     <div className="flex h-full">
       {/* Editor area */}
@@ -110,9 +123,24 @@ export function DocumentEditor({ docId }: Props) {
         {/* Toolbar */}
         {editor && <EditorToolbar editor={editor} />}
 
+        {masking.privacyMode && (
+          <div className="flex items-center gap-2 px-4 py-2 text-xs bg-[var(--brand-subtle)] text-[var(--brand)] border-b border-[var(--color-border)]">
+            <EyeOff className="w-3.5 h-3.5" />
+            Mode confidentialité actif — édition désactivée pour protéger les
+            données sensibles. Désactivez le mode pour éditer.
+          </div>
+        )}
+
         {/* Editor content */}
-        <div className="flex-1 overflow-auto bg-[var(--color-surface)]">
-          <EditorContent editor={editor} />
+        <div className="flex-1 overflow-auto bg-[var(--color-surface)] relative">
+          {masking.privacyMode ? (
+            <div
+              className="tiptap-editor min-h-[calc(100vh-200px)] px-16 py-10 max-w-4xl mx-auto"
+              dangerouslySetInnerHTML={{ __html: maskedHtml }}
+            />
+          ) : (
+            <EditorContent editor={editor} />
+          )}
         </div>
 
         {/* Status bar */}

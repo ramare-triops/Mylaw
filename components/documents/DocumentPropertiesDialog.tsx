@@ -25,6 +25,8 @@ import {
   restoreDocumentVersion,
 } from '@/lib/db';
 import { cn, formatDateTime } from '@/lib/utils';
+import { usePrivacy } from '@/components/providers/PrivacyProvider';
+import { maskDossierName } from '@/lib/privacy';
 import {
   DOCUMENT_STATUS_LABELS,
   DOCUMENT_STATUS_COLORS,
@@ -63,6 +65,7 @@ export function DocumentPropertiesDialog({
   onClose,
   onSaved,
 }: Props) {
+  const { privacyMode } = usePrivacy();
   const [tab, setTab] = useState<PanelTab>('meta');
 
   const [dossierId, setDossierId] = useState<number | ''>('');
@@ -169,7 +172,7 @@ export function DocumentPropertiesDialog({
                     <option value="">— Aucun dossier —</option>
                     {dossiers?.map((d) => (
                       <option key={d.id} value={d.id}>
-                        {d.reference} · {d.name}
+                        {d.reference} · {privacyMode ? maskDossierName(d.name) : d.name}
                       </option>
                     ))}
                   </select>

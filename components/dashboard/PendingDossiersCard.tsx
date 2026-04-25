@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { PauseCircle, Clock } from 'lucide-react';
 import { db } from '@/lib/db';
 import { Button, Card } from '@/components/ui';
+import { usePrivacy } from '@/components/providers/PrivacyProvider';
+import { maskDossierName } from '@/lib/privacy';
 
 function relativeDuration(from: Date, to: Date): string {
   const ms = Math.max(0, to.getTime() - from.getTime());
@@ -20,6 +22,7 @@ function relativeDuration(from: Date, to: Date): string {
 
 export function PendingDossiersCard() {
   const router = useRouter();
+  const { privacyMode } = usePrivacy();
   const now = useMemo(() => new Date(), []);
   const pending = useLiveQuery(
     () => db.dossiers.where('status').equals('pending').toArray(),
@@ -90,7 +93,7 @@ export function PendingDossiersCard() {
                     className="truncate font-semibold text-[var(--fg-primary)]"
                     style={{ fontSize: 13 }}
                   >
-                    {d.name}
+                    {privacyMode ? maskDossierName(d.name) : d.name}
                   </span>
                   <span className="font-mono text-[11px] text-[var(--fg-tertiary)]">
                     {d.reference}

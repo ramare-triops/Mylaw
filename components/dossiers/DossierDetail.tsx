@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { db, deleteDossier, saveDossier } from '@/lib/db';
 import { cn, formatDate } from '@/lib/utils';
+import { usePrivacy } from '@/components/providers/PrivacyProvider';
+import { maskDossierName, maskClientName } from '@/lib/privacy';
 import { NewDossierDialog } from './NewDossierDialog';
 import { PendingStatusDialog } from './PendingStatusDialog';
 import { DossierDocumentsTab } from './tabs/DossierDocumentsTab';
@@ -42,6 +44,7 @@ const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
 
 export function DossierDetail({ dossierId }: { dossierId: number }) {
   const router = useRouter();
+  const { privacyMode } = usePrivacy();
   const dossier = useLiveQuery(
     () => db.dossiers.get(dossierId),
     [dossierId]
@@ -125,11 +128,14 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
                   </span>
                 </div>
                 <h1 className="text-lg font-semibold text-[var(--color-text)] truncate">
-                  {dossier.name}
+                  {privacyMode ? maskDossierName(dossier.name) : dossier.name}
                 </h1>
                 {dossier.clientName && (
                   <div className="text-sm text-[var(--color-text-muted)] mt-0.5">
-                    Client : {dossier.clientName}
+                    Client :{' '}
+                    {privacyMode
+                      ? maskClientName(dossier.clientName)
+                      : dossier.clientName}
                   </div>
                 )}
                 {dossier.description && (

@@ -4,6 +4,7 @@ import { useRef, useEffect, useState } from 'react';
 import { FileText, Clock, AlignLeft, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDateTime } from '@/lib/utils';
+import { usePrivacyMasking } from '@/lib/hooks/usePrivacyMasking';
 import type { Document } from '@/types';
 
 interface DocumentPreviewPanelProps {
@@ -124,7 +125,17 @@ function A4Page({ html }: { html: string }) {
 }
 
 export function DocumentPreviewPanel({ doc }: DocumentPreviewPanelProps) {
-  const html = doc ? contentToHtml(doc.content ?? '') : '';
+  // Le masquage utilise les intervenants du dossier rattaché : on
+  // construit la table de remplacement « valeur → label » à partir de
+  // ces contacts puis on l'applique au HTML rendu.
+  const masking = usePrivacyMasking(doc?.dossierId ?? null);
+  const rawHtml = doc ? contentToHtml(doc.content ?? '') : '';
+  const html = masking.maskHtml(rawHtml);
+  const title = doc
+    ? masking.privacyMode
+      ? masking.maskText(doc.title)
+      : doc.title
+    : '';
 
   return (
     <aside
@@ -161,7 +172,7 @@ export function DocumentPreviewPanel({ doc }: DocumentPreviewPanelProps) {
 
           {/* Titre */}
           <div className="px-5 py-4 border-b border-[var(--color-border)]">
-            <p className="text-sm font-semibold text-[var(--color-text)] leading-snug truncate">{doc.title}</p>
+            <p className="text-sm font-semibold text-[var(--color-text)] leading-snug truncate">{title}</p>
             <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{TYPE_LABELS[doc.type ?? ''] ?? doc.type ?? 'Document'}</p>
           </div>
 

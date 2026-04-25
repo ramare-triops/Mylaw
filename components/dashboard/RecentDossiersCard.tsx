@@ -7,6 +7,8 @@ import { FolderKanban } from 'lucide-react';
 import { db, getDossierLastOpenedMap, type DossierLastOpenedMap } from '@/lib/db';
 import { Avatar, Card } from '@/components/ui';
 import { DOSSIER_STATUS_LABELS } from '@/components/dossiers/labels';
+import { usePrivacy } from '@/components/providers/PrivacyProvider';
+import { maskDossierName, maskClientName } from '@/lib/privacy';
 
 /**
  * Carte « Dossiers récents » : affiche les dossiers dans lesquels l'utilisateur
@@ -16,6 +18,7 @@ import { DOSSIER_STATUS_LABELS } from '@/components/dossiers/labels';
  */
 export function RecentDossiersCard() {
   const router = useRouter();
+  const { privacyMode } = usePrivacy();
   const dossiers = useLiveQuery(() => db.dossiers.toArray(), []);
   const [openedMap, setOpenedMap] = useState<DossierLastOpenedMap>({});
 
@@ -81,7 +84,11 @@ export function RecentDossiersCard() {
               }
             >
               <Avatar
-                initials={initialsFrom(d.name)}
+                initials={
+                  privacyMode
+                    ? initialsFrom(maskDossierName(d.name))
+                    : initialsFrom(d.name)
+                }
                 size={28}
                 variant={i % 2 === 0 ? 'brand' : 'steel'}
               />
@@ -91,7 +98,7 @@ export function RecentDossiersCard() {
                     className="truncate font-semibold text-[var(--fg-primary)]"
                     style={{ fontSize: 13 }}
                   >
-                    {d.name}
+                    {privacyMode ? maskDossierName(d.name) : d.name}
                   </span>
                   <span className="font-mono text-[11px] text-[var(--fg-tertiary)]">
                     {d.reference}
@@ -101,7 +108,11 @@ export function RecentDossiersCard() {
                   className="mt-0.5 truncate text-[var(--fg-secondary)]"
                   style={{ fontSize: 12, lineHeight: 1.4 }}
                 >
-                  {d.clientName ?? DOSSIER_STATUS_LABELS[d.status]}
+                  {d.clientName
+                    ? privacyMode
+                      ? maskClientName(d.clientName)
+                      : d.clientName
+                    : DOSSIER_STATUS_LABELS[d.status]}
                 </div>
               </div>
               <span className="flex-shrink-0 text-[11px] text-[var(--fg-tertiary)]">
