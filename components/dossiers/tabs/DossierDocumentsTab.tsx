@@ -24,6 +24,8 @@ import {
   Archive,
   File as FileIcon,
   Scale,
+  Mail,
+  FilePlus,
 } from 'lucide-react';
 import {
   db,
@@ -48,6 +50,7 @@ import type { Brick as DBBrick } from '@/types';
 import type { FieldDef } from '@/types/field-def';
 import { cn, formatDate, formatDateTime } from '@/lib/utils';
 import { NewDocumentDialog, type DialogTemplate } from '@/components/documents/NewDocumentDialog';
+import { MailComposeDialog } from '@/components/dossiers/MailComposeDialog';
 import {
   DOCUMENT_STATUS_LABELS,
   DOCUMENT_STATUS_COLORS,
@@ -263,6 +266,7 @@ export function DossierDocumentsTab({ dossier }: Props) {
   const [newDocOpen, setNewDocOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [mailOpen, setMailOpen] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -998,7 +1002,16 @@ export function DossierDocumentsTab({ dossier }: Props) {
                   'bg-[var(--color-primary)] text-white hover:opacity-90'
                 )}
               >
-                <Plus className="w-4 h-4" /> Nouveau document
+                <FilePlus className="w-4 h-4" /> Nouveau document
+              </button>
+              <button
+                onClick={() => setMailOpen(true)}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium',
+                  'bg-[var(--color-primary)] text-white hover:opacity-90'
+                )}
+              >
+                <Mail className="w-4 h-4" /> Nouveau courriel
               </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
@@ -1097,6 +1110,12 @@ export function DossierDocumentsTab({ dossier }: Props) {
         open={linkOpen}
         dossierId={dossier.id!}
         onClose={() => setLinkOpen(false)}
+      />
+
+      <MailComposeDialog
+        open={mailOpen}
+        dossier={dossier}
+        onClose={() => setMailOpen(false)}
       />
     </>
   );
