@@ -576,6 +576,7 @@ export async function attachContactToDossier(
   role: DossierContact['role'],
   permissions: DossierContact['permissions'] = ['read'],
   parentDossierContactId?: number,
+  fileRef?: string,
 ): Promise<number> {
   const existing = await db.dossierContacts
     .where('[dossierId+contactId]').equals([dossierId, contactId]).first();
@@ -585,12 +586,14 @@ export async function attachContactToDossier(
     await db.dossierContacts.put({
       ...existing, role, permissions,
       parentDossierContactId: parentDossierContactId ?? existing.parentDossierContactId,
+      fileRef: fileRef !== undefined ? fileRef : existing.fileRef,
     });
     return existing.id;
   }
   const id = await db.dossierContacts.add({
     dossierId, contactId, role, permissions,
     parentDossierContactId,
+    fileRef: fileRef || undefined,
     createdAt: new Date(),
   } as DossierContact);
   await logAudit({
@@ -601,6 +604,26 @@ export async function attachContactToDossier(
     details: JSON.stringify({ role, parentDossierContactId }),
   });
   return Number(id);
+}
+
+/**
+ * Met à jour la référence dossier (champ par-dossier de
+ * `DossierContact.fileRef`) sans toucher au reste du lien.
+ * Utilisé quand l'avocat modifie un intervenant déjà rattaché et
+ * change uniquement la référence adverse spécifique au dossier.
+ */
+export async function setDossierContactFileRef(
+  dossierId: number,
+  contactId: number,
+  fileRef: string | undefined,
+): Promise<void> {
+  const link = await db.dossierContacts
+    .where('[dossierId+contactId]').equals([dossierId, contactId]).first();
+  if (!link?.id) return;
+  await db.dossierContacts.put({
+    ...link,
+    fileRef: fileRef && fileRef.trim() ? fileRef.trim() : undefined,
+  });
 }
 
 export async function detachContactFromDossier(dossierContactId: number): Promise<void> {

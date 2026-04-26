@@ -22,6 +22,7 @@ import {
   attachContactToDossier,
   detachContactFromDossier,
   contactDisplayName,
+  setDossierContactFileRef,
 } from '@/lib/db';
 import { cn } from '@/lib/utils';
 import {
@@ -137,18 +138,31 @@ export function DossierContactsTab({ dossier }: Props) {
     [JSON.stringify(contactIds)]
   );
 
-  async function handleSaveContact(c: Contact, role?: DossierRole) {
+  async function handleSaveContact(
+    c: Contact,
+    role?: DossierRole,
+    dossierMeta?: { fileRef?: string },
+  ) {
     const id = await saveContact(c);
     if (!c.id && role) {
       // Si on est en train de créer un contact "lié" (flot depuis le bouton +),
       // on rattache avec le parent ; sinon attachement racine classique.
+      // La référence dossier saisie dans le formulaire est portée
+      // sur le `DossierContact` (par-dossier), pas sur le `Contact`
+      // (qui peut intervenir dans plusieurs dossiers).
       await attachContactToDossier(
         dossier.id!,
         id,
         role,
         ['read'],
         pendingLinkParent?.id,
+        dossierMeta?.fileRef,
       );
+    } else if (c.id && dossierMeta) {
+      // Édition d'un intervenant déjà rattaché : on met à jour
+      // uniquement la référence du DossierContact, sans toucher au
+      // rôle ni à la hiérarchie.
+      await setDossierContactFileRef(dossier.id!, c.id, dossierMeta.fileRef);
     }
     setContactDialogOpen(false);
     setEditingContact(null);
@@ -302,9 +316,15 @@ export function DossierContactsTab({ dossier }: Props) {
                               <div className="text-sm font-medium truncate">
                                 {contactDisplayName(c)}
                               </div>
-                              {c.fileRef && (
+                              {/* La référence affichée est désormais
+                                  celle du DossierContact (propre au
+                                  dossier courant). On retombe sur
+                                  l'ancien `Contact.fileRef` legacy
+                                  uniquement quand aucune référence
+                                  par-dossier n'a été saisie. */}
+                              {(dc.fileRef || c.fileRef) && (
                                 <div className="text-xs text-[var(--color-text-muted)]">
-                                  Réf. : {c.fileRef}
+                                  Réf. : {dc.fileRef || c.fileRef}
                                 </div>
                               )}
                             </div>
@@ -427,6 +447,18 @@ export function DossierContactsTab({ dossier }: Props) {
         }
         presetType={pendingLinkOption?.contactType}
         presetCategory={pendingLinkOption?.category}
+        // Toujours fourni en contexte dossier — la valeur transmise
+        // est la référence existante du `DossierContact` (édition)
+        // ou vide (création). Le dialog affiche alors le champ
+        // « Référence du dossier » et persiste la modification sur
+        // le lien dossier↔contact via `setDossierContactFileRef`.
+        dossierContext={{
+          fileRef:
+            editingContact?.id != null
+              ? dossierContacts?.find((dc) => dc.contactId === editingContact.id)
+                  ?.fileRef
+              : undefined,
+        }}
         onClose={() => {
           setContactDialogOpen(false);
           setEditingContact(null);
@@ -742,6 +774,7 @@ export function ContactDialog({
   presetRole,
   presetType,
   presetCategory,
+  dossierContext,
   onClose,
   onSave,
   onDelete,
@@ -752,8 +785,29 @@ export function ContactDialog({
   presetRole?: DossierRole;
   presetType?: ContactType;
   presetCategory?: ProfessionalCategory;
+  /**
+   * Contexte « dossier courant » : quand fourni, le dialog affiche le
+   * champ « Référence dossier » qui se rattache au lien
+   * `DossierContact` plutôt qu'au `Contact` global. Le même avocat
+   * peut ainsi avoir des références adverses distinctes selon le
+   * dossier dans lequel il intervient.
+   *
+   * Quand absent (typiquement appel depuis l'outil global de gestion
+   * des intervenants), le champ disparaît : il n'a pas de sens hors
+   * d'un dossier.
+   */
+  dossierContext?: { fileRef?: string };
   onClose: () => void;
-  onSave: (c: Contact, role?: DossierRole) => void;
+  /**
+   * Quand un `dossierContext` est fourni, le 3ᵉ argument transporte
+   * la nouvelle valeur de la référence dossier. Sinon il vaut
+   * `undefined` et l'appelant ne s'en occupe pas.
+   */
+  onSave: (
+    c: Contact,
+    role?: DossierRole,
+    dossierMeta?: { fileRef?: string },
+  ) => void;
   onDelete?: () => void;
 }) {
   const [type, setType] = useState<ContactType>('physical');
@@ -821,7 +875,10 @@ export function ContactDialog({
         addressPostalCode: initial.addressPostalCode,
         addressCity: initial.addressCity,
       });
-      setFileRef(initial.fileRef ?? '');
+      // En contexte dossier, le champ est spécifique au lien
+      // DossierContact ; sinon (appel depuis Tools) on hérite de
+      // l'ancien `Contact.fileRef` legacy.
+      setFileRef(dossierContext?.fileRef ?? initial.fileRef ?? '');
       setNotes(initial.notes ?? '');
       setProfessionalCategory(initial.professionalCategory ?? '');
       setBarreau(initial.barreau ?? '');
@@ -847,7 +904,9 @@ export function ContactDialog({
       setPhone('');
       setAdditionalPhones([]);
       setAddress({});
-      setFileRef('');
+      // Pré-remplit avec la référence transmise par le contexte
+      // dossier le cas échéant (création depuis le menu « + »).
+      setFileRef(dossierContext?.fileRef ?? '');
       setNotes('');
       setRole(presetRole ?? 'client');
       setProfessionalCategory(presetCategory ?? '');
@@ -859,7 +918,7 @@ export function ContactDialog({
         setType('physical');
       }
     }
-  }, [open, initial, presetRole, presetType, presetCategory]);
+  }, [open, initial, presetRole, presetType, presetCategory, dossierContext?.fileRef]);
 
   // Si l'utilisateur sélectionne « Avocat » dans la liste des
   // catégories après ouverture, on bascule automatiquement sur la
@@ -928,7 +987,14 @@ export function ContactDialog({
       addressPostalCode: address.addressPostalCode || undefined,
       addressCity: address.addressCity || undefined,
       address: composedAddress || undefined,
-      fileRef: fileRef.trim() || undefined,
+      // En contexte dossier, la référence vit sur le DossierContact
+      // (transportée via le 3ᵉ argument de onSave). On ne touche pas
+      // au `Contact.fileRef` legacy : son rôle est de conserver la
+      // valeur historique pour les contacts saisis avant l'ajout du
+      // champ par-dossier.
+      fileRef: dossierContext
+        ? initial?.fileRef
+        : fileRef.trim() || undefined,
       notes: notes.trim() || undefined,
       professionalCategory: professionalCategory || undefined,
       barreau: barreau.trim() || undefined,
@@ -936,7 +1002,13 @@ export function ContactDialog({
       createdAt: initial?.createdAt ?? now,
       updatedAt: now,
     };
-    onSave(payload, requireRole ? role : undefined);
+    onSave(
+      payload,
+      requireRole ? role : undefined,
+      dossierContext
+        ? { fileRef: fileRef.trim() || undefined }
+        : undefined,
+    );
   }
 
   const inputCls = cn(
@@ -1307,9 +1379,23 @@ export function ContactDialog({
             </Field>
           )}
 
-          <Field label="Référence dossier (interne)">
-            <input type="text" value={fileRef} onChange={(e) => setFileRef(e.target.value)} className={inputCls} placeholder="Ex. CLI-023" />
-          </Field>
+          {/* Référence dossier : ne s'affiche qu'en contexte dossier
+              (la valeur vit alors sur le `DossierContact`, propre au
+              dossier courant). Hors contexte dossier — typiquement
+              dans l'outil global de gestion des intervenants — le
+              champ est masqué : la même référence n'aurait pas de
+              sens partagée entre tous les dossiers. */}
+          {dossierContext && (
+            <Field label="Référence du dossier (côté intervenant)">
+              <input
+                type="text"
+                value={fileRef}
+                onChange={(e) => setFileRef(e.target.value)}
+                className={inputCls}
+                placeholder="Ex. ABC-2026-042 (référence du confrère adverse)"
+              />
+            </Field>
+          )}
 
           <Field label="Notes">
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={cn(inputCls, 'resize-none')} />

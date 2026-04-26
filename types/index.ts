@@ -525,6 +525,14 @@ export interface DossierContact {
    * leur parent.
    */
   parentDossierContactId?: number;
+  /**
+   * Référence du dossier propre à cet intervenant DANS LE DOSSIER COURANT
+   * (ex. la référence interne du confrère adverse pour ce dossier). Le
+   * même contact peut intervenir dans plusieurs dossiers avec des
+   * références différentes — c'est pour cela que le champ vit ici, sur
+   * le lien dossier↔contact, et non sur le `Contact` lui-même.
+   */
+  fileRef?: string;
   notes?: string;
   createdAt: Date;
 }
