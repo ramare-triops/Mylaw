@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   X,
@@ -74,6 +74,13 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
   const [importTarget, setImportTarget] = useState<'to' | 'cc' | 'bcc' | null>(null);
   const [sending, setSending] = useState(false);
 
+  // Suivi des adresses injectées automatiquement par le toggle
+  // « Contradictoire » : on les enregistre lors de l'ajout pour pouvoir
+  // les retirer fidèlement quand l'avocat décoche, sans toucher aux
+  // adresses qu'il aurait tapées à la main (ou qui auraient été
+  // ajoutées via l'import depuis les intervenants).
+  const autoInjectedRef = useRef<Set<string>>(new Set());
+
   // Réinitialise les champs à chaque ouverture pour ne pas reposter
   // un brouillon de la session précédente sans le savoir.
   useEffect(() => {
@@ -89,6 +96,7 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
     setPickerOpen(false);
     setImportTarget(null);
     setSending(false);
+    autoInjectedRef.current = new Set();
   }, [open]);
 
   // Charge les intervenants du dossier — sert (1) à l'import de
@@ -110,14 +118,35 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
     return Array.from(new Set(emails));
   }, [dossierContacts]);
 
-  // Quand le contradictoire est activé (peu importe la section), on
-  // injecte les adresses des confrères en Cc — sans dupliquer celles
-  // déjà présentes. Désactiver le contradictoire ne retire PAS les
-  // adresses (l'avocat peut avoir voulu les garder), pour éviter les
-  // surprises lors du décochage.
+  // Synchronisation Cc ↔ contradictoire :
+  //   - À l'activation, on injecte les adresses des confrères en Cc
+  //     et on mémorise dans `autoInjectedRef` les adresses
+  //     effectivement ajoutées (celles qui n'y étaient pas déjà).
+  //   - Au décochage, on retire ces mêmes adresses de Cc — sans
+  //     toucher aux adresses tapées à la main ni à celles importées
+  //     manuellement depuis les intervenants. Critique pour la
+  //     sécurité : un envoi avec des confrères oubliés en copie
+  //     serait une faute professionnelle.
   useEffect(() => {
-    if (!contradictoire || counselEmails.length === 0) return;
-    setCc((prev) => mergeEmails(prev, counselEmails));
+    if (contradictoire) {
+      if (counselEmails.length === 0) return;
+      setCc((prev) => {
+        const before = parseEmails(prev);
+        const beforeKeys = new Set(before.map((e) => e.toLowerCase()));
+        const merged = mergeEmails(prev, counselEmails);
+        for (const email of counselEmails) {
+          if (!beforeKeys.has(email.toLowerCase())) {
+            autoInjectedRef.current.add(email.toLowerCase());
+          }
+        }
+        return merged;
+      });
+    } else {
+      if (autoInjectedRef.current.size === 0) return;
+      const toRemove = autoInjectedRef.current;
+      setCc((prev) => removeEmails(prev, toRemove));
+      autoInjectedRef.current = new Set();
+    }
   }, [contradictoire, counselEmails]);
 
   if (!open) return null;
@@ -827,15 +856,20 @@ function contactDisplayName(c: Contact): string {
   return parts.length > 0 ? parts.join(' ') : c.email ?? 'Sans nom';
 }
 
+/** Découpe un champ libre en liste d'adresses nettoyées. */
+function parseEmails(raw: string): string[] {
+  return raw
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /**
  * Concatène les adresses email d'un champ libre avec celles passées en
  * paramètre, en évitant les doublons (insensible à la casse).
  */
 function mergeEmails(existing: string, additions: string[]): string {
-  const current = existing
-    .split(/[,;]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const current = parseEmails(existing);
   const seen = new Set(current.map((s) => s.toLowerCase()));
   const next = [...current];
   for (const a of additions) {
@@ -847,6 +881,18 @@ function mergeEmails(existing: string, additions: string[]): string {
     next.push(trimmed);
   }
   return next.join(', ');
+}
+
+/**
+ * Retire d'un champ libre les adresses dont la version en minuscules
+ * figure dans `toRemove`. Préserve la casse et l'ordre des adresses
+ * restantes (celles que l'utilisateur a tapées ou importées).
+ */
+function removeEmails(existing: string, toRemove: Set<string>): string {
+  if (toRemove.size === 0) return existing;
+  return parseEmails(existing)
+    .filter((e) => !toRemove.has(e.toLowerCase()))
+    .join(', ');
 }
 
 function buildMailtoUrl(opts: {
