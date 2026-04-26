@@ -61,13 +61,14 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
   const [bcc, setBcc] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
-  // Cocher « Contradictoire » dans une section impose visuellement
-  // l'envoi en contradictoire et déclenche l'ajout automatique des
-  // adresses des confrères en Cc. On garde un flag par section pour
-  // que l'avocat puisse expliciter dans laquelle il se positionne.
-  const [contradictoireTo, setContradictoireTo] = useState(false);
-  const [contradictoireCc, setContradictoireCc] = useState(false);
-  const [contradictoireBcc, setContradictoireBcc] = useState(false);
+  // Le contradictoire ne concerne que la copie (Cc) — l'avocat ne le
+  // pose ni sur les destinataires directs, ni sur les copies cachées.
+  // Cocher la case déclenche l'ajout automatique des adresses des
+  // confrères en Cc et un bandeau d'avertissement bien visible.
+  const [contradictoire, setContradictoire] = useState(false);
+  // La copie informelle (Cci) est masquée par défaut pour gagner de
+  // la place. Un libellé cliquable la déploie.
+  const [bccVisible, setBccVisible] = useState(false);
   const [attachments, setAttachments] = useState<MailAttachment[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [importTarget, setImportTarget] = useState<'to' | 'cc' | 'bcc' | null>(null);
@@ -82,17 +83,13 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
     setBcc('');
     setSubject('');
     setBody('');
-    setContradictoireTo(false);
-    setContradictoireCc(false);
-    setContradictoireBcc(false);
+    setContradictoire(false);
+    setBccVisible(false);
     setAttachments([]);
     setPickerOpen(false);
     setImportTarget(null);
     setSending(false);
   }, [open]);
-
-  const contradictoireActive =
-    contradictoireTo || contradictoireCc || contradictoireBcc;
 
   // Charge les intervenants du dossier — sert (1) à l'import de
   // destinataires, (2) à l'auto-ajout des confrères en Cc quand le
@@ -119,9 +116,9 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
   // adresses (l'avocat peut avoir voulu les garder), pour éviter les
   // surprises lors du décochage.
   useEffect(() => {
-    if (!contradictoireActive || counselEmails.length === 0) return;
+    if (!contradictoire || counselEmails.length === 0) return;
     setCc((prev) => mergeEmails(prev, counselEmails));
-  }, [contradictoireActive, counselEmails]);
+  }, [contradictoire, counselEmails]);
 
   if (!open) return null;
 
@@ -169,7 +166,7 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
         cc,
         bcc,
         subject,
-        body: contradictoireActive
+        body: contradictoire
           ? `[CONTRADICTOIRE]\n\n${body}`
           : body,
       });
@@ -208,7 +205,7 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
             section est marquée contradictoire. Couleur ambre vif pour
             empêcher tout envoi accidentel sans que la mention ne
             saute aux yeux. */}
-        {contradictoireActive && (
+        {contradictoire && (
           <div className="flex items-start gap-2 px-5 py-2.5 border-b border-amber-300 bg-amber-50 text-amber-900">
             <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
             <div className="text-xs leading-snug">
@@ -226,8 +223,6 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
             sublabel="À"
             value={to}
             onChange={setTo}
-            contradictoire={contradictoireTo}
-            onContradictoireChange={setContradictoireTo}
             onImport={() => setImportTarget('to')}
           />
           <RecipientField
@@ -235,19 +230,30 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
             sublabel="Cc"
             value={cc}
             onChange={setCc}
-            contradictoire={contradictoireCc}
-            onContradictoireChange={setContradictoireCc}
+            contradictoire={contradictoire}
+            onContradictoireChange={setContradictoire}
             onImport={() => setImportTarget('cc')}
           />
-          <RecipientField
-            label="Copie informelle"
-            sublabel="Cci"
-            value={bcc}
-            onChange={setBcc}
-            contradictoire={contradictoireBcc}
-            onContradictoireChange={setContradictoireBcc}
-            onImport={() => setImportTarget('bcc')}
-          />
+
+          {/* Cci masquée par défaut — un libellé cliquable la déploie
+              pour gagner de la verticalité dans le dialogue. */}
+          {bccVisible ? (
+            <RecipientField
+              label="Copie informelle"
+              sublabel="Cci"
+              value={bcc}
+              onChange={setBcc}
+              onImport={() => setImportTarget('bcc')}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setBccVisible(true)}
+              className="text-xs text-[var(--color-primary)] hover:underline"
+            >
+              Cci
+            </button>
+          )}
 
           <div>
             <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
@@ -262,20 +268,10 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
             />
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
-              Message
-            </label>
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={8}
-              className="w-full px-3 py-2 text-sm rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] resize-none"
-              placeholder="Rédigez votre message…"
-            />
-          </div>
-
-          {/* Pièces jointes */}
+          {/* Pièces jointes — placées entre Objet et Message comme
+              dans la plupart des clients mail (Outlook, Gmail), ce
+              qui colle à l'attendu de l'avocat qui pense « j'ajoute
+              les pièces avant d'écrire le corps ». */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-medium text-[var(--color-text-muted)] flex items-center gap-1.5">
@@ -346,6 +342,19 @@ export function MailComposeDialog({ open, dossier, onClose }: Props) {
                 ))}
               </ul>
             )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+              Message
+            </label>
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={8}
+              className="w-full px-3 py-2 text-sm rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] resize-none"
+              placeholder="Rédigez votre message…"
+            />
           </div>
         </div>
 
@@ -427,10 +436,13 @@ function RecipientField({
   sublabel: string;
   value: string;
   onChange: (v: string) => void;
-  contradictoire: boolean;
-  onContradictoireChange: (v: boolean) => void;
+  /** Optionnel : seulement la section Cc porte le toggle Contradictoire. */
+  contradictoire?: boolean;
+  onContradictoireChange?: (v: boolean) => void;
   onImport: () => void;
 }) {
+  const showContradictoire =
+    contradictoire !== undefined && !!onContradictoireChange;
   return (
     <div
       className={cn(
@@ -448,38 +460,44 @@ function RecipientField({
           </span>
         </label>
         <div className="flex items-center gap-3">
-          <label
-            className={cn(
-              'flex items-center gap-1 text-[11px] cursor-pointer select-none',
-              contradictoire
-                ? 'text-amber-800 font-semibold'
-                : 'text-[var(--color-text-muted)]',
-            )}
-          >
-            <input
-              type="checkbox"
-              checked={contradictoire}
-              onChange={(e) => onContradictoireChange(e.target.checked)}
-              className="w-3 h-3 accent-amber-600"
-            />
-            Contradictoire
-          </label>
-          <button
-            type="button"
-            onClick={onImport}
-            className="flex items-center gap-1 text-[11px] text-[var(--color-primary)] hover:underline"
-          >
-            <UserPlus className="w-3 h-3" /> Importer
-          </button>
+          {showContradictoire && (
+            <label
+              className={cn(
+                'flex items-center gap-1 text-[11px] cursor-pointer select-none',
+                contradictoire
+                  ? 'text-amber-800 font-semibold'
+                  : 'text-[var(--color-text-muted)]',
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={contradictoire}
+                onChange={(e) => onContradictoireChange!(e.target.checked)}
+                className="w-3 h-3 accent-amber-600"
+              />
+              Contradictoire
+            </label>
+          )}
         </div>
       </div>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="adresse@exemple.com, autre@exemple.com"
-        className="w-full px-2 py-1.5 text-sm rounded bg-[var(--color-surface)] border border-[var(--color-border)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
-      />
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="adresse@exemple.com, autre@exemple.com"
+          className="flex-1 px-2 py-1.5 text-sm rounded bg-[var(--color-surface)] border border-[var(--color-border)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+        />
+        <button
+          type="button"
+          onClick={onImport}
+          title="Importer depuis les intervenants du dossier"
+          aria-label="Importer depuis les intervenants du dossier"
+          className="flex items-center justify-center h-8 w-8 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-primary)] hover:bg-[var(--color-surface-raised)] flex-shrink-0"
+        >
+          <UserPlus className="w-5 h-5" />
+        </button>
+      </div>
     </div>
   );
 }
