@@ -10,13 +10,12 @@ import {
   Euro,
   History,
   Pencil,
-  Trash2,
   FolderKanban,
   PauseCircle,
   PlayCircle,
   Clock,
 } from 'lucide-react';
-import { db, deleteDossier, saveDossier } from '@/lib/db';
+import { db, saveDossier } from '@/lib/db';
 import { cn, formatDate } from '@/lib/utils';
 import { usePrivacy } from '@/components/providers/PrivacyProvider';
 import { maskDossierName, maskClientName } from '@/lib/privacy';
@@ -80,17 +79,6 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
       });
     }
     setPendingOpen(false);
-  }
-
-  async function handleDelete() {
-    if (
-      !confirm(
-        `Supprimer définitivement le dossier "${dossier!.name}" ? Les documents seront détachés mais conservés.`
-      )
-    )
-      return;
-    await deleteDossier(dossierId);
-    router.push('/dossiers');
   }
 
   const isPending = dossier.status === 'pending';
@@ -190,12 +178,6 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
                   )}
                 >
                   <Pencil className="w-3.5 h-3.5" /> Modifier
-                </button>
-                <button
-                  onClick={handleDelete}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" /> Supprimer
                 </button>
               </div>
             </div>

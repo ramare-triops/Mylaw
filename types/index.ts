@@ -483,6 +483,11 @@ export interface Contact {
    * uniquement les contacts dont la catégorie est `lawyer`).
    */
   professionalCategory?: ProfessionalCategory;
+  /**
+   * Barreau d'inscription pour les avocats. Champ libre — l'avocat
+   * saisit le nom de son barreau (ex. « Paris », « Lyon »).
+   */
+  barreau?: string;
   notes?: string;
   tags: string[];
   createdAt: Date;

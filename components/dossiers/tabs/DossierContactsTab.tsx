@@ -784,6 +784,7 @@ function ContactDialog({
   const [notes, setNotes] = useState('');
   const [role, setRole] = useState<DossierRole>('client');
   const [professionalCategory, setProfessionalCategory] = useState<ProfessionalCategory | ''>('');
+  const [barreau, setBarreau] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -823,6 +824,7 @@ function ContactDialog({
       setFileRef(initial.fileRef ?? '');
       setNotes(initial.notes ?? '');
       setProfessionalCategory(initial.professionalCategory ?? '');
+      setBarreau(initial.barreau ?? '');
     } else {
       setType(presetType ?? 'physical');
       setCivility('');
@@ -849,8 +851,32 @@ function ContactDialog({
       setNotes('');
       setRole(presetRole ?? 'client');
       setProfessionalCategory(presetCategory ?? '');
+      setBarreau('');
+      // Cas avocat : on impose la civilité « Maître » et le type
+      // physique d'office, l'utilisateur n'a pas à les choisir.
+      if (presetCategory === 'lawyer') {
+        setCivility('Me');
+        setType('physical');
+      }
     }
   }, [open, initial, presetRole, presetType, presetCategory]);
+
+  // Si l'utilisateur sélectionne « Avocat » dans la liste des
+  // catégories après ouverture, on bascule automatiquement sur la
+  // mise en page avocat (civilité « Maître » + type physique).
+  useEffect(() => {
+    if (!open) return;
+    if (professionalCategory === 'lawyer') {
+      setType('physical');
+      setCivility((prev) => (prev ? prev : 'Me'));
+    }
+  }, [professionalCategory, open]);
+
+  // Vrai dès que l'intervenant est rangé dans la catégorie avocat —
+  // ce qui suffit à basculer sur la mise en page dédiée (civilité
+  // forcée Maître, champ Barreau, structure d'exercice, adresse du
+  // cabinet uniquement).
+  const isLawyer = professionalCategory === 'lawyer';
 
   if (!open) return null;
 
@@ -905,6 +931,7 @@ function ContactDialog({
       fileRef: fileRef.trim() || undefined,
       notes: notes.trim() || undefined,
       professionalCategory: professionalCategory || undefined,
+      barreau: barreau.trim() || undefined,
       tags: initial?.tags ?? [],
       createdAt: initial?.createdAt ?? now,
       updatedAt: now,
@@ -936,32 +963,51 @@ function ContactDialog({
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-3 overflow-auto">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Type">
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value as ContactType)}
-                className={inputCls}
-              >
-                {Object.entries(CONTACT_TYPE_LABELS).map(([v, l]) => (
-                  <option key={v} value={v}>{l}</option>
-                ))}
-              </select>
-            </Field>
-            {requireRole && (
-              <Field label="Rôle dans le dossier">
+          {/* Pour les avocats on masque le sélecteur Type (toujours
+              physique, le distinguo personne morale n'a pas de sens
+              pour un confrère). On garde le rôle si l'appel le
+              demande. */}
+          {!isLawyer && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Type">
                 <select
-                  value={role}
-                  onChange={(e) => setRole(e.target.value as DossierRole)}
+                  value={type}
+                  onChange={(e) => setType(e.target.value as ContactType)}
                   className={inputCls}
                 >
-                  {Object.entries(DOSSIER_ROLE_LABELS).map(([v, l]) => (
+                  {Object.entries(CONTACT_TYPE_LABELS).map(([v, l]) => (
                     <option key={v} value={v}>{l}</option>
                   ))}
                 </select>
               </Field>
-            )}
-          </div>
+              {requireRole && (
+                <Field label="Rôle dans le dossier">
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value as DossierRole)}
+                    className={inputCls}
+                  >
+                    {Object.entries(DOSSIER_ROLE_LABELS).map(([v, l]) => (
+                      <option key={v} value={v}>{l}</option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+            </div>
+          )}
+          {isLawyer && requireRole && (
+            <Field label="Rôle dans le dossier">
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value as DossierRole)}
+                className={inputCls}
+              >
+                {Object.entries(DOSSIER_ROLE_LABELS).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
+            </Field>
+          )}
 
           <Field label="Catégorie professionnelle (globale)">
             <select
@@ -979,7 +1025,76 @@ function ContactDialog({
             </select>
           </Field>
 
-          {type === 'physical' ? (
+          {isLawyer ? (
+            <>
+              <div className="grid grid-cols-[110px_1fr_1fr] gap-3">
+                <Field label="Civilité">
+                  {/* Civilité figée à « Maître » : un avocat est par
+                      définition Maître, on ne propose pas de choix. */}
+                  <input
+                    type="text"
+                    value="Maître"
+                    readOnly
+                    className={cn(inputCls, 'bg-[var(--color-surface)] text-[var(--color-text-muted)]')}
+                    aria-label="Civilité (figée à Maître pour un avocat)"
+                  />
+                </Field>
+                <Field label="Prénom">
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="Camille"
+                    className={inputCls}
+                    autoComplete="given-name"
+                  />
+                </Field>
+                <Field label="Nom">
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value.toUpperCase())}
+                    placeholder="DURAND"
+                    className={cn(inputCls, 'uppercase')}
+                    autoComplete="family-name"
+                  />
+                </Field>
+              </div>
+
+              <Field label="Barreau">
+                <input
+                  type="text"
+                  value={barreau}
+                  onChange={(e) => setBarreau(e.target.value)}
+                  placeholder="Paris"
+                  className={inputCls}
+                />
+              </Field>
+
+              <Field label="Nom de la structure d'exercice">
+                {/* On stocke dans `companyName` : c'est le champ déjà
+                    utilisé par les briques d'identification pour la
+                    raison sociale, ce qui maintient la résolution
+                    automatique des variables liées au cabinet. */}
+                <input
+                  type="text"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  placeholder="SCP Durand & Associés"
+                  className={inputCls}
+                />
+              </Field>
+
+              <Field label="Adresse du cabinet">
+                <StructuredAddressFields
+                  value={address}
+                  onChange={(patch) =>
+                    setAddress((prev) => ({ ...prev, ...patch }))
+                  }
+                />
+              </Field>
+            </>
+          ) : type === 'physical' ? (
             <>
               <div className="grid grid-cols-[110px_1fr_1fr] gap-3">
                 <Field label="Civilité">
@@ -1186,9 +1301,11 @@ function ContactDialog({
             </Field>
           </div>
 
-          <Field label="Adresse postale">
-            <StructuredAddressFields value={address} onChange={(patch) => setAddress((prev) => ({ ...prev, ...patch }))} />
-          </Field>
+          {!isLawyer && (
+            <Field label="Adresse postale">
+              <StructuredAddressFields value={address} onChange={(patch) => setAddress((prev) => ({ ...prev, ...patch }))} />
+            </Field>
+          )}
 
           <Field label="Référence dossier (interne)">
             <input type="text" value={fileRef} onChange={(e) => setFileRef(e.target.value)} className={inputCls} placeholder="Ex. CLI-023" />
