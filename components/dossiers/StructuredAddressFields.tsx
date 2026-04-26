@@ -152,10 +152,37 @@ export function StructuredAddressFields({ value, onChange }: Props) {
   /** Empêche l'auto-complétion commune de se re-déclencher après acceptation. */
   const justAcceptedCity = useRef(false);
   const justAcceptedStreet = useRef(false);
+  /**
+   * Code postal qui a déclenché le dernier auto-remplissage de la
+   * commune. Sert à détecter qu'un changement de CP rend la commune
+   * obsolète : si l'avocat tape 75000 (→ Paris) puis efface pour
+   * taper 77000, la commune Paris est invalide pour le nouveau CP et
+   * doit être remise à zéro pour que la nouvelle résolution s'opère.
+   * `null` quand la commune a été saisie / acceptée manuellement —
+   * on n'écrase alors pas le choix de l'utilisateur.
+   */
+  const lastAutoFilledCityCp = useRef<string | null>(null);
 
   // ─── CP change → fetch communes ─────────────────────────────────────────
   useEffect(() => {
     const cp = (value.addressPostalCode ?? '').replace(/\D/g, '');
+
+    // Si la commune actuelle avait été auto-remplie pour un CP
+    // différent (ou si le CP est devenu trop court), on la purge
+    // avant toute autre action — sans toucher aux communes saisies à
+    // la main (ref null).
+    const cityIsStale =
+      lastAutoFilledCityCp.current !== null &&
+      lastAutoFilledCityCp.current !== cp;
+    if (cityIsStale) {
+      lastAutoFilledCityCp.current = null;
+      // Le flag d'acceptation doit être levé pour que l'effet
+      // d'auto-complétion ne court-circuite pas la prochaine
+      // résolution sur le nouveau CP.
+      justAcceptedCity.current = false;
+      onChange({ addressCity: '' });
+    }
+
     if (cp.length < 5) {
       setCommunes([]);
       return;
@@ -166,9 +193,12 @@ export function StructuredAddressFields({ value, onChange }: Props) {
       const list = await fetchCommunesByCP(cp);
       setCommunes(list);
       setCpLoading(false);
-      // Auto-sélection si une seule commune pour ce CP et pas encore de ville choisie
-      if (list.length === 1 && !value.addressCity) {
+      // Auto-sélection si une seule commune pour ce CP. On accepte
+      // d'écraser la commune existante car, à ce stade, elle a déjà
+      // été purgée si elle était obsolète (cf. cityIsStale).
+      if (list.length === 1) {
         justAcceptedCity.current = true;
+        lastAutoFilledCityCp.current = cp;
         onChange({ addressCity: list[0].value });
         // Focus automatique sur le numéro
         setTimeout(() => numberRef.current?.focus(), 40);
@@ -198,6 +228,8 @@ export function StructuredAddressFields({ value, onChange }: Props) {
         clearTimeout(autoCompleteDebounce.current);
       autoCompleteDebounce.current = setTimeout(() => {
         justAcceptedCity.current = true;
+        const cp = (value.addressPostalCode ?? '').replace(/\D/g, '');
+        lastAutoFilledCityCp.current = cp || null;
         onChange({ addressCity: matches[0].value });
         setCommunes([]);
         setCityHighlight(-1);
@@ -250,12 +282,14 @@ export function StructuredAddressFields({ value, onChange }: Props) {
   const pickCommune = useCallback(
     (city: string) => {
       justAcceptedCity.current = true;
+      const cp = (value.addressPostalCode ?? '').replace(/\D/g, '');
+      lastAutoFilledCityCp.current = cp || null;
       onChange({ addressCity: city });
       setCommunes([]);
       setCityHighlight(-1);
       setTimeout(() => numberRef.current?.focus(), 30);
     },
-    [onChange]
+    [onChange, value.addressPostalCode]
   );
 
   const pickStreet = useCallback(

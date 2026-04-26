@@ -735,7 +735,7 @@ function LinkContactDialog({
 }
 
 // ─── ContactDialog : créer / modifier un contact ─────────────────────────────
-function ContactDialog({
+export function ContactDialog({
   open,
   initial,
   requireRole,

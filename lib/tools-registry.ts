@@ -13,6 +13,7 @@ import {
   StickyNote,
   CheckSquare,
   Zap,
+  Users,
 } from 'lucide-react';
 
 // Import tool components (lazy-loaded in production)
@@ -32,6 +33,9 @@ const SnippetExpander = dynamic(() =>
 );
 const ChecklistTool = dynamic(() =>
   import('@/components/tools/ChecklistTool').then((m) => m.ChecklistTool)
+);
+const ContactsManager = dynamic(() =>
+  import('@/components/tools/ContactsManager').then((m) => m.ContactsManager)
 );
 
 export const TOOLS_REGISTRY: MylexTool[] = [
@@ -81,6 +85,15 @@ export const TOOLS_REGISTRY: MylexTool[] = [
     icon: CheckSquare,
     category: 'organization',
     component: ChecklistTool as MylexTool['component'],
+    defaultConfig: {},
+  },
+  {
+    slug: 'contacts-manager',
+    name: 'Gestion des intervenants',
+    description: 'Annuaire global du cabinet : recherche, filtre par type, modification et suppression.',
+    icon: Users,
+    category: 'organization',
+    component: ContactsManager as MylexTool['component'],
     defaultConfig: {},
   },
 ];
