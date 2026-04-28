@@ -202,9 +202,8 @@ export function Dashboard() {
     >
       {/* Header */}
       <header>
-        <Eyebrow>{dateHeader}</Eyebrow>
         <h1
-          className="mt-1.5 font-semibold text-[var(--fg-primary)]"
+          className="font-semibold text-[var(--fg-primary)]"
           style={{
             fontSize: 28,
             lineHeight: 1.1,
@@ -214,6 +213,7 @@ export function Dashboard() {
         >
           Bonjour {identity.displayName}.
         </h1>
+        <Eyebrow className="mt-1.5">{dateHeader}</Eyebrow>
         <p
           className="mt-1.5 text-[var(--fg-secondary)]"
           style={{ fontSize: 14, lineHeight: 1.5 }}

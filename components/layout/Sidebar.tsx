@@ -13,6 +13,7 @@ import {
   ChevronsUpDown,
   FileCode,
   Sparkles,
+  Calendar,
 } from 'lucide-react';
 import { useUIState } from '@/components/providers/UIStateProvider';
 import { Avatar, Eyebrow } from '@/components/ui';
@@ -28,6 +29,7 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/',          label: 'Tableau de bord', icon: LayoutDashboard },
+  { href: '/agenda',    label: 'Agenda',          icon: Calendar        },
   { href: '/dossiers',  label: 'Dossiers',        icon: Folder          },
   { href: '/documents', label: 'Documents',       icon: FileText        },
   { href: '/tools',     label: 'Outils',          icon: Wrench          },

@@ -10,6 +10,7 @@ import { GlobalSearch } from '@/components/search/GlobalSearch';
 import { cn } from '@/lib/utils';
 
 const SEGMENT_LABEL: Record<string, string> = {
+  agenda: 'Agenda',
   dossiers: 'Dossiers',
   documents: 'Documents',
   tools: 'Outils',

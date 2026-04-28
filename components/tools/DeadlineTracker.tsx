@@ -8,6 +8,11 @@ import {
 import { db, getSetting, setSetting } from '@/lib/db';
 import type { Deadline as DBDeadline, DeadlineType as DBDeadlineType } from '@/types';
 import { DeadlineDialog, type DeadlineDraft } from './DeadlineDialog';
+import {
+  MYLAW_CAL_SETTING,
+  ensureMylawCalendarId as resolveMylawCalendarId,
+  clearCachedMylawCalendarId,
+} from '@/lib/mylaw-calendar';
 
 // UI conserve les libellés avec accents ; mapping vers les clés normalisées
 // stockées en DB (types/index.ts).
@@ -60,8 +65,6 @@ const DEADLINE_TYPES: Array<{ value: UIDeadlineType; label: string; color: strin
   { value: 'audience', label: 'Audience', color: 'var(--color-primary)' },
   { value: 'autre', label: 'Autre', color: 'var(--color-text-muted)' },
 ];
-
-const MYLAW_CAL_SETTING = 'mylaw_google_calendar_id_v1';
 
 function getDaysUntil(date: Date): number {
   const now = new Date();
@@ -205,7 +208,7 @@ export function DeadlineTracker() {
         // Tente de résoudre / créer le calendrier Mylaw maintenant que le
         // nouveau scope est accordé. Ne pas bloquer le rendu.
         void (async () => {
-          const { id, reauth } = await ensureMylawCalendarId();
+          const { id, reauth } = await resolveMylawCalendarId();
           if (reauth) setReauthNeeded(true);
           else if (!id) setReauthNeeded(false);
         })();
@@ -230,7 +233,7 @@ export function DeadlineTracker() {
     setReauthNeeded(false);
     // On oublie l'id du calendrier Mylaw : il sera re-résolu après re-connexion
     // (le calendrier côté Google subsiste mais on le retrouvera par son nom).
-    await setSetting(MYLAW_CAL_SETTING, '');
+    await clearCachedMylawCalendarId();
   }
 
   /**
@@ -240,37 +243,8 @@ export function DeadlineTracker() {
    */
   async function reconnectCalendar() {
     await fetch('/api/google-productivity/logout', { method: 'POST' });
-    await setSetting(MYLAW_CAL_SETTING, '');
+    await clearCachedMylawCalendarId();
     connectCalendar();
-  }
-
-  /**
-   * Résout (en cache) l'identifiant du calendrier « Mylaw » dans le compte
-   * Google de l'utilisateur, en le créant si besoin. L'id est mémorisé dans
-   * les settings pour ne pas l'interroger à chaque pousse d'événement.
-   *
-   * Renvoie `{ id, reauth }` :
-   *  - `id`     : id du calendrier (string) si tout va bien, sinon `null`.
-   *  - `reauth` : `true` si l'échec vient d'un scope OAuth insuffisant —
-   *               l'utilisateur doit reconnecter Google Agenda pour
-   *               accorder le scope complet `calendar`.
-   */
-  async function ensureMylawCalendarId(): Promise<{ id: string | null; reauth: boolean }> {
-    const cached = await getSetting<string>(MYLAW_CAL_SETTING, '');
-    if (cached) return { id: cached, reauth: false };
-    try {
-      const res = await fetch('/api/google-calendar/mylaw-calendar');
-      if (res.status === 401 || res.status === 403) {
-        return { id: null, reauth: true };
-      }
-      if (!res.ok) return { id: null, reauth: false };
-      const data = await res.json();
-      const id = (data?.calendarId as string) || '';
-      if (id) await setSetting(MYLAW_CAL_SETTING, id);
-      return { id: id || null, reauth: false };
-    } catch {
-      return { id: null, reauth: false };
-    }
   }
 
   async function pushToCalendar(dl: Deadline): Promise<{ eventId: string; calendarId: string } | null> {
@@ -279,7 +253,7 @@ export function DeadlineTracker() {
     // on exige le calendrier Mylaw — on ne retombe PAS sur `primary` pour
     // éviter de polluer l'agenda principal de l'utilisateur.
     const targetCalendarId = dl.googleCalendarId || (await (async () => {
-      const { id, reauth } = await ensureMylawCalendarId();
+      const { id, reauth } = await resolveMylawCalendarId();
       if (reauth) setReauthNeeded(true);
       return id;
     })());
