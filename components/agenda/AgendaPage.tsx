@@ -279,7 +279,13 @@ export function AgendaPage() {
         className="flex min-w-0 flex-col"
         style={{ flexBasis: '33.333%' }}
       >
-        <DeadlineTracker />
+        <DeadlineTracker
+          onCalendarChange={() => {
+            // Léger délai : Google Calendar a parfois besoin d'une seconde
+            // pour indexer l'événement avant qu'il n'apparaisse dans l'embed.
+            window.setTimeout(() => setRefreshKey((k) => k + 1), 800);
+          }}
+        />
       </aside>
     </div>
   );

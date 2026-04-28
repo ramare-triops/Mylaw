@@ -142,7 +142,17 @@ function combineDateTime(dateStr: string, timeStr: string): { date: Date; allDay
   return { date: new Date(y, m - 1, d, 0, 0, 0, 0), allDay: true };
 }
 
-export function DeadlineTracker() {
+export interface DeadlineTrackerProps {
+  /**
+   * Appelé chaque fois qu'une mutation a touché Google Calendar (création,
+   * mise à jour, suppression, suppression suite à un toggle). Permet à
+   * l'écran parent (page Agenda) de rafraîchir l'iframe d'embed pour
+   * refléter le nouvel état sans intervention manuelle.
+   */
+  onCalendarChange?: () => void;
+}
+
+export function DeadlineTracker({ onCalendarChange }: DeadlineTrackerProps = {}) {
   const [deadlines, setDeadlines] = useState<Deadline[]>([]);
   const [showDialog, setShowDialog] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -303,6 +313,7 @@ export function DeadlineTracker() {
       setDeadlines((prev) =>
         prev.map((x) => (x.id === dl.id ? { ...x, ...patch } as Deadline : x)),
       );
+      onCalendarChange?.();
     } finally {
       setSyncingId(null);
     }
@@ -330,6 +341,7 @@ export function DeadlineTracker() {
             : x,
         ),
       );
+      onCalendarChange?.();
     } finally {
       setSyncingId(null);
     }
@@ -507,6 +519,7 @@ export function DeadlineTracker() {
             googleCalendarId: saved.googleCalendarId,
             googleSyncedAt:   saved.googleSyncedAt,
           });
+          onCalendarChange?.();
         }
       }
 
@@ -549,11 +562,13 @@ export function DeadlineTracker() {
         googleSyncedAt: nowDone ? undefined : dl.googleSyncedAt,
       });
       setDeadlines((prev) => prev.map((d) => (d.id === id ? updated : d)));
+      if (nowDone && wasPushed) onCalendarChange?.();
     } catch {}
   }
 
   async function deleteDeadline(id: number) {
     const dl = deadlines.find((d) => d.id === id);
+    const hadEvent = !!dl?.googleEventId;
     try {
       // Nettoyage Google Calendar si la deadline y est liée.
       if (dl?.googleEventId) {
@@ -567,6 +582,7 @@ export function DeadlineTracker() {
       }
       await db.deadlines.delete(id);
       setDeadlines((prev) => prev.filter((d) => d.id !== id));
+      if (hadEvent) onCalendarChange?.();
     } catch {}
   }
 
