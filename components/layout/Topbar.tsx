@@ -54,7 +54,7 @@ export function Topbar() {
         {/* Breadcrumb */}
         <nav
           aria-label="Fil d'Ariane"
-          className="flex min-w-0 items-center gap-2 text-[14px] leading-none"
+          className="flex min-w-0 items-center gap-2 text-[14px] leading-tight"
         >
           {crumbs.map((c, i) => {
             const last = i === crumbs.length - 1;
