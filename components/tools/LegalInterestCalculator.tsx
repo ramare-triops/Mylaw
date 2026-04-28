@@ -1074,8 +1074,16 @@ function LineConnector({
           </div>
         );
       })}
-      {/* Spacer pour la colonne d'actions (aligne la grille). */}
-      <div />
+      {/* La colonne « auto » d'une ligne contient les boutons
+          Dupliquer + Supprimer. Pour que les colonnes en `fr` aient
+          la même largeur que dans une ligne (et donc que les pastilles
+          tombent exactement sous les champs correspondants), on
+          réserve ici la même largeur en répliquant les boutons en
+          `invisible`. */}
+      <div className="flex items-center gap-1 invisible" aria-hidden>
+        <span className="p-1.5"><Copy size={14} /></span>
+        <span className="p-1.5"><Trash2 size={14} /></span>
+      </div>
     </div>
   );
 }
