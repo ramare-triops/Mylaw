@@ -9,10 +9,8 @@ import {
   Save,
   FileDown,
   FileSpreadsheet,
-  RefreshCw,
-  FolderOpen,
   AlertTriangle,
-  Pencil,
+  ArrowLeft,
 } from 'lucide-react';
 import { db } from '@/lib/db';
 import { cn } from '@/lib/utils';
@@ -37,6 +35,8 @@ import type {
 interface Props {
   dossier?: Dossier;
 }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
 
 function uuid(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -159,15 +159,36 @@ function snapshotToResult(s: InterestResultSnapshot): InterestComputationResult 
   };
 }
 
+// ─── Composant principal ──────────────────────────────────────────────────
+
 export function LegalInterestCalculator({ dossier }: Props) {
-  const [name, setName] = useState('Calcul des intérêts');
-  const [creditorType, setCreditorType] = useState<CreditorType>('professionnel');
-  const [drafts, setDrafts] = useState<DraftItem[]>([emptyDraft()]);
-  const [result, setResult] = useState<InterestComputationResult | null>(null);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [savedAt, setSavedAt] = useState<Date | null>(null);
-  const [showLibrary, setShowLibrary] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<number | null>(null);
+
+  if (openId !== null) {
+    return (
+      <CalculatorDetail
+        key={openId}
+        dossier={dossier}
+        calcId={openId}
+        onBack={() => setOpenId(null)}
+      />
+    );
+  }
+
+  return <CalculatorList dossier={dossier} onOpen={setOpenId} />;
+}
+
+// ─── Liste des calculs enregistrés ────────────────────────────────────────
+
+function CalculatorList({
+  dossier,
+  onOpen,
+}: {
+  dossier?: Dossier;
+  onOpen: (id: number) => void;
+}) {
+  const [creating, setCreating] = useState(false);
+  const [draftName, setDraftName] = useState('');
 
   const savedCalcs = useLiveQuery<InterestCalculation[]>(
     () =>
@@ -177,8 +198,7 @@ export function LegalInterestCalculator({ dossier }: Props) {
     [dossier?.id],
   );
 
-  // Tri par date de mise à jour (plus récent en premier).
-  const sortedSavedCalcs = useMemo(
+  const sorted = useMemo(
     () =>
       (savedCalcs ?? [])
         .slice()
@@ -189,31 +209,266 @@ export function LegalInterestCalculator({ dossier }: Props) {
     [savedCalcs],
   );
 
-  const dernierTaux = LEGAL_INTEREST_RATES[LEGAL_INTEREST_RATES.length - 1];
-
-  function resetToNew() {
-    setEditingId(null);
-    setName(`Calcul des intérêts du ${new Date().toLocaleDateString('fr-FR')}`);
-    setCreditorType('professionnel');
-    setDrafts([emptyDraft()]);
-    setResult(null);
-    setSavedAt(null);
-    setError(null);
+  async function createCalc() {
+    const name = draftName.trim() || `Calcul du ${new Date().toLocaleDateString('fr-FR')}`;
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const payload: InterestCalculation = {
+      name,
+      dossierId: dossier?.id,
+      creditorType: 'professionnel',
+      items: [
+        {
+          id: uuid(),
+          label: '',
+          amount: 0,
+          startDate: today,
+          endDate: today,
+        },
+      ],
+      ratesSnapshot: LEGAL_INTEREST_RATES.map((r) => ({
+        year: r.year,
+        semester: r.semester,
+        particulier: r.particulier,
+        professionnel: r.professionnel,
+      })),
+      createdAt: now,
+      updatedAt: now,
+    };
+    const id = await db.interestCalculations.add(payload);
+    setCreating(false);
+    setDraftName('');
+    onOpen(Number(id));
   }
 
-  // Init du nom au premier rendu
+  async function deleteCalc(id: number | undefined) {
+    if (!id) return;
+    if (!confirm('Supprimer définitivement ce calcul enregistré ?')) return;
+    await db.interestCalculations.delete(id);
+  }
+
+  return (
+    <div className="px-6 py-6">
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Calculator size={18} style={{ color: 'var(--color-primary)' }} />
+          <h2
+            className="text-base font-semibold"
+            style={{ color: 'var(--color-text)' }}
+          >
+            Calculs d'intérêts au taux légal
+          </h2>
+        </div>
+        <button
+          onClick={() => {
+            setCreating(true);
+            setDraftName('');
+          }}
+          className={cn(
+            'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md font-medium text-white',
+            'bg-[var(--color-primary)] hover:opacity-90',
+          )}
+        >
+          <Plus size={13} /> Nouveau calcul
+        </button>
+      </div>
+
+      {creating && (
+        <div
+          className="mb-4 rounded-md border p-3 flex items-center gap-2 flex-wrap"
+          style={{
+            borderColor: 'var(--color-primary)',
+            background: 'oklch(from var(--color-primary) l c h / 0.04)',
+          }}
+        >
+          <input
+            type="text"
+            autoFocus
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void createCalc();
+              if (e.key === 'Escape') {
+                setCreating(false);
+                setDraftName('');
+              }
+            }}
+            placeholder="Ex. Indemnité d'occupation, Prestation compensatoire…"
+            className={cn(
+              'flex-1 min-w-[260px] px-3 py-1.5 text-sm rounded-md',
+              'bg-[var(--color-surface)] border border-[var(--color-border)]',
+              'text-[var(--color-text)]',
+              'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
+            )}
+          />
+          <button
+            onClick={createCalc}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md font-medium text-white',
+              'bg-[var(--color-primary)] hover:opacity-90',
+            )}
+          >
+            Créer
+          </button>
+          <button
+            onClick={() => {
+              setCreating(false);
+              setDraftName('');
+            }}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded-md',
+              'bg-[var(--color-surface-raised)] hover:bg-[var(--color-border)]',
+            )}
+          >
+            Annuler
+          </button>
+        </div>
+      )}
+
+      {sorted.length === 0 && !creating && (
+        <div
+          className="rounded-md border border-dashed py-12 px-4 text-center"
+          style={{
+            borderColor: 'var(--color-border)',
+            color: 'var(--color-text-muted)',
+          }}
+        >
+          <Calculator size={32} className="mx-auto opacity-25 mb-3" />
+          <p className="text-sm mb-3">
+            Aucun calcul enregistré pour ce dossier.
+          </p>
+          <button
+            onClick={() => {
+              setCreating(true);
+              setDraftName('');
+            }}
+            className={cn(
+              'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md',
+              'bg-[var(--color-primary)] text-white hover:opacity-90',
+            )}
+          >
+            <Plus size={13} /> Créer un calcul
+          </button>
+        </div>
+      )}
+
+      {sorted.length > 0 && (
+        <ul
+          className="rounded-md border overflow-hidden"
+          style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
+        >
+          {sorted.map((c, idx) => (
+            <li
+              key={c.id}
+              className={cn(
+                'flex items-center gap-3 px-4 py-3',
+                idx > 0 && 'border-t',
+              )}
+              style={{ borderColor: 'var(--color-border)' }}
+            >
+              <button
+                onClick={() => c.id && onOpen(c.id)}
+                className="flex-1 min-w-0 text-left"
+              >
+                <div
+                  className="text-sm font-semibold truncate"
+                  style={{ color: 'var(--color-text)' }}
+                >
+                  {c.name}
+                </div>
+                <div
+                  className="text-xs mt-0.5"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  Mis à jour le {new Date(c.updatedAt).toLocaleDateString('fr-FR')}
+                  {' · '}
+                  {c.creditorType === 'particulier' ? 'Particulier' : 'Professionnel'}
+                  {' · '}
+                  {c.items.length} ligne{c.items.length > 1 ? 's' : ''}
+                  {c.result && (
+                    <>
+                      {' · '}
+                      Total : <strong>{fmtMoney.format(c.result.totalAmount)}</strong>
+                    </>
+                  )}
+                </div>
+              </button>
+              <button
+                onClick={() => deleteCalc(c.id)}
+                title="Supprimer"
+                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-error)]"
+              >
+                <Trash2 size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ─── Vue détail / éditeur d'un calcul ─────────────────────────────────────
+
+function CalculatorDetail({
+  dossier,
+  calcId,
+  onBack,
+}: {
+  dossier?: Dossier;
+  calcId: number;
+  onBack: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [creditorType, setCreditorType] = useState<CreditorType>('professionnel');
+  const [drafts, setDrafts] = useState<DraftItem[]>([emptyDraft()]);
+  const [result, setResult] = useState<InterestComputationResult | null>(null);
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const dernierTaux = LEGAL_INTEREST_RATES[LEGAL_INTEREST_RATES.length - 1];
+
+  // Charge le calcul une fois au montage. L'éditeur travaille ensuite
+  // sur l'état local pour ne pas être écrasé par les écritures Drive.
   useEffect(() => {
-    setName(`Calcul des intérêts du ${new Date().toLocaleDateString('fr-FR')}`);
-  }, []);
+    let cancelled = false;
+    void (async () => {
+      const c = await db.interestCalculations.get(calcId);
+      if (cancelled || !c) return;
+      setName(c.name);
+      setCreditorType(c.creditorType);
+      setDrafts(
+        c.items.length > 0 ? c.items.map(recordToDraft) : [emptyDraft()],
+      );
+      // Recalcul automatique à l'ouverture (auto-update demandé par
+      // le cahier des charges si la table de taux a évolué).
+      const inputs = draftsToInputs(
+        c.items.map(recordToDraft),
+      );
+      if (inputs.length > 0) {
+        try {
+          setResult(computeAll(inputs, c.creditorType));
+        } catch {
+          setResult(c.result ? snapshotToResult(c.result) : null);
+        }
+      } else if (c.result) {
+        setResult(snapshotToResult(c.result));
+      }
+      setSavedAt(c.updatedAt ? new Date(c.updatedAt) : null);
+      setLoaded(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [calcId]);
 
   function addLine() {
     setDrafts((prev) => [...prev, emptyDraft()]);
   }
-
   function removeLine(id: string) {
     setDrafts((prev) => (prev.length === 1 ? prev : prev.filter((d) => d.id !== id)));
   }
-
   function updateLine(id: string, patch: Partial<DraftItem>) {
     setDrafts((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
   }
@@ -251,10 +506,9 @@ export function LegalInterestCalculator({ dossier }: Props) {
       endDate: it.endDate,
     }));
     const now = new Date();
-    const payload: InterestCalculation = {
-      id: editingId ?? undefined,
+    const existing = await db.interestCalculations.get(calcId);
+    const payload: Partial<InterestCalculation> = {
       name: name.trim() || `Calcul du ${now.toLocaleDateString('fr-FR')}`,
-      dossierId: dossier?.id,
       creditorType,
       items,
       result: resultToSnapshot(r),
@@ -264,50 +518,11 @@ export function LegalInterestCalculator({ dossier }: Props) {
         particulier: rate.particulier,
         professionnel: rate.professionnel,
       })),
-      createdAt: editingId ? (await db.interestCalculations.get(editingId))?.createdAt ?? now : now,
+      createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
-    if (editingId) {
-      await db.interestCalculations.update(editingId, payload);
-      setSavedAt(now);
-    } else {
-      const id = await db.interestCalculations.add(payload);
-      setEditingId(Number(id));
-      setSavedAt(now);
-    }
-  }
-
-  function openCalc(c: InterestCalculation) {
-    setEditingId(c.id ?? null);
-    setName(c.name);
-    setCreditorType(c.creditorType);
-    setDrafts(c.items.map(recordToDraft));
-    setResult(c.result ? snapshotToResult(c.result) : null);
-    setSavedAt(c.updatedAt ? new Date(c.updatedAt) : null);
-    setShowLibrary(false);
-    setError(null);
-    // Recalcul automatique : si le résultat enregistré a été produit
-    // avec une table de taux antérieure, on le rafraîchit silencieusement.
-    setTimeout(() => {
-      const inputs = draftsToInputs(c.items.map(recordToDraft));
-      if (inputs.length > 0) {
-        const fresh = computeAll(inputs, c.creditorType);
-        if (
-          !c.result ||
-          fresh.totalAmount !== c.result.totalAmount ||
-          fresh.hasExtrapolation !== c.result.hasExtrapolation
-        ) {
-          setResult(fresh);
-        }
-      }
-    }, 0);
-  }
-
-  async function deleteCalc(id: number | undefined) {
-    if (!id) return;
-    if (!confirm('Supprimer définitivement ce calcul enregistré ?')) return;
-    await db.interestCalculations.delete(id);
-    if (editingId === id) resetToNew();
+    await db.interestCalculations.update(calcId, payload);
+    setSavedAt(now);
   }
 
   function handleExportPdf() {
@@ -330,110 +545,52 @@ export function LegalInterestCalculator({ dossier }: Props) {
     });
   }
 
+  if (!loaded) {
+    return (
+      <div className="px-6 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
+        Chargement du calcul…
+      </div>
+    );
+  }
+
   return (
     <div className="px-6 py-6">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
-        <div className="flex items-center gap-2 min-w-0">
-          <Calculator size={18} style={{ color: 'var(--color-primary)' }} />
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Nom du calcul"
-            className={cn(
-              'text-base font-semibold bg-transparent border-0 border-b border-transparent',
-              'focus:outline-none focus:border-[var(--color-primary)]',
-              'min-w-[260px] py-1',
-            )}
-            style={{ color: 'var(--color-text)' }}
-          />
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => setShowLibrary((v) => !v)}
-            title="Mes calculs enregistrés pour ce dossier"
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md',
-              'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-              'hover:bg-[var(--color-border)]',
-            )}
-          >
-            <FolderOpen size={13} />
-            {sortedSavedCalcs.length > 0
-              ? `Mes calculs (${sortedSavedCalcs.length})`
-              : 'Mes calculs'}
-          </button>
-          <button
-            onClick={resetToNew}
-            title="Démarrer un nouveau calcul"
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md',
-              'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-              'hover:bg-[var(--color-border)]',
-            )}
-          >
-            <RefreshCw size={13} /> Nouveau
-          </button>
-        </div>
-      </div>
-
-      {/* Bibliothèque déroulante */}
-      {showLibrary && (
-        <div
-          className="mb-4 rounded-md border"
-          style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
-        >
-          {sortedSavedCalcs.length === 0 ? (
-            <div className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              Aucun calcul enregistré pour ce dossier.
-            </div>
-          ) : (
-            <ul className="divide-y" style={{ borderColor: 'var(--color-border)' }}>
-              {sortedSavedCalcs.map((c) => (
-                <li key={c.id} className="flex items-center gap-3 px-4 py-2 text-sm">
-                  <button
-                    onClick={() => openCalc(c)}
-                    className="flex-1 text-left hover:text-[var(--color-primary)] truncate"
-                  >
-                    <span className="font-medium">{c.name}</span>
-                    <span
-                      className="ml-2 text-xs"
-                      style={{ color: 'var(--color-text-muted)' }}
-                    >
-                      · {new Date(c.updatedAt).toLocaleDateString('fr-FR')}
-                      {c.result
-                        ? ` · ${fmtMoney.format(c.result.totalAmount)}`
-                        : ''}
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => openCalc(c)}
-                    title="Ouvrir"
-                    className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    onClick={() => deleteCalc(c.id)}
-                    title="Supprimer"
-                    className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-error)]"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </li>
-              ))}
-            </ul>
+      {/* Barre haute : retour + nom éditable */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <button
+          onClick={onBack}
+          title="Retour aux calculs"
+          className={cn(
+            'flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md',
+            'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+            'hover:bg-[var(--color-surface-raised)]',
           )}
-        </div>
-      )}
+        >
+          <ArrowLeft size={12} /> Calculs
+        </button>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Nom du calcul"
+          className={cn(
+            'text-base font-semibold bg-transparent border-0 border-b border-transparent',
+            'focus:outline-none focus:border-[var(--color-primary)]',
+            'flex-1 min-w-[260px] py-1',
+          )}
+          style={{ color: 'var(--color-text)' }}
+        />
+      </div>
 
       {/* Bandeau profil créancier */}
       <div className="flex items-center gap-3 mb-3 flex-wrap">
         <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
           Profil créancier :
         </span>
-        <div className="inline-flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--color-border)' }}>
+        <div
+          className="inline-flex rounded-md overflow-hidden border"
+          style={{ borderColor: 'var(--color-border)' }}
+        >
           {(['professionnel', 'particulier'] as CreditorType[]).map((t) => (
             <button
               key={t}
@@ -557,7 +714,6 @@ export function LegalInterestCalculator({ dossier }: Props) {
         </div>
       )}
 
-      {/* Résultat */}
       {result && (
         <div className="mt-5">
           {result.hasExtrapolation && (
@@ -568,7 +724,10 @@ export function LegalInterestCalculator({ dossier }: Props) {
                 color: 'var(--color-text)',
               }}
             >
-              <AlertTriangle size={14} style={{ color: 'var(--color-warning)', marginTop: 2 }} />
+              <AlertTriangle
+                size={14}
+                style={{ color: 'var(--color-warning)', marginTop: 2 }}
+              />
               <span>
                 Au moins une période s'étend au-delà du dernier taux officiel
                 publié. Le calcul applique le dernier taux connu — à
@@ -587,8 +746,10 @@ export function LegalInterestCalculator({ dossier }: Props) {
             />
           </div>
 
-          {/* Détail par segment */}
-          <details className="mt-4 rounded-md border" style={{ borderColor: 'var(--color-border)' }}>
+          <details
+            className="mt-4 rounded-md border"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
             <summary
               className="cursor-pointer px-3 py-2 text-sm font-medium select-none"
               style={{ color: 'var(--color-text)' }}
@@ -616,12 +777,18 @@ export function LegalInterestCalculator({ dossier }: Props) {
                         style={{ borderTop: '1px solid var(--color-border)' }}
                       >
                         <td className="px-3 py-1.5">{it.label}</td>
-                        <td className="px-3 py-1.5">{new Date(s.from).toLocaleDateString('fr-FR')}</td>
-                        <td className="px-3 py-1.5">{new Date(s.to).toLocaleDateString('fr-FR')}</td>
+                        <td className="px-3 py-1.5">
+                          {new Date(s.from).toLocaleDateString('fr-FR')}
+                        </td>
+                        <td className="px-3 py-1.5">
+                          {new Date(s.to).toLocaleDateString('fr-FR')}
+                        </td>
                         <td className="px-3 py-1.5">
                           {s.year} {s.semester === 1 ? 'S1' : 'S2'}
                         </td>
-                        <td className="px-3 py-1.5 text-right tabular-nums">{s.days}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">
+                          {s.days}
+                        </td>
                         <td className="px-3 py-1.5 text-right tabular-nums">
                           {s.rate.toFixed(2).replace('.', ',')} %
                         </td>
@@ -638,7 +805,6 @@ export function LegalInterestCalculator({ dossier }: Props) {
         </div>
       )}
 
-      {/* Actions */}
       <div className="mt-5 flex items-center justify-between flex-wrap gap-2">
         <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
           {savedAt
