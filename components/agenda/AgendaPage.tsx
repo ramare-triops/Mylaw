@@ -113,23 +113,33 @@ export function AgendaPage() {
     connectCalendar();
   }
 
-  // Construit l'URL d'embed : Mylaw + le calendrier primary (s'il existe).
-  // On n'inclut volontairement pas tous les calendriers de l'utilisateur
-  // pour garder une vue lisible — l'utilisateur peut activer/désactiver
-  // les calendriers depuis l'iframe.
+  // Construit l'URL d'embed à partir de TOUS les calendriers visibles dans
+  // Google Agenda (champ `selected` à true côté calendarList — c'est le
+  // même filtre qu'utilise Google par défaut). On force seulement la
+  // présence du calendrier « Mylaw » même si l'utilisateur l'a masqué.
   const embedUrl = useMemo(() => {
     const srcIds: string[] = [];
     const colors: string[] = [];
+
+    const seen = new Set<string>();
+    const pushCal = (id: string, bg?: string) => {
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      srcIds.push(id);
+      colors.push((bg || '#039BE5').replace('#', ''));
+    };
+
+    // 1) Mylaw d'abord pour qu'il soit visible et coloré « brand ».
     if (mylawId) {
-      srcIds.push(mylawId);
       const meta = calendars.find((c) => c.id === mylawId);
-      colors.push((meta?.backgroundColor || '#0B57D0').replace('#', ''));
+      pushCal(mylawId, meta?.backgroundColor || '#0B57D0');
     }
-    const primary = calendars.find((c) => c.primary);
-    if (primary) {
-      srcIds.push(primary.id);
-      colors.push((primary.backgroundColor || '#039BE5').replace('#', ''));
-    }
+    // 2) Tous les autres calendriers que l'utilisateur a cochés dans
+    // Google Agenda (EFB, perso, équipe, jours fériés, etc.).
+    calendars.forEach((c) => {
+      if (c.selected) pushCal(c.id, c.backgroundColor);
+    });
+
     return buildEmbedUrl(srcIds, colors);
   }, [mylawId, calendars]);
 
