@@ -750,4 +750,73 @@ export interface AuditEntry {
   details?: string;
 }
 
+// ─── Calcul des intérêts au taux légal ────────────────────────────────────
+export type CreditorType = 'particulier' | 'professionnel';
+
+export interface InterestItemRecord {
+  /** Identifiant local stable (uuid v4 — stable entre saves). */
+  id: string;
+  label: string;
+  amount: number;
+  startDate: Date;
+  endDate: Date;
+}
+
+export interface InterestRateSnapshot {
+  year: number;
+  semester: 1 | 2;
+  particulier: number;
+  professionnel: number;
+}
+
+export interface InterestSegmentSnapshot {
+  from: Date;
+  to: Date;
+  year: number;
+  semester: 1 | 2;
+  rate: number;
+  days: number;
+  interest: number;
+}
+
+export interface InterestComputedItem {
+  itemId: string;
+  label: string;
+  amount: number;
+  startDate: Date;
+  endDate: Date;
+  segments: InterestSegmentSnapshot[];
+  interest: number;
+  total: number;
+  extrapolated: boolean;
+}
+
+export interface InterestResultSnapshot {
+  computedAt: Date;
+  creditorType: CreditorType;
+  items: InterestComputedItem[];
+  totalCapital: number;
+  totalInterest: number;
+  totalAmount: number;
+  hasExtrapolation: boolean;
+}
+
+export interface InterestCalculation {
+  id?: number;
+  /** Nom donné au calcul (sert de titre dans les listes / exports). */
+  name: string;
+  /** Dossier auquel le calcul est rattaché — nul si calcul libre. */
+  dossierId?: number;
+  creditorType: CreditorType;
+  /** Lignes saisies par l'utilisateur. */
+  items: InterestItemRecord[];
+  /** Résultat de la dernière exécution. */
+  result?: InterestResultSnapshot;
+  /** Snapshot des taux utilisés au moment du calcul. */
+  ratesSnapshot?: InterestRateSnapshot[];
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export type { FieldDef, FieldDefType } from './field-def';

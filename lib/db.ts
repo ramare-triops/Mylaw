@@ -26,6 +26,7 @@ import type {
   DocumentLink,
   AuditEntry,
   Jot,
+  InterestCalculation,
 } from '@/types';
 
 type SettingsRecord = { key: string; value: unknown };
@@ -108,6 +109,8 @@ export class MyLexDatabase extends Dexie {
   auditLog!: Table<AuditEntry>;
   /** Notes rapides / to-do du tableau de bord (synchronisable Google Tasks). */
   jots!: Table<Jot>;
+  /** Calculs d'intérêts au taux légal (outil dossier). */
+  interestCalculations!: Table<InterestCalculation>;
 
   constructor() {
     super('MyLexDB');
@@ -269,6 +272,52 @@ export class MyLexDatabase extends Dexie {
       auditLog:
         '++id, dossierId, entityType, entityId, action, timestamp',
       jots: '++id, createdAt, done, googleTaskId',
+    });
+
+    // ─── Version 6 : Calculs d'intérêts (outil dossier) ────────────────────
+    // Ajoute uniquement la table interestCalculations ; toutes les autres
+    // sont strictement copiées de la v5.
+    this.version(6).stores({
+      documents:
+        '++id, title, type, folderId, dossierId, status, category, updatedAt, tags, *searchTokens',
+      documentVersions: '++id, documentId, timestamp',
+      folders: '++id, name, parentId, color, createdAt',
+      tools: '++id, slug, name, pinned, order, config, lastUsedAt',
+      templates: '++id, name, category, content, variables, createdAt',
+      sessions: '++id, date, toolId, content, tags',
+      snippets: '++id, trigger, expansion, category',
+      aiChats: '++id, documentId, messages, createdAt',
+      settings: 'key',
+      history: '++id, action, entityId, entityType, timestamp',
+      deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
+      bricks: '++id, title, category, infoLabelId, updatedAt, *tags',
+      infoLabels: '++id, name, color, createdAt',
+      fieldDefs: '++id, name, type, category, updatedAt',
+      dossiers:
+        '++id, reference, name, type, status, updatedAt, createdAt, *tags',
+      contacts:
+        '++id, type, lastName, companyName, email, updatedAt, *tags',
+      dossierContacts:
+        '++id, dossierId, contactId, role, [dossierId+contactId]',
+      documentContacts:
+        '++id, documentId, contactId, role, [documentId+contactId]',
+      timeEntries:
+        '++id, dossierId, documentId, contactId, date, billable, billed, invoiceId',
+      expenses:
+        '++id, dossierId, documentId, date, category, billed, invoiceId',
+      fixedFees:
+        '++id, dossierId, documentId, date, kind, billed, invoiceId',
+      invoices:
+        '++id, dossierId, reference, date, status',
+      attachments:
+        '++id, dossierId, documentId, name, mimeType, uploadedAt, *tags',
+      documentLinks:
+        '++id, documentId, dossierId, [documentId+dossierId]',
+      auditLog:
+        '++id, dossierId, entityType, entityId, action, timestamp',
+      jots: '++id, createdAt, done, googleTaskId',
+      interestCalculations:
+        '++id, dossierId, name, updatedAt',
     });
 
     // ─── Middleware : déclenche le sync Drive sur toute mutation ───
