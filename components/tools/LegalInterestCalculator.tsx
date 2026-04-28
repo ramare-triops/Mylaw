@@ -1055,22 +1055,43 @@ function LineConnector({
         const aFilled = !!prev[f.key];
         const bFilled = !!next[f.key];
         const visible = aFilled !== bFilled;
+        const pastille = visible ? (
+          <button
+            onClick={() => onCopy(f.key)}
+            title={`Recopier ${f.label} dans la ligne vide`}
+            className={cn(
+              'flex items-center justify-center rounded-full',
+              'w-5 h-5',
+              'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+              'text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]',
+            )}
+          >
+            <ArrowDownUp size={11} />
+          </button>
+        ) : null;
+
+        // La cellule « Date de fin » d'une ligne est composée du champ
+        // date (flex-1) et du bouton « Aujourd'hui » (shrink-0). Pour
+        // que la pastille soit centrée sur le champ et non sur la
+        // combinaison champ + bouton, on réplique cette structure et
+        // on ajoute un faux bouton invisible de même gabarit.
+        if (f.key === 'endDate') {
+          return (
+            <div key={f.key} className="flex items-center gap-1 min-w-0">
+              <div className="flex-1 min-w-0 flex justify-center">{pastille}</div>
+              <span
+                aria-hidden
+                className="shrink-0 invisible px-2 py-1 text-[11px] rounded-md border"
+              >
+                Aujourd&apos;hui
+              </span>
+            </div>
+          );
+        }
+
         return (
           <div key={f.key} className="flex justify-center">
-            {visible && (
-              <button
-                onClick={() => onCopy(f.key)}
-                title={`Recopier ${f.label} dans la ligne vide`}
-                className={cn(
-                  'flex items-center justify-center rounded-full',
-                  'w-5 h-5',
-                  'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-                  'text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]',
-                )}
-              >
-                <ArrowDownUp size={11} />
-              </button>
-            )}
+            {pastille}
           </div>
         );
       })}
