@@ -1,16 +1,22 @@
 /**
- * POST /api/google-calendar               → crée un événement { summary, description?, dueDate (ISO), durationMinutes? }
- * PATCH /api/google-calendar?id=<eventId> → met à jour un événement existant
- * DELETE /api/google-calendar?id=...      → supprime l'événement
+ * POST   /api/google-calendar
+ *   { summary, description?, dueDate (ISO), durationMinutes?, allDay?, location?, calendarId? }
+ * PATCH  /api/google-calendar?id=<eventId>&calendarId=<id>
+ * DELETE /api/google-calendar?id=<eventId>&calendarId=<id>
  *
- * Calendrier ciblé : primary. Les events créés sont all-day si aucune
- * `durationMinutes` n'est fournie (cas typique d'un délai juridique).
+ * Quand `allDay` vaut `true` (par défaut si aucune heure n'est fournie), on
+ * crée un événement « toute la journée ». Sinon on crée un événement timé
+ * (durée par défaut 30 minutes si `durationMinutes` n'est pas fourni).
+ *
+ * `calendarId` est optionnel. Par défaut on retombe sur `primary`. Le
+ * dialogue de création de délai pousse au calendrier « Mylaw » résolu via
+ * /api/google-calendar/mylaw-calendar.
  */
 import { NextRequest, NextResponse } from 'next/server';
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const COOKIE_NAME = 'mylaw_google_productivity_rt';
-const CAL_API = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+const CAL_API_BASE = 'https://www.googleapis.com/calendar/v3/calendars';
 
 async function getAccessToken(req: NextRequest): Promise<string | null> {
   const refreshToken = req.cookies.get(COOKIE_NAME)?.value;
@@ -33,39 +39,57 @@ async function getAccessToken(req: NextRequest): Promise<string | null> {
   return tokens.access_token as string;
 }
 
+function eventsUrl(calendarId: string | undefined): string {
+  const id = encodeURIComponent(calendarId && calendarId.trim() ? calendarId : 'primary');
+  return `${CAL_API_BASE}/${id}/events`;
+}
+
+function ymd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
 function buildEventBody(input: {
   summary: string;
   description?: string;
   dueDate: string;
   durationMinutes?: number;
+  allDay?: boolean;
+  location?: string;
 }) {
   const start = new Date(input.dueDate);
   if (Number.isNaN(start.getTime())) throw new Error('invalid_due_date');
-  if (input.durationMinutes && input.durationMinutes > 0) {
-    const end = new Date(start.getTime() + input.durationMinutes * 60_000);
+
+  const isAllDay = input.allDay !== false
+    && (input.allDay === true || (start.getHours() === 0 && start.getMinutes() === 0));
+
+  // ── Événement timé ──
+  if (!isAllDay) {
+    const duration = input.durationMinutes && input.durationMinutes > 0
+      ? input.durationMinutes
+      : 30;
+    const end = new Date(start.getTime() + duration * 60_000);
     return {
       summary: input.summary,
       description: input.description || undefined,
+      location: input.location || undefined,
       start: { dateTime: start.toISOString() },
       end: { dateTime: end.toISOString() },
     };
   }
-  // All-day event : Google attend { date: 'YYYY-MM-DD' } en UTC date only.
-  const y = start.getFullYear();
-  const m = String(start.getMonth() + 1).padStart(2, '0');
-  const d = String(start.getDate()).padStart(2, '0');
-  const day = `${y}-${m}-${d}`;
-  // Pour all-day, end = jour suivant (convention Google).
+
+  // ── Événement toute la journée ──
+  // Google attend des dates `YYYY-MM-DD` (sans timezone), end = jour suivant.
   const next = new Date(start);
   next.setDate(next.getDate() + 1);
-  const y2 = next.getFullYear();
-  const m2 = String(next.getMonth() + 1).padStart(2, '0');
-  const d2 = String(next.getDate()).padStart(2, '0');
   return {
     summary: input.summary,
     description: input.description || undefined,
-    start: { date: day },
-    end: { date: `${y2}-${m2}-${d2}` },
+    location: input.location || undefined,
+    start: { date: ymd(start) },
+    end: { date: ymd(next) },
   };
 }
 
@@ -73,13 +97,15 @@ export async function POST(req: NextRequest) {
   const access = await getAccessToken(req);
   if (!access) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
   let body;
+  let calendarId: string | undefined;
   try {
     const input = await req.json();
+    calendarId = input.calendarId;
     body = buildEventBody(input);
   } catch (err: any) {
     return NextResponse.json({ error: err?.message ?? 'invalid_input' }, { status: 400 });
   }
-  const res = await fetch(CAL_API, {
+  const res = await fetch(eventsUrl(calendarId), {
     method: 'POST',
     headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -96,15 +122,18 @@ export async function PATCH(req: NextRequest) {
   const access = await getAccessToken(req);
   if (!access) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
   const id = req.nextUrl.searchParams.get('id');
+  const calendarIdParam = req.nextUrl.searchParams.get('calendarId') || undefined;
   if (!id) return NextResponse.json({ error: 'id_required' }, { status: 400 });
   let body;
+  let calendarId: string | undefined = calendarIdParam;
   try {
     const input = await req.json();
+    calendarId = input.calendarId || calendarId;
     body = buildEventBody(input);
   } catch (err: any) {
     return NextResponse.json({ error: err?.message ?? 'invalid_input' }, { status: 400 });
   }
-  const res = await fetch(`${CAL_API}/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${eventsUrl(calendarId)}/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -118,8 +147,9 @@ export async function DELETE(req: NextRequest) {
   const access = await getAccessToken(req);
   if (!access) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
   const id = req.nextUrl.searchParams.get('id');
+  const calendarId = req.nextUrl.searchParams.get('calendarId') || undefined;
   if (!id) return NextResponse.json({ error: 'id_required' }, { status: 400 });
-  const res = await fetch(`${CAL_API}/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${eventsUrl(calendarId)}/${encodeURIComponent(id)}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${access}` },
   });

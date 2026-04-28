@@ -3,10 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Clock, Plus, Pencil, Trash2, AlertTriangle, CheckCircle, Calendar, Bell,
-  CalendarCheck, Link as LinkIcon, X as CloseIcon,
+  CalendarCheck, Link as LinkIcon, X as CloseIcon, MapPin,
 } from 'lucide-react';
 import { db, getSetting, setSetting } from '@/lib/db';
 import type { Deadline as DBDeadline, DeadlineType as DBDeadlineType } from '@/types';
+import { DeadlineDialog, type DeadlineDraft } from './DeadlineDialog';
 
 // UI conserve les libellés avec accents ; mapping vers les clés normalisées
 // stockées en DB (types/index.ts).
@@ -28,16 +29,27 @@ const DB_TO_UI_TYPE: Record<DBDeadlineType, UIDeadlineType> = {
   'other':      'autre',
 };
 
+const PRESET_TYPE_VALUES: UIDeadlineType[] = [
+  'péremption', 'forclusion', 'réponse', 'audience', 'autre',
+];
+
 interface Deadline {
   id?: number;
   title: string;
   dueDate: Date;
+  /** Vrai = échéance toute la journée. */
+  allDay: boolean;
   type: UIDeadlineType;
+  /** Catégorie affichée (peut être un texte libre saisi par l'utilisateur). */
+  typeLabel: string;
   folder?: string;
+  folderId?: number;
+  location?: string;
   notes?: string;
   done: boolean;
   createdAt: Date;
   googleEventId?: string;
+  googleCalendarId?: string;
   googleSyncedAt?: Date;
 }
 
@@ -48,6 +60,8 @@ const DEADLINE_TYPES: Array<{ value: UIDeadlineType; label: string; color: strin
   { value: 'audience', label: 'Audience', color: 'var(--color-primary)' },
   { value: 'autre', label: 'Autre', color: 'var(--color-text-muted)' },
 ];
+
+const MYLAW_CAL_SETTING = 'mylaw_google_calendar_id_v1';
 
 function getDaysUntil(date: Date): number {
   const now = new Date();
@@ -98,18 +112,39 @@ const ALERT_STYLES: Record<string, { bg: string; border: string; badge: string; 
   },
 };
 
+function categoryToType(label: string): UIDeadlineType {
+  const trimmed = label.trim().toLowerCase();
+  const match = PRESET_TYPE_VALUES.find((v) => v === trimmed);
+  return match ?? 'autre';
+}
+
+function ymd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+function combineDateTime(dateStr: string, timeStr: string): { date: Date; allDay: boolean } {
+  // Construit une Date locale en évitant le décalage UTC du parser ISO.
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return { date: new Date(), allDay: true };
+  if (timeStr) {
+    const [hh, mm] = timeStr.split(':').map(Number);
+    return {
+      date: new Date(y, m - 1, d, hh || 0, mm || 0, 0, 0),
+      allDay: false,
+    };
+  }
+  return { date: new Date(y, m - 1, d, 0, 0, 0, 0), allDay: true };
+}
+
 export function DeadlineTracker() {
   const [deadlines, setDeadlines] = useState<Deadline[]>([]);
-  const [showForm, setShowForm] = useState(false);
+  const [showDialog, setShowDialog] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingInitial, setEditingInitial] = useState<Partial<DeadlineDraft> | undefined>(undefined);
   const [filter, setFilter] = useState<'all' | 'upcoming' | 'done'>('upcoming');
-  const [form, setForm] = useState<Omit<Deadline, 'id' | 'done' | 'createdAt'>>({
-    title: '',
-    dueDate: new Date(),
-    type: 'autre',
-    folder: '',
-    notes: '',
-  });
   const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null);
   const [syncingId, setSyncingId] = useState<number | null>(null);
 
@@ -150,34 +185,72 @@ export function DeadlineTracker() {
   async function disconnectCalendar() {
     await fetch('/api/google-productivity/logout', { method: 'POST' });
     setCalendarConnected(false);
+    // On oublie l'id du calendrier Mylaw : il sera re-résolu après re-connexion
+    // (le calendrier côté Google subsiste mais on le retrouvera par son nom).
+    await setSetting(MYLAW_CAL_SETTING, '');
   }
 
-  async function pushToCalendar(dl: Deadline) {
+  /**
+   * Résout (en cache) l'identifiant du calendrier « Mylaw » dans le compte
+   * Google de l'utilisateur, en le créant si besoin. L'id est mémorisé dans
+   * les settings pour ne pas l'interroger à chaque pousse d'événement.
+   */
+  async function ensureMylawCalendarId(): Promise<string | null> {
+    const cached = await getSetting<string>(MYLAW_CAL_SETTING, '');
+    if (cached) return cached;
+    try {
+      const res = await fetch('/api/google-calendar/mylaw-calendar');
+      if (!res.ok) return null;
+      const data = await res.json();
+      const id = (data?.calendarId as string) || '';
+      if (id) await setSetting(MYLAW_CAL_SETTING, id);
+      return id || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function pushToCalendar(dl: Deadline): Promise<{ eventId: string; calendarId: string } | null> {
+    if (!calendarConnected) return null;
+    const calendarId = (await ensureMylawCalendarId()) ?? 'primary';
+    const description = [
+      dl.folder ? `Dossier : ${dl.folder}` : null,
+      dl.typeLabel ? `Catégorie : ${dl.typeLabel}` : null,
+      dl.notes || null,
+    ].filter(Boolean).join('\n\n');
+    const summary = `[${dl.typeLabel || 'Échéance'}] ${dl.title}`;
+    const body = {
+      summary,
+      description: description || undefined,
+      location: dl.location || undefined,
+      dueDate: dl.dueDate.toISOString(),
+      allDay: dl.allDay,
+      calendarId,
+    };
+    const url = dl.googleEventId
+      ? `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId)}&calendarId=${encodeURIComponent(dl.googleCalendarId || calendarId)}`
+      : '/api/google-calendar';
+    const res = await fetch(url, {
+      method: dl.googleEventId ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const eventId = data.event?.id ?? dl.googleEventId;
+    if (!eventId) return null;
+    return { eventId, calendarId: dl.googleCalendarId || calendarId };
+  }
+
+  async function syncToCalendar(dl: Deadline) {
     if (!dl.id || !calendarConnected) return;
     setSyncingId(dl.id);
     try {
-      const description = [
-        dl.folder ? `Dossier : ${dl.folder}` : null,
-        dl.notes || null,
-      ].filter(Boolean).join('\n\n');
-      const body = {
-        summary: `[${DEADLINE_TYPES.find(t => t.value === dl.type)?.label ?? 'Échéance'}] ${dl.title}`,
-        description: description || undefined,
-        dueDate: dl.dueDate.toISOString(),
-      };
-      const url = dl.googleEventId
-        ? `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId)}`
-        : '/api/google-calendar';
-      const res = await fetch(url, {
-        method: dl.googleEventId ? 'PATCH' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      const eventId = data.event?.id ?? dl.googleEventId;
+      const result = await pushToCalendar(dl);
+      if (!result) return;
       const patch: Partial<DBDeadline> = {
-        googleEventId: eventId,
+        googleEventId: result.eventId,
+        googleCalendarId: result.calendarId,
         googleSyncedAt: new Date(),
       };
       await db.deadlines.update(dl.id, patch);
@@ -193,19 +266,21 @@ export function DeadlineTracker() {
     if (!dl.id || !dl.googleEventId) return;
     setSyncingId(dl.id);
     try {
+      const calendarId = dl.googleCalendarId || 'primary';
       await fetch(
-        `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId)}`,
+        `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId)}&calendarId=${encodeURIComponent(calendarId)}`,
         { method: 'DELETE' },
       );
       const patch: Partial<DBDeadline> = {
         googleEventId: undefined,
+        googleCalendarId: undefined,
         googleSyncedAt: undefined,
       };
       await db.deadlines.update(dl.id, patch);
       setDeadlines((prev) =>
         prev.map((x) =>
           x.id === dl.id
-            ? { ...x, googleEventId: undefined, googleSyncedAt: undefined }
+            ? { ...x, googleEventId: undefined, googleCalendarId: undefined, googleSyncedAt: undefined }
             : x,
         ),
       );
@@ -249,100 +324,154 @@ export function DeadlineTracker() {
   async function loadDeadlines() {
     try {
       const rows = await db.deadlines.toArray();
-      const mapped: Deadline[] = rows.map((r) => ({
-        id:             r.id,
-        title:          r.title,
-        dueDate:        new Date(r.dueDate),
-        type:           DB_TO_UI_TYPE[r.type] ?? 'autre',
-        folder:         r.dossier,
-        notes:          r.notes,
-        done:           r.done,
-        createdAt:      new Date(r.createdAt),
-        googleEventId:  r.googleEventId,
-        googleSyncedAt: r.googleSyncedAt ? new Date(r.googleSyncedAt) : undefined,
-      }));
+      const mapped: Deadline[] = rows.map((r) => {
+        const due = new Date(r.dueDate);
+        const inferredAllDay = r.allDay ?? (due.getHours() === 0 && due.getMinutes() === 0);
+        const uiType = DB_TO_UI_TYPE[r.type] ?? 'autre';
+        return {
+          id:               r.id,
+          title:            r.title,
+          dueDate:          due,
+          allDay:           inferredAllDay,
+          type:             uiType,
+          typeLabel:        r.typeLabel || DEADLINE_TYPES.find((t) => t.value === uiType)?.label || 'Autre',
+          folder:           r.dossier,
+          folderId:         r.dossierId,
+          location:         r.location,
+          notes:            r.notes,
+          done:             r.done,
+          createdAt:        new Date(r.createdAt),
+          googleEventId:    r.googleEventId,
+          googleCalendarId: r.googleCalendarId,
+          googleSyncedAt:   r.googleSyncedAt ? new Date(r.googleSyncedAt) : undefined,
+        };
+      });
       setDeadlines(mapped.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime()));
     } catch {}
   }
 
-  function resetForm() {
-    setForm({ title: '', dueDate: new Date(), type: 'autre', folder: '', notes: '' });
+  function openCreate() {
     setEditingId(null);
-    setShowForm(false);
+    setEditingInitial({
+      date: ymd(new Date()),
+      time: '',
+      category: 'autre',
+    });
+    setShowDialog(true);
   }
 
   function startEdit(dl: Deadline) {
     if (dl.id == null) return;
     setEditingId(dl.id);
-    setForm({
-      title: dl.title,
-      dueDate: dl.dueDate,
-      type: dl.type,
-      folder: dl.folder ?? '',
-      notes: dl.notes ?? '',
-    });
-    setShowForm(true);
+    const draft: Partial<DeadlineDraft> = {
+      title:     dl.title,
+      date:      ymd(dl.dueDate),
+      time:      dl.allDay
+        ? ''
+        : `${String(dl.dueDate.getHours()).padStart(2, '0')}:${String(dl.dueDate.getMinutes()).padStart(2, '0')}`,
+      category:  dl.typeLabel || dl.type,
+      dossier:   dl.folder ?? '',
+      dossierId: dl.folderId,
+      location:  dl.location ?? '',
+      notes:     dl.notes ?? '',
+    };
+    setEditingInitial(draft);
+    setShowDialog(true);
   }
 
-  async function submitDeadline() {
-    if (!form.title.trim()) return;
+  async function saveDraft(draft: DeadlineDraft) {
+    const { date, allDay } = combineDateTime(draft.date, draft.time);
+    const uiType = categoryToType(draft.category);
+    const typeLabel = draft.category.trim() || DEADLINE_TYPES.find((t) => t.value === uiType)?.label || 'Autre';
+
     try {
+      let saved: Deadline;
       if (editingId != null) {
-        // ── Mode édition : on met à jour l'enregistrement existant ──
         const existing = deadlines.find((d) => d.id === editingId);
         const patch: Partial<DBDeadline> = {
-          title:   form.title.trim(),
-          dossier: form.folder ?? '',
-          dueDate: form.dueDate,
-          type:    UI_TO_DB_TYPE[form.type],
-          notes:   form.notes || undefined,
+          title:        draft.title,
+          dossier:      draft.dossier,
+          dossierId:    draft.dossierId,
+          dueDate:      date,
+          allDay,
+          type:         UI_TO_DB_TYPE[uiType],
+          typeLabel,
+          location:     draft.location || undefined,
+          notes:        draft.notes || undefined,
         };
         await db.deadlines.update(editingId, patch);
-        const updated: Deadline = {
-          id:        editingId,
-          title:     patch.title!,
-          dueDate:   patch.dueDate!,
-          type:      form.type,
-          folder:    patch.dossier,
-          notes:     patch.notes,
-          done:      existing?.done ?? false,
-          createdAt: existing?.createdAt ?? new Date(),
+        saved = {
+          id:               editingId,
+          title:            draft.title,
+          dueDate:          date,
+          allDay,
+          type:             uiType,
+          typeLabel,
+          folder:           draft.dossier,
+          folderId:         draft.dossierId,
+          location:         draft.location || undefined,
+          notes:            draft.notes || undefined,
+          done:             existing?.done ?? false,
+          createdAt:        existing?.createdAt ?? new Date(),
+          googleEventId:    existing?.googleEventId,
+          googleCalendarId: existing?.googleCalendarId,
+          googleSyncedAt:   existing?.googleSyncedAt,
         };
-        setDeadlines((prev) =>
-          prev
-            .map((d) => (d.id === editingId ? updated : d))
-            .sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())
-        );
-        resetForm();
-        return;
+      } else {
+        const now = new Date();
+        const record: Omit<DBDeadline, 'id'> = {
+          title:     draft.title,
+          dossier:   draft.dossier,
+          dossierId: draft.dossierId,
+          dueDate:   date,
+          allDay,
+          type:      UI_TO_DB_TYPE[uiType],
+          typeLabel,
+          location:  draft.location || undefined,
+          notes:     draft.notes || undefined,
+          done:      false,
+          createdAt: now,
+        };
+        const newId = await db.deadlines.add(record as DBDeadline);
+        saved = {
+          id:        Number(newId),
+          title:     record.title,
+          dueDate:   record.dueDate,
+          allDay,
+          type:      uiType,
+          typeLabel,
+          folder:    record.dossier,
+          folderId:  record.dossierId,
+          location:  record.location,
+          notes:     record.notes,
+          done:      false,
+          createdAt: now,
+        };
       }
-      // ── Mode création ──
-      const now = new Date();
-      const record: Omit<DBDeadline, 'id'> = {
-        title:     form.title.trim(),
-        dossier:   form.folder ?? '',
-        dueDate:   form.dueDate,
-        type:      UI_TO_DB_TYPE[form.type],
-        notes:     form.notes || undefined,
-        done:      false,
-        createdAt: now,
-      };
-      const id = await db.deadlines.add(record as DBDeadline);
-      const deadline: Deadline = {
-        id: Number(id),
-        title: record.title,
-        dueDate: record.dueDate,
-        type: form.type,
-        folder: record.dossier,
-        notes: record.notes,
-        done: false,
-        createdAt: now,
-      };
-      setDeadlines((prev) =>
-        [...prev, deadline].sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())
-      );
-      resetForm();
+
+      // Pousse (ou met à jour) automatiquement vers Google Agenda si connecté.
+      if (calendarConnected && saved.id != null && !saved.done) {
+        const result = await pushToCalendar(saved);
+        if (result) {
+          saved.googleEventId    = result.eventId;
+          saved.googleCalendarId = result.calendarId;
+          saved.googleSyncedAt   = new Date();
+          await db.deadlines.update(saved.id, {
+            googleEventId:    saved.googleEventId,
+            googleCalendarId: saved.googleCalendarId,
+            googleSyncedAt:   saved.googleSyncedAt,
+          });
+        }
+      }
+
+      setDeadlines((prev) => {
+        const without = prev.filter((d) => d.id !== saved.id);
+        return [...without, saved].sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
+      });
     } catch {}
+    setShowDialog(false);
+    setEditingId(null);
+    setEditingInitial(undefined);
   }
 
   async function toggleDone(id: number) {
@@ -350,13 +479,19 @@ export function DeadlineTracker() {
     if (!dl) return;
     const wasPushed = !!dl.googleEventId;
     const nowDone = !dl.done;
-    const updated = { ...dl, done: nowDone, googleEventId: nowDone ? undefined : dl.googleEventId };
+    const updated = {
+      ...dl,
+      done: nowDone,
+      googleEventId: nowDone ? undefined : dl.googleEventId,
+      googleCalendarId: nowDone ? undefined : dl.googleCalendarId,
+    };
     try {
       // Si on coche comme terminé, on retire l'événement distant en best-effort.
       if (nowDone && wasPushed) {
         try {
+          const calendarId = dl.googleCalendarId || 'primary';
           await fetch(
-            `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId!)}`,
+            `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId!)}&calendarId=${encodeURIComponent(calendarId)}`,
             { method: 'DELETE' },
           );
         } catch { /* best-effort */ }
@@ -364,6 +499,7 @@ export function DeadlineTracker() {
       await db.deadlines.update(id, {
         done: nowDone,
         googleEventId: nowDone ? undefined : dl.googleEventId,
+        googleCalendarId: nowDone ? undefined : dl.googleCalendarId,
         googleSyncedAt: nowDone ? undefined : dl.googleSyncedAt,
       });
       setDeadlines((prev) => prev.map((d) => (d.id === id ? updated : d)));
@@ -376,8 +512,9 @@ export function DeadlineTracker() {
       // Nettoyage Google Calendar si la deadline y est liée.
       if (dl?.googleEventId) {
         try {
+          const calendarId = dl.googleCalendarId || 'primary';
           await fetch(
-            `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId)}`,
+            `/api/google-calendar?id=${encodeURIComponent(dl.googleEventId)}&calendarId=${encodeURIComponent(calendarId)}`,
             { method: 'DELETE' },
           );
         } catch { /* best-effort */ }
@@ -507,11 +644,7 @@ export function DeadlineTracker() {
             </button>
           ))}
           <button
-            onClick={() => {
-              setEditingId(null);
-              setForm({ title: '', dueDate: new Date(), type: 'autre', folder: '', notes: '' });
-              setShowForm(true);
-            }}
+            onClick={openCreate}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -529,73 +662,6 @@ export function DeadlineTracker() {
         </div>
       </div>
 
-      {/* Add form */}
-      {showForm && (
-        <div
-          className="px-6 py-4 border-b"
-          style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
-        >
-          <div className="flex flex-wrap gap-3">
-            <input
-              type="text"
-              placeholder="Intitulé du délai *"
-              value={form.title}
-              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-              style={inputStyle}
-            />
-            <input
-              type="date"
-              value={form.dueDate instanceof Date ? form.dueDate.toISOString().split('T')[0] : ''}
-              onChange={(e) => setForm((f) => ({ ...f, dueDate: new Date(e.target.value) }))}
-              style={{ ...inputStyle, width: '160px' }}
-            />
-            <select
-              value={form.type}
-              onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as Deadline['type'] }))}
-              style={{ ...inputStyle, width: '170px' }}
-            >
-              {DEADLINE_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-            <input
-              type="text"
-              placeholder="Dossier"
-              value={form.folder}
-              onChange={(e) => setForm((f) => ({ ...f, folder: e.target.value }))}
-              style={{ ...inputStyle, width: '140px' }}
-            />
-            <button
-              onClick={submitDeadline}
-              style={{
-                padding: '6px 16px',
-                borderRadius: 'var(--radius-sm)',
-                background: 'var(--color-primary)',
-                color: '#fff',
-                fontSize: 'var(--text-sm)',
-                fontWeight: 500,
-              }}
-            >
-              {editingId != null ? 'Enregistrer' : 'Ajouter'}
-            </button>
-            <button
-              onClick={resetForm}
-              style={{
-                padding: '6px 12px',
-                borderRadius: 'var(--radius-sm)',
-                background: 'var(--color-surface-offset)',
-                color: 'var(--color-text-muted)',
-                fontSize: 'var(--text-sm)',
-              }}
-            >
-              Annuler
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* List */}
       <div className="flex-1 overflow-y-auto p-6">
         {filtered.length === 0 && (
@@ -606,7 +672,7 @@ export function DeadlineTracker() {
             <Clock size={48} style={{ opacity: 0.2, marginBottom: '16px' }} />
             <p style={{ fontSize: 'var(--text-base)' }}>Aucun délai{filter === 'upcoming' ? ' en cours' : filter === 'done' ? ' terminé' : ''}</p>
             <button
-              onClick={() => setShowForm(true)}
+              onClick={openCreate}
               style={{
                 marginTop: '12px',
                 fontSize: 'var(--text-sm)',
@@ -623,7 +689,6 @@ export function DeadlineTracker() {
           const days = getDaysUntil(dl.dueDate);
           const level = getAlertLevel(days, dl.done);
           const style = ALERT_STYLES[level];
-          const typeInfo = DEADLINE_TYPES.find((t) => t.value === dl.type);
           return (
             <div
               key={dl.id ?? dl.title}
@@ -676,7 +741,7 @@ export function DeadlineTracker() {
                       ? "Aujourd'hui"
                       : `J-${days}`}
                   </span>
-                  {typeInfo && (
+                  {dl.typeLabel && (
                     <span
                       style={{
                         fontSize: 'var(--text-xs)',
@@ -686,12 +751,12 @@ export function DeadlineTracker() {
                         borderRadius: 'var(--radius-full)',
                       }}
                     >
-                      {typeInfo.label}
+                      {dl.typeLabel}
                     </span>
                   )}
                 </div>
                 <div
-                  className="flex items-center gap-3 mt-1"
+                  className="flex items-center gap-3 mt-1 flex-wrap"
                   style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}
                 >
                   <span className="flex items-center gap-1">
@@ -702,10 +767,25 @@ export function DeadlineTracker() {
                       month: 'long',
                       year: 'numeric',
                     })}
+                    {!dl.allDay && (
+                      <>
+                        {' · '}
+                        {dl.dueDate.toLocaleTimeString('fr-FR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </>
+                    )}
                   </span>
                   {dl.folder && (
                     <span>
                       Dossier : <strong>{dl.folder}</strong>
+                    </span>
+                  )}
+                  {dl.location && (
+                    <span className="flex items-center gap-1">
+                      <MapPin size={11} />
+                      {dl.location}
                     </span>
                   )}
                 </div>
@@ -737,7 +817,7 @@ export function DeadlineTracker() {
                   </button>
                 ) : (
                   <button
-                    onClick={() => pushToCalendar(dl)}
+                    onClick={() => syncToCalendar(dl)}
                     disabled={syncingId === dl.id}
                     aria-label="Ajouter à Google Agenda"
                     title="Ajouter à Google Agenda"
@@ -775,18 +855,19 @@ export function DeadlineTracker() {
           );
         })}
       </div>
+
+      {/* Dialog */}
+      <DeadlineDialog
+        open={showDialog}
+        editing={editingId != null}
+        initial={editingInitial}
+        onClose={() => {
+          setShowDialog(false);
+          setEditingId(null);
+          setEditingInitial(undefined);
+        }}
+        onSave={saveDraft}
+      />
     </div>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  flex: 1,
-  minWidth: '180px',
-  padding: '6px 10px',
-  fontSize: 'var(--text-sm)',
-  background: 'var(--color-bg)',
-  border: '1px solid var(--color-border)',
-  borderRadius: 'var(--radius-sm)',
-  color: 'var(--color-text)',
-  outline: 'none',
-};

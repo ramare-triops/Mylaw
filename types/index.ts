@@ -217,8 +217,27 @@ export type DeadlineType =
 export interface Deadline {
   id?: number;
   title: string;
+  /**
+   * Libellé du dossier rattaché (numéro, nom, ou les deux). Reste un texte
+   * libre pour rester compatible avec les délais saisis avant la mise en
+   * place du picker de dossier ; quand le dossier est retrouvé en base via
+   * la barre de recherche, son id est aussi mémorisé dans `dossierId`.
+   */
   dossier: string;
+  /** Lien fort vers un Dossier de la base si l'utilisateur l'a sélectionné. */
+  dossierId?: number;
   dueDate: Date;
+  /**
+   * Si `true`, l'échéance n'a pas d'heure précise — l'événement Google
+   * Calendar correspondant est créé en « toute la journée » et apparaît
+   * tout en haut de la journée dans l'agenda. Par défaut on considère
+   * que les anciennes deadlines sans heure (00:00) sont all-day.
+   */
+  allDay?: boolean;
+  /** Catégorie libre du délai (peut être une des valeurs DeadlineType ou un texte saisi). */
+  typeLabel?: string;
+  /** Lieu (audience, rendez-vous…) — transmis à Google Calendar. */
+  location?: string;
   type: DeadlineType;
   triggerEvent?: string;
   notes?: string;
@@ -226,6 +245,8 @@ export interface Deadline {
   createdAt: Date;
   /** ID de l'événement Google Calendar si la deadline y est synchronisée. */
   googleEventId?: string;
+  /** ID du calendrier Google qui contient l'événement (par ex. le calendrier « Mylaw »). */
+  googleCalendarId?: string;
   /** Dernière synchronisation vers Google Calendar. */
   googleSyncedAt?: Date;
 }

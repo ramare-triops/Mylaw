@@ -8,9 +8,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 
 const AUTHZ_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+// Le scope `calendar` (et non plus `calendar.events`) est requis pour pouvoir
+// créer le calendrier dédié « Mylaw » dans le compte Google de l'utilisateur
+// la première fois qu'on y pousse une échéance.
 const SCOPES = [
   'https://www.googleapis.com/auth/tasks',
-  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/calendar',
 ].join(' ');
 
 function base64Url(buf: Buffer): string {
