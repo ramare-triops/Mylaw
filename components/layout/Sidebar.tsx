@@ -6,13 +6,11 @@ import {
   LayoutDashboard,
   Folder,
   Wrench,
-  FileText,
   Settings,
   ChevronsLeft,
   ChevronsRight,
   ChevronsUpDown,
   FileCode,
-  Sparkles,
   Calendar,
 } from 'lucide-react';
 import { useUIState } from '@/components/providers/UIStateProvider';
@@ -31,10 +29,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/',          label: 'Tableau de bord', icon: LayoutDashboard },
   { href: '/agenda',    label: 'Agenda',          icon: Calendar        },
   { href: '/dossiers',  label: 'Dossiers',        icon: Folder          },
-  { href: '/documents', label: 'Documents',       icon: FileText        },
   { href: '/tools',     label: 'Outils',          icon: Wrench          },
   { href: '/templates', label: 'Modèles',         icon: FileCode        },
-  { href: '/ai',        label: 'Assistant IA',    icon: Sparkles        },
   { href: '/settings',  label: 'Paramètres',      icon: Settings        },
 ];
 
