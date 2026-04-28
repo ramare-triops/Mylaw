@@ -49,6 +49,11 @@ export function exportInterestXlsx(args: {
     ['Nom du calcul', name],
     ['Dossier', dossierLabel ?? '—'],
     ['Profil créancier', result.creditorType === 'particulier' ? 'Particulier' : 'Professionnel'],
+    ['Capitalisation des intérêts',
+      result.capitalize
+        ? `Oui — à compter du ${result.capitalizationStartDate ? fmtDate(result.capitalizationStartDate) : '—'}`
+        : 'Non',
+    ],
     ['Calculé le', fmtDate(result.computedAt)],
     [],
     ['Capital total (€)', result.totalCapital],
@@ -80,11 +85,11 @@ export function exportInterestXlsx(args: {
 
   // Feuille 3 : détail des segments (par taux)
   const segHeader = [
-    'Poste', 'Du', 'Au', 'Année', 'Sem.', 'Jours', 'Taux', 'Intérêts (€)',
+    'Poste', 'Du', 'Au', 'Année', 'Sem.', 'Jours', 'Capital base (€)', 'Taux', 'Intérêts (€)', 'Capitalisé',
   ];
   const segRows: (string | number)[][] = [];
   result.items.forEach((it) => {
-    it.segments.forEach((s) => {
+    it.segments.forEach((s: any) => {
       segRows.push([
         it.label,
         fmtDate(s.from),
@@ -92,14 +97,17 @@ export function exportInterestXlsx(args: {
         s.year,
         s.semester === 1 ? 'S1' : 'S2',
         s.days,
+        s.capital ?? it.amount,
         fmtPercent(s.rate),
         s.interest,
+        s.capitalizedAfter ? 'Oui' : '',
       ]);
     });
   });
   const ws3 = XLSX.utils.aoa_to_sheet([segHeader, ...segRows]);
   ws3['!cols'] = [
-    { wch: 30 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 6 }, { wch: 8 }, { wch: 10 }, { wch: 14 },
+    { wch: 30 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 6 }, { wch: 8 },
+    { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 12 },
   ];
   XLSX.utils.book_append_sheet(wb, ws3, 'Détail');
 
@@ -154,15 +162,16 @@ function renderHtml(args: {
     .map((it) =>
       it.segments
         .map(
-          (s) => `
-        <tr>
+          (s: any) => `
+        <tr${s.capitalizedAfter ? ' class="cap"' : ''}>
           <td>${escapeHtml(it.label)}</td>
           <td>${fmtDate(s.from)}</td>
           <td>${fmtDate(s.to)}</td>
           <td>${s.year} ${s.semester === 1 ? 'S1' : 'S2'}</td>
           <td class="num">${s.days}</td>
+          <td class="num">${fmtMoney.format(s.capital ?? it.amount)}</td>
           <td class="num">${fmtPercent(s.rate)}</td>
-          <td class="num">${fmtMoney.format(s.interest)}</td>
+          <td class="num">${fmtMoney.format(s.interest)}${s.capitalizedAfter ? ' <small>↻ capitalisé</small>' : ''}</td>
         </tr>
       `,
         )
@@ -195,6 +204,11 @@ function renderHtml(args: {
   <div class="meta">
     ${dossierLabel ? `<div><strong>Dossier :</strong> ${escapeHtml(dossierLabel)}</div>` : ''}
     <div><strong>Profil créancier :</strong> ${result.creditorType === 'particulier' ? 'Particulier' : 'Professionnel'}</div>
+    ${
+      result.capitalize
+        ? `<div><strong>Capitalisation des intérêts :</strong> à compter du ${result.capitalizationStartDate ? fmtDate(result.capitalizationStartDate) : '—'} (art. 1343-2 du Code civil)</div>`
+        : ''
+    }
     <div><strong>Calculé le :</strong> ${fmtDate(result.computedAt)}</div>
   </div>
 
@@ -221,7 +235,7 @@ function renderHtml(args: {
   <h2>Détail par période de taux</h2>
   <table>
     <thead><tr>
-      <th>Poste</th><th>Du</th><th>Au</th><th>Période</th><th class="num">Jours</th><th class="num">Taux</th><th class="num">Intérêts</th>
+      <th>Poste</th><th>Du</th><th>Au</th><th>Période</th><th class="num">Jours</th><th class="num">Capital</th><th class="num">Taux</th><th class="num">Intérêts</th>
     </tr></thead>
     <tbody>${tableSegments}</tbody>
   </table>

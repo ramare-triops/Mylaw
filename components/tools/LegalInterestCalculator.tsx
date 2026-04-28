@@ -11,6 +11,7 @@ import {
   FileSpreadsheet,
   AlertTriangle,
   ArrowLeft,
+  CalendarClock,
 } from 'lucide-react';
 import { db } from '@/lib/db';
 import { cn } from '@/lib/utils';
@@ -115,6 +116,8 @@ function resultToSnapshot(r: InterestComputationResult): InterestResultSnapshot 
         semester: s.semester,
         rate: s.rate,
         days: s.days,
+        capital: s.capital,
+        capitalizedAfter: s.capitalizedAfter,
         interest: s.interest,
       })),
       interest: it.interest,
@@ -145,6 +148,8 @@ function snapshotToResult(s: InterestResultSnapshot): InterestComputationResult 
         semester: seg.semester,
         rate: seg.rate,
         days: seg.days,
+        capital: seg.capital ?? it.amount,
+        capitalizedAfter: seg.capitalizedAfter,
         interest: seg.interest,
         extrapolated: false,
       })),
@@ -216,7 +221,7 @@ function CalculatorList({
     const payload: InterestCalculation = {
       name,
       dossierId: dossier?.id,
-      creditorType: 'professionnel',
+      creditorType: 'particulier',
       items: [
         {
           id: uuid(),
@@ -226,6 +231,7 @@ function CalculatorList({
           endDate: today,
         },
       ],
+      capitalize: false,
       ratesSnapshot: LEGAL_INTEREST_RATES.map((r) => ({
         year: r.year,
         semester: r.semester,
@@ -420,8 +426,10 @@ function CalculatorDetail({
   onBack: () => void;
 }) {
   const [name, setName] = useState('');
-  const [creditorType, setCreditorType] = useState<CreditorType>('professionnel');
+  const [creditorType, setCreditorType] = useState<CreditorType>('particulier');
   const [drafts, setDrafts] = useState<DraftItem[]>([emptyDraft()]);
+  const [capitalize, setCapitalize] = useState(false);
+  const [capitalizationStartDate, setCapitalizationStartDate] = useState<string>('');
   const [result, setResult] = useState<InterestComputationResult | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -441,6 +449,12 @@ function CalculatorDetail({
       setDrafts(
         c.items.length > 0 ? c.items.map(recordToDraft) : [emptyDraft()],
       );
+      const cap = !!c.capitalize;
+      const capDate = c.capitalizationStartDate
+        ? ymd(new Date(c.capitalizationStartDate))
+        : '';
+      setCapitalize(cap);
+      setCapitalizationStartDate(capDate);
       // Recalcul automatique à l'ouverture (auto-update demandé par
       // le cahier des charges si la table de taux a évolué).
       const inputs = draftsToInputs(
@@ -448,7 +462,12 @@ function CalculatorDetail({
       );
       if (inputs.length > 0) {
         try {
-          setResult(computeAll(inputs, c.creditorType));
+          setResult(
+            computeAll(inputs, c.creditorType, {
+              capitalize: cap,
+              capitalizationStartDate: capDate ? parseYmd(capDate) : undefined,
+            }),
+          );
         } catch {
           setResult(c.result ? snapshotToResult(c.result) : null);
         }
@@ -490,7 +509,16 @@ function CalculatorDetail({
         return null;
       }
     }
-    const r = computeAll(inputs, creditorType);
+    if (capitalize && !capitalizationStartDate) {
+      setError("Indiquez la date à compter de laquelle la capitalisation est ordonnée.");
+      return null;
+    }
+    const r = computeAll(inputs, creditorType, {
+      capitalize,
+      capitalizationStartDate: capitalize && capitalizationStartDate
+        ? parseYmd(capitalizationStartDate)
+        : undefined,
+    });
     setResult(r);
     return r;
   }
@@ -511,6 +539,11 @@ function CalculatorDetail({
       name: name.trim() || `Calcul du ${now.toLocaleDateString('fr-FR')}`,
       creditorType,
       items,
+      capitalize,
+      capitalizationStartDate:
+        capitalize && capitalizationStartDate
+          ? parseYmd(capitalizationStartDate)
+          : undefined,
       result: resultToSnapshot(r),
       ratesSnapshot: LEGAL_INTEREST_RATES.map((rate) => ({
         year: rate.year,
@@ -591,7 +624,7 @@ function CalculatorDetail({
           className="inline-flex rounded-md overflow-hidden border"
           style={{ borderColor: 'var(--color-border)' }}
         >
-          {(['professionnel', 'particulier'] as CreditorType[]).map((t) => (
+          {(['particulier', 'professionnel'] as CreditorType[]).map((t) => (
             <button
               key={t}
               onClick={() => setCreditorType(t)}
@@ -602,7 +635,7 @@ function CalculatorDetail({
                   : 'bg-[var(--color-surface-raised)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
               )}
             >
-              {t === 'professionnel' ? 'Professionnel' : 'Particulier'}
+              {t === 'particulier' ? 'Particulier' : 'Professionnel'}
             </button>
           ))}
         </div>
@@ -610,6 +643,45 @@ function CalculatorDetail({
           Dernier taux officiel connu : {dernierTaux.year} S{dernierTaux.semester} ·{' '}
           {dernierTaux[creditorType].toFixed(2).replace('.', ',')} %
         </span>
+      </div>
+
+      {/* Capitalisation des intérêts (anatocisme — art. 1343-2 C. civ.) */}
+      <div
+        className="mb-3 rounded-md border px-3 py-2 flex items-center gap-3 flex-wrap"
+        style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
+      >
+        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={capitalize}
+            onChange={(e) => setCapitalize(e.target.checked)}
+            className="w-4 h-4 accent-[var(--color-primary)]"
+          />
+          <span style={{ color: 'var(--color-text)' }}>
+            Capitalisation des intérêts
+          </span>
+          <span
+            className="text-xs"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            (anatocisme — à cocher si ordonné par le juge)
+          </span>
+        </label>
+        {capitalize && (
+          <div className="flex items-center gap-2">
+            <CalendarClock size={13} style={{ color: 'var(--color-text-muted)' }} />
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              à compter du :
+            </span>
+            <input
+              type="date"
+              value={capitalizationStartDate}
+              onChange={(e) => setCapitalizationStartDate(e.target.value)}
+              className={lineInputCls}
+              style={{ width: 160 }}
+            />
+          </div>
+        )}
       </div>
 
       {/* Lignes */}
@@ -656,12 +728,25 @@ function CalculatorDetail({
               onChange={(e) => updateLine(d.id, { startDate: e.target.value })}
               className={lineInputCls}
             />
-            <input
-              type="date"
-              value={d.endDate}
-              onChange={(e) => updateLine(d.id, { endDate: e.target.value })}
-              className={lineInputCls}
-            />
+            <div className="flex items-center gap-1 min-w-0">
+              <input
+                type="date"
+                value={d.endDate}
+                onChange={(e) => updateLine(d.id, { endDate: e.target.value })}
+                className={cn(lineInputCls, 'flex-1 min-w-0')}
+              />
+              <button
+                onClick={() => updateLine(d.id, { endDate: ymd(new Date()) })}
+                title="Définir la date de fin sur aujourd'hui"
+                className={cn(
+                  'shrink-0 px-2 py-1 text-[11px] rounded-md',
+                  'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+                  'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]',
+                )}
+              >
+                Aujourd&apos;hui
+              </button>
+            </div>
             <button
               onClick={() => removeLine(d.id)}
               disabled={drafts.length === 1}
@@ -765,6 +850,7 @@ function CalculatorDetail({
                     <th className="text-left px-3 py-1.5">Au</th>
                     <th className="text-left px-3 py-1.5">Période</th>
                     <th className="text-right px-3 py-1.5">Jours</th>
+                    <th className="text-right px-3 py-1.5">Capital</th>
                     <th className="text-right px-3 py-1.5">Taux</th>
                     <th className="text-right px-3 py-1.5">Intérêts</th>
                   </tr>
@@ -790,10 +876,22 @@ function CalculatorDetail({
                           {s.days}
                         </td>
                         <td className="px-3 py-1.5 text-right tabular-nums">
+                          {fmtMoney.format(s.capital ?? it.amount)}
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">
                           {s.rate.toFixed(2).replace('.', ',')} %
                         </td>
                         <td className="px-3 py-1.5 text-right tabular-nums">
                           {fmtMoney.format(s.interest)}
+                          {s.capitalizedAfter && (
+                            <span
+                              className="ml-1 text-[10px] font-medium"
+                              style={{ color: 'var(--color-primary)' }}
+                              title="Intérêts capitalisés à la fin de cette période"
+                            >
+                              ↻
+                            </span>
+                          )}
                         </td>
                       </tr>
                     )),

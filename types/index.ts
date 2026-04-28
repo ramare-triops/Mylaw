@@ -776,6 +776,13 @@ export interface InterestSegmentSnapshot {
   semester: 1 | 2;
   rate: number;
   days: number;
+  /** Capital servant de base au calcul du segment (utile en cas de
+   *  capitalisation : il évolue d'année en année). */
+  capital?: number;
+  /** Vrai si le segment se termine sur un anniversaire de la date de
+   *  capitalisation : les intérêts cumulés depuis la dernière
+   *  capitalisation viennent d'être ajoutés au capital. */
+  capitalizedAfter?: boolean;
   interest: number;
 }
 
@@ -810,6 +817,15 @@ export interface InterestCalculation {
   creditorType: CreditorType;
   /** Lignes saisies par l'utilisateur. */
   items: InterestItemRecord[];
+  /**
+   * Capitalisation des intérêts (anatocisme — art. 1343-2 du Code
+   * civil) : à activer uniquement quand une décision de justice
+   * l'ordonne. Les intérêts accumulés au moins pour une année entière
+   * à compter de `capitalizationStartDate` sont alors ajoutés au
+   * capital à chaque anniversaire et produisent eux-mêmes intérêt.
+   */
+  capitalize?: boolean;
+  capitalizationStartDate?: Date;
   /** Résultat de la dernière exécution. */
   result?: InterestResultSnapshot;
   /** Snapshot des taux utilisés au moment du calcul. */
