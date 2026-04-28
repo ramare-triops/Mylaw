@@ -56,7 +56,6 @@ export function JotCard() {
   const [input, setInput] = useState('');
   const [connected, setConnected] = useState<boolean | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
 
   const jots = useLiveQuery(() => db.jots.toArray(), []);
@@ -206,7 +205,6 @@ export function JotCard() {
         }
       }
 
-      setLastSyncAt(new Date());
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Synchronisation échouée';
       setLastError(message);
@@ -270,7 +268,6 @@ export function JotCard() {
                 googleSyncedAt: new Date(),
               });
             }
-            setLastSyncAt(new Date());
           }
         } else {
           // On affiche un message explicite plutôt que d'avaler
@@ -341,7 +338,6 @@ export function JotCard() {
   async function handleDisconnect() {
     await fetch('/api/google-productivity/logout', { method: 'POST' });
     setConnected(false);
-    setLastSyncAt(null);
   }
 
   /**
@@ -481,13 +477,7 @@ export function JotCard() {
             ) : (
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
             )}
-            <span>
-              {syncing
-                ? 'Synchronisation avec MyLaw…'
-                : lastSyncAt
-                  ? `Synchronisé avec MyLaw · ${relativeTime(lastSyncAt)}`
-                  : 'Synchronisé avec la liste MyLaw'}
-            </span>
+            <span>{syncing ? 'Synchronisation avec MyLaw…' : 'Synchronisé'}</span>
           </>
         )}
       </div>
@@ -500,13 +490,3 @@ export function JotCard() {
   );
 }
 
-function relativeTime(date: Date): string {
-  const s = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (s < 10) return "à l'instant";
-  if (s < 60) return `il y a ${s} s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `il y a ${m} min`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `il y a ${h} h`;
-  return date.toLocaleString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-}
