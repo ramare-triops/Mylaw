@@ -147,11 +147,40 @@ export function DeadlineTracker() {
   const [filter, setFilter] = useState<'all' | 'upcoming' | 'done'>('upcoming');
   const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null);
   const [syncingId, setSyncingId] = useState<number | null>(null);
+  /**
+   * Vrai quand l'utilisateur est connecté à Google mais que son token n'a
+   * pas le scope `calendar` (full) requis pour créer le calendrier Mylaw.
+   * Cas typique : l'utilisateur s'était connecté avant l'introduction du
+   * calendrier dédié et son consentement initial ne couvrait que
+   * `calendar.events`. On l'invite alors à reconnecter Google Agenda.
+   */
+  const [reauthNeeded, setReauthNeeded] = useState(false);
 
   const checkCalendar = useCallback(async () => {
     try {
       const res = await fetch('/api/google-productivity/token');
       setCalendarConnected(res.ok);
+      // Si on est connecté mais qu'aucun id de calendrier n'est encore en
+      // cache, on tente de le résoudre maintenant pour détecter un scope
+      // OAuth insuffisant et proposer la reconnexion sans attendre la
+      // création d'un délai.
+      if (res.ok) {
+        const cached = await getSetting<string>(MYLAW_CAL_SETTING, '');
+        if (!cached) {
+          const probe = await fetch('/api/google-calendar/mylaw-calendar');
+          if (probe.status === 401 || probe.status === 403) {
+            setReauthNeeded(true);
+          } else if (probe.ok) {
+            const data = await probe.json().catch(() => null);
+            if (data?.calendarId) {
+              await setSetting(MYLAW_CAL_SETTING, data.calendarId as string);
+              setReauthNeeded(false);
+            }
+          }
+        } else {
+          setReauthNeeded(false);
+        }
+      }
     } catch {
       setCalendarConnected(false);
     }
@@ -162,12 +191,25 @@ export function DeadlineTracker() {
     void checkCalendar();
   }, [checkCalendar]);
 
-  // Retour OAuth : rafraîchir l'état de connexion.
+  // Retour OAuth : rafraîchir l'état de connexion. Si le user vient de se
+  // (re)connecter, on essaie immédiatement de résoudre le calendrier Mylaw
+  // pour basculer le flag `reauthNeeded` à false dès qu'il est accordé.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const sp = new URLSearchParams(window.location.search);
     if (sp.get('gprod')) {
+      const justConnected = sp.get('gprod') === 'connected';
       void checkCalendar();
+      if (justConnected) {
+        setReauthNeeded(false);
+        // Tente de résoudre / créer le calendrier Mylaw maintenant que le
+        // nouveau scope est accordé. Ne pas bloquer le rendu.
+        void (async () => {
+          const { id, reauth } = await ensureMylawCalendarId();
+          if (reauth) setReauthNeeded(true);
+          else if (!id) setReauthNeeded(false);
+        })();
+      }
       sp.delete('gprod');
       sp.delete('reason');
       const clean = sp.toString();
@@ -185,34 +227,64 @@ export function DeadlineTracker() {
   async function disconnectCalendar() {
     await fetch('/api/google-productivity/logout', { method: 'POST' });
     setCalendarConnected(false);
+    setReauthNeeded(false);
     // On oublie l'id du calendrier Mylaw : il sera re-résolu après re-connexion
     // (le calendrier côté Google subsiste mais on le retrouvera par son nom).
     await setSetting(MYLAW_CAL_SETTING, '');
   }
 
   /**
+   * Déconnecte puis relance immédiatement le flow OAuth, ce qui forcera
+   * Google à présenter à nouveau l'écran de consentement et à accorder le
+   * scope `calendar` (nécessaire pour créer le calendrier Mylaw).
+   */
+  async function reconnectCalendar() {
+    await fetch('/api/google-productivity/logout', { method: 'POST' });
+    await setSetting(MYLAW_CAL_SETTING, '');
+    connectCalendar();
+  }
+
+  /**
    * Résout (en cache) l'identifiant du calendrier « Mylaw » dans le compte
    * Google de l'utilisateur, en le créant si besoin. L'id est mémorisé dans
    * les settings pour ne pas l'interroger à chaque pousse d'événement.
+   *
+   * Renvoie `{ id, reauth }` :
+   *  - `id`     : id du calendrier (string) si tout va bien, sinon `null`.
+   *  - `reauth` : `true` si l'échec vient d'un scope OAuth insuffisant —
+   *               l'utilisateur doit reconnecter Google Agenda pour
+   *               accorder le scope complet `calendar`.
    */
-  async function ensureMylawCalendarId(): Promise<string | null> {
+  async function ensureMylawCalendarId(): Promise<{ id: string | null; reauth: boolean }> {
     const cached = await getSetting<string>(MYLAW_CAL_SETTING, '');
-    if (cached) return cached;
+    if (cached) return { id: cached, reauth: false };
     try {
       const res = await fetch('/api/google-calendar/mylaw-calendar');
-      if (!res.ok) return null;
+      if (res.status === 401 || res.status === 403) {
+        return { id: null, reauth: true };
+      }
+      if (!res.ok) return { id: null, reauth: false };
       const data = await res.json();
       const id = (data?.calendarId as string) || '';
       if (id) await setSetting(MYLAW_CAL_SETTING, id);
-      return id || null;
+      return { id: id || null, reauth: false };
     } catch {
-      return null;
+      return { id: null, reauth: false };
     }
   }
 
   async function pushToCalendar(dl: Deadline): Promise<{ eventId: string; calendarId: string } | null> {
     if (!calendarConnected) return null;
-    const calendarId = (await ensureMylawCalendarId()) ?? 'primary';
+    // Si on n'a pas un événement déjà rattaché à un calendrier (édition),
+    // on exige le calendrier Mylaw — on ne retombe PAS sur `primary` pour
+    // éviter de polluer l'agenda principal de l'utilisateur.
+    const targetCalendarId = dl.googleCalendarId || (await (async () => {
+      const { id, reauth } = await ensureMylawCalendarId();
+      if (reauth) setReauthNeeded(true);
+      return id;
+    })());
+    if (!targetCalendarId) return null;
+    const calendarId = targetCalendarId;
     const description = [
       dl.folder ? `Dossier : ${dl.folder}` : null,
       dl.typeLabel ? `Catégorie : ${dl.typeLabel}` : null,
@@ -661,6 +733,43 @@ export function DeadlineTracker() {
           </button>
         </div>
       </div>
+
+      {/* Bannière re-connexion : le user est connecté à Google mais avec
+          l'ancien scope `calendar.events`, qui n'autorise pas la création
+          du calendrier dédié « Mylaw ». On lui propose de se reconnecter
+          pour accorder le scope complet. */}
+      {calendarConnected && reauthNeeded && (
+        <div
+          className="flex items-center justify-between gap-3 px-6 py-3 border-b"
+          style={{
+            background: 'oklch(from var(--color-warning) l c h / 0.08)',
+            borderColor: 'var(--color-border)',
+            color: 'var(--color-text)',
+            fontSize: 'var(--text-sm)',
+          }}
+        >
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={14} style={{ color: 'var(--color-warning)' }} />
+            <span>
+              Reconnectez Google Agenda pour créer le calendrier dédié
+              « Mylaw » et y ranger vos délais (sinon ils sont ignorés).
+            </span>
+          </div>
+          <button
+            onClick={reconnectCalendar}
+            style={{
+              fontSize: 'var(--text-xs)',
+              padding: '4px 12px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--color-primary)',
+              color: '#fff',
+              fontWeight: 500,
+            }}
+          >
+            Reconnecter Google Agenda
+          </button>
+        </div>
+      )}
 
       {/* List */}
       <div className="flex-1 overflow-y-auto p-6">

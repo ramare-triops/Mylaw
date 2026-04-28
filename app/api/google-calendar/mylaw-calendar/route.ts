@@ -37,11 +37,21 @@ async function getAccessToken(req: NextRequest): Promise<string | null> {
   return tokens.access_token as string;
 }
 
-async function findMylawCalendar(access: string): Promise<string | null> {
+type ApiOutcome<T> =
+  | { ok: true; value: T }
+  | { ok: false; status: number; reason: 'insufficient_scope' | 'failed'; detail?: string };
+
+async function findMylawCalendar(access: string): Promise<ApiOutcome<string | null>> {
   const res = await fetch(CAL_LIST_URL, {
     headers: { Authorization: `Bearer ${access}` },
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, status: 403, reason: 'insufficient_scope', detail: text };
+    }
+    return { ok: false, status: res.status, reason: 'failed', detail: text };
+  }
   const data = await res.json();
   const items = Array.isArray(data?.items) ? data.items : [];
   const match = items.find(
@@ -49,10 +59,10 @@ async function findMylawCalendar(access: string): Promise<string | null> {
       typeof c?.summary === 'string' &&
       c.summary.trim().toLowerCase() === MYLAW_SUMMARY.toLowerCase(),
   );
-  return match?.id ?? null;
+  return { ok: true, value: match?.id ?? null };
 }
 
-async function createMylawCalendar(access: string): Promise<string | null> {
+async function createMylawCalendar(access: string): Promise<ApiOutcome<string>> {
   const res = await fetch(CAL_CREATE_URL, {
     method: 'POST',
     headers: {
@@ -65,9 +75,18 @@ async function createMylawCalendar(access: string): Promise<string | null> {
       timeZone: 'Europe/Paris',
     }),
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, status: 403, reason: 'insufficient_scope', detail: text };
+    }
+    return { ok: false, status: res.status, reason: 'failed', detail: text };
+  }
   const data = await res.json();
-  return data?.id ?? null;
+  if (!data?.id) {
+    return { ok: false, status: 500, reason: 'failed', detail: 'no_id' };
+  }
+  return { ok: true, value: data.id as string };
 }
 
 export async function GET(req: NextRequest) {
@@ -76,14 +95,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'not_connected' }, { status: 401 });
   }
 
-  const existing = await findMylawCalendar(access);
-  if (existing) {
-    return NextResponse.json({ calendarId: existing, created: false });
+  // 1) Recherche du calendrier déjà existant.
+  const found = await findMylawCalendar(access);
+  if (!found.ok) {
+    return NextResponse.json(
+      { error: found.reason, detail: found.detail },
+      { status: found.status },
+    );
+  }
+  if (found.value) {
+    return NextResponse.json({ calendarId: found.value, created: false });
   }
 
+  // 2) Sinon création.
   const created = await createMylawCalendar(access);
-  if (!created) {
-    return NextResponse.json({ error: 'calendar_create_failed' }, { status: 500 });
+  if (!created.ok) {
+    return NextResponse.json(
+      { error: created.reason, detail: created.detail },
+      { status: created.status },
+    );
   }
-  return NextResponse.json({ calendarId: created, created: true });
+  return NextResponse.json({ calendarId: created.value, created: true });
 }
