@@ -251,6 +251,7 @@ export function JotCard() {
     // Push immédiat vers Google Tasks si connecté.
     if (connected) {
       setSyncing(true);
+      setLastError(null);
       try {
         const res = await fetch('/api/google-tasks', {
           method: 'POST',
@@ -271,9 +272,25 @@ export function JotCard() {
             }
             setLastSyncAt(new Date());
           }
+        } else {
+          // On affiche un message explicite plutôt que d'avaler
+          // silencieusement l'erreur — c'est ce qui faisait croire
+          // à l'utilisateur que la tâche n'était pas envoyée alors
+          // qu'aucune trace n'était visible.
+          let info = '';
+          try {
+            const payload = await res.json();
+            info = payload?.detail ? ` (${payload.detail.slice(0, 120)})` : '';
+          } catch {
+            /* corps non JSON */
+          }
+          setLastError(
+            `Google Tasks a refusé l'ajout (HTTP ${res.status})${info}.`,
+          );
         }
-      } catch {
-        /* best-effort, la sync de fond rattrapera */
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Erreur réseau';
+        setLastError(`Synchronisation impossible : ${message}.`);
       } finally {
         setSyncing(false);
       }

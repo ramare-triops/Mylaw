@@ -116,46 +116,96 @@ async function getOrCreateMylawListId(
 async function resolveListIds(
   req: NextRequest,
   accessToken: string,
-): Promise<{ targetListId: string | null; mylawListId: string | null }> {
+): Promise<{ targetListId: string | null; mylawListId: string | null; cacheKey: string }> {
   const refreshToken = req.cookies.get(COOKIE_NAME)?.value ?? '';
   const cacheKey = refreshToken.slice(-24); // clé courte, unique par utilisateur
   const mylawListId = await getOrCreateMylawListId(accessToken, cacheKey);
   const override = req.nextUrl.searchParams.get('listId');
-  return { targetListId: override || mylawListId, mylawListId };
+  return { targetListId: override || mylawListId, mylawListId, cacheKey };
+}
+
+/**
+ * Exécute une opération HTTP contre l'API Tasks pour la liste MyLaw, avec
+ * une logique de retry-after-cache-invalidation : si la première tentative
+ * répond 404, c'est généralement parce que le cache mémoire pointe vers
+ * une liste qui a été supprimée côté Google entre-temps. On purge alors le
+ * cache, on re-résout l'ID (ce qui en re-crée une au besoin), et on rejoue
+ * une fois.
+ *
+ * Quand l'appelant a fourni un `?listId=` explicite (rétro-compat
+ * @default), on n'a pas le contrôle sur la liste cible — pas de retry.
+ */
+async function withListResolution(
+  req: NextRequest,
+  accessToken: string,
+  run: (listId: string) => Promise<Response>,
+): Promise<{ res: Response; mylawListId: string | null }> {
+  const override = req.nextUrl.searchParams.get('listId');
+  if (override) {
+    const res = await run(override);
+    return { res, mylawListId: null };
+  }
+  const { cacheKey } = await resolveListIds(req, accessToken);
+  let listId = await getOrCreateMylawListId(accessToken, cacheKey);
+  if (!listId) {
+    return {
+      res: new Response(JSON.stringify({ error: 'list_resolve_failed' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+      mylawListId: null,
+    };
+  }
+  let res = await run(listId);
+  if (res.status === 404) {
+    // Cache potentiellement obsolète : la liste a peut-être été
+    // supprimée manuellement dans Google Tasks. On l'invalide et on
+    // rejoue — `getOrCreateMylawListId` recrée la liste si besoin.
+    listIdCache.delete(cacheKey);
+    listId = await getOrCreateMylawListId(accessToken, cacheKey);
+    if (listId) {
+      res = await run(listId);
+    }
+  }
+  return { res, mylawListId: listId };
 }
 
 export async function GET(req: NextRequest) {
   const access = await getAccessToken(req);
   if (!access) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
-  const { targetListId, mylawListId } = await resolveListIds(req, access);
-  if (!targetListId) {
-    return NextResponse.json({ error: 'list_resolve_failed' }, { status: 500 });
-  }
+
   // Le client peut demander explicitement les tâches terminées pour
   // permettre la synchronisation bidirectionnelle (Google → Mylaw)
   // des cases cochées et des suppressions. Quand le paramètre est
   // présent, on remonte aussi les `hidden` (tâches que Google masque
-  // automatiquement après complétion). Default conservateur : on ne
-  // remonte que les tâches actives, pour ne pas changer le contrat
-  // historique des autres consommateurs.
+  // automatiquement après complétion).
   const showCompleted = req.nextUrl.searchParams.get('showCompleted') === 'true';
-  const url = new URL(tasksApi(targetListId));
-  url.searchParams.set('maxResults', '100');
-  if (showCompleted) {
-    url.searchParams.set('showCompleted', 'true');
-    url.searchParams.set('showHidden', 'true');
-    // On limite aux tâches mises à jour ces 14 derniers jours pour
-    // éviter de remonter une historique massive ; le client filtre
-    // ensuite à 7 jours pour l'affichage.
-    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-    url.searchParams.set('updatedMin', fourteenDaysAgo.toISOString());
-  } else {
-    url.searchParams.set('showCompleted', 'false');
-  }
-  const res = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${access}` },
+
+  const { res, mylawListId } = await withListResolution(req, access, async (listId) => {
+    const url = new URL(tasksApi(listId));
+    url.searchParams.set('maxResults', '100');
+    if (showCompleted) {
+      url.searchParams.set('showCompleted', 'true');
+      url.searchParams.set('showHidden', 'true');
+      // On limite aux tâches mises à jour ces 14 derniers jours pour
+      // éviter de remonter une historique massive ; le client filtre
+      // ensuite à 7 jours pour l'affichage.
+      const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+      url.searchParams.set('updatedMin', fourteenDaysAgo.toISOString());
+    } else {
+      url.searchParams.set('showCompleted', 'false');
+    }
+    return fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${access}` },
+    });
   });
-  if (!res.ok) return NextResponse.json({ error: 'tasks_fetch_failed' }, { status: res.status });
+
+  if (!res.ok) {
+    return NextResponse.json(
+      { error: 'tasks_fetch_failed', status: res.status },
+      { status: res.status },
+    );
+  }
   const data = await res.json();
   return NextResponse.json({ items: data.items ?? [], listId: mylawListId });
 }
@@ -167,16 +217,31 @@ export async function POST(req: NextRequest) {
   if (!title || !String(title).trim()) {
     return NextResponse.json({ error: 'title_required' }, { status: 400 });
   }
-  const { targetListId, mylawListId } = await resolveListIds(req, access);
-  if (!targetListId) {
-    return NextResponse.json({ error: 'list_resolve_failed' }, { status: 500 });
-  }
-  const res = await fetch(tasksApi(targetListId), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: String(title).trim(), notes: notes || undefined }),
+  const trimmedTitle = String(title).trim();
+
+  const { res, mylawListId } = await withListResolution(req, access, async (listId) => {
+    return fetch(tasksApi(listId), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: trimmedTitle, notes: notes || undefined }),
+    });
   });
-  if (!res.ok) return NextResponse.json({ error: 'tasks_create_failed' }, { status: res.status });
+
+  if (!res.ok) {
+    // On remonte le statut Google pour faciliter le débogage côté
+    // client (la carte affiche `lastError`). Sans ça, l'utilisateur
+    // ne voyait rien si la liste cible avait été supprimée.
+    let detail: string | undefined;
+    try {
+      detail = (await res.text()).slice(0, 500);
+    } catch {
+      /* ignore */
+    }
+    return NextResponse.json(
+      { error: 'tasks_create_failed', status: res.status, detail },
+      { status: res.status },
+    );
+  }
   const data = await res.json();
   return NextResponse.json({ task: data, listId: mylawListId });
 }
@@ -186,17 +251,22 @@ export async function PATCH(req: NextRequest) {
   if (!access) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
   const id = req.nextUrl.searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id_required' }, { status: 400 });
-  const { targetListId } = await resolveListIds(req, access);
-  if (!targetListId) {
-    return NextResponse.json({ error: 'list_resolve_failed' }, { status: 500 });
-  }
   const body = await req.json();
-  const res = await fetch(`${tasksApi(targetListId)}/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+
+  const { res } = await withListResolution(req, access, async (listId) => {
+    return fetch(`${tasksApi(listId)}/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
   });
-  if (!res.ok) return NextResponse.json({ error: 'tasks_update_failed' }, { status: res.status });
+
+  if (!res.ok) {
+    return NextResponse.json(
+      { error: 'tasks_update_failed', status: res.status },
+      { status: res.status },
+    );
+  }
   const data = await res.json();
   return NextResponse.json({ task: data });
 }
@@ -206,16 +276,19 @@ export async function DELETE(req: NextRequest) {
   if (!access) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
   const id = req.nextUrl.searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id_required' }, { status: 400 });
-  const { targetListId } = await resolveListIds(req, access);
-  if (!targetListId) {
-    return NextResponse.json({ error: 'list_resolve_failed' }, { status: 500 });
-  }
-  const res = await fetch(`${tasksApi(targetListId)}/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${access}` },
+
+  const { res } = await withListResolution(req, access, async (listId) => {
+    return fetch(`${tasksApi(listId)}/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${access}` },
+    });
   });
+
   if (!res.ok && res.status !== 204 && res.status !== 404) {
-    return NextResponse.json({ error: 'tasks_delete_failed' }, { status: res.status });
+    return NextResponse.json(
+      { error: 'tasks_delete_failed', status: res.status },
+      { status: res.status },
+    );
   }
   return NextResponse.json({ ok: true });
 }
