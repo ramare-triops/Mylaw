@@ -2,21 +2,56 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { StickyNote, Plus, Check, Trash2, Link as LinkIcon, X, CloudOff, Loader2 } from 'lucide-react';
+import {
+  ListTodo,
+  Plus,
+  Check,
+  Trash2,
+  Link as LinkIcon,
+  X,
+  CloudOff,
+  Loader2,
+} from 'lucide-react';
 import { db, saveJot, deleteJot, toggleJotDone } from '@/lib/db';
 import { Button, Card } from '@/components/ui';
 import type { Jot } from '@/types';
 
 /**
- * Jot / Quick note dashboard widget.
+ * Liste de tâches du tableau de bord.
  *
- * Saisie rapide stockée en IndexedDB et synchronisée en temps réel avec
- * une liste Google Tasks dédiée « MyLaw ». Le serveur se charge de créer
- * la liste si elle n'existe pas encore. Aucune action manuelle :
- *   - au montage, toutes les notes non synchronisées sont poussées ;
- *   - à l'ajout, la note part immédiatement vers Google ;
- *   - au toggle / suppression, la tâche distante est mise à jour.
+ * Persistance locale en IndexedDB + synchronisation bidirectionnelle
+ * avec une liste Google Tasks dédiée intitulée « MyLaw » :
+ *
+ *   - Push : ajout, complétion et suppression locales sont
+ *     immédiatement propagées vers Google.
+ *   - Pull : au montage, à chaque retour de focus / visibilité, et
+ *     toutes les 60 s tant que la page reste ouverte, on tire l'état
+ *     actuel de la liste Google (y compris tâches cochées des
+ *     14 derniers jours) et on réconcilie :
+ *       · si une tâche locale a un `googleTaskId` mais qu'elle n'est
+ *         plus présente côté Google → suppression locale (la tâche a
+ *         été supprimée depuis le téléphone) ;
+ *       · sinon on aligne `done`, `completedAt` et `content` sur ce
+ *         que dit Google.
+ *
+ * Affichage : tâches ouvertes + tâches terminées il y a moins de
+ * 7 jours, triées par date de création décroissante. Les tâches
+ * cochées plus anciennes restent en base mais disparaissent du widget.
  */
+
+/** Fenêtre de visibilité des tâches terminées, en millisecondes. */
+const DONE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** Cadence du pull périodique côté client. */
+const PULL_INTERVAL_MS = 60_000;
+
+interface RemoteTask {
+  id: string;
+  title?: string;
+  status?: 'needsAction' | 'completed';
+  completed?: string;
+  updated?: string;
+}
+
 export function JotCard() {
   const [input, setInput] = useState('');
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -55,6 +90,12 @@ export function JotCard() {
     }
   }, [checkConnection]);
 
+  /**
+   * Synchronisation complète, dans cet ordre :
+   *   1. Push des tâches locales sans `googleTaskId` (ajouts hors ligne).
+   *   2. Pull de la liste Google (actives + terminées des 14 derniers jours).
+   *   3. Réconciliation : alignement / suppression locale.
+   */
   const syncAll = useCallback(async () => {
     if (syncInFlight.current) return;
     syncInFlight.current = true;
@@ -62,7 +103,11 @@ export function JotCard() {
     setLastError(null);
     try {
       const rows = await db.jots.toArray();
-      const pending = rows.filter((j) => !j.googleTaskId && !j.done);
+
+      // ── Push des ajouts pas encore poussés ──────────────────────
+      const pending = rows.filter(
+        (j) => !j.googleTaskId && !j.done && !j.pendingDelete,
+      );
       for (const j of pending) {
         if (j.id == null) continue;
         const res = await fetch('/api/google-tasks', {
@@ -81,9 +126,90 @@ export function JotCard() {
           });
         }
       }
+
+      // ── Pull bidirectionnel ────────────────────────────────────
+      const pullRes = await fetch('/api/google-tasks?showCompleted=true');
+      if (pullRes.ok) {
+        const payload = await pullRes.json();
+        const remote: RemoteTask[] = payload.items ?? [];
+        const remoteListId: string | undefined = payload.listId;
+        const remoteById = new Map<string, RemoteTask>();
+        for (const t of remote) remoteById.set(t.id, t);
+
+        // 1. Mise à jour des tâches locales connues côté Google.
+        const fresh = await db.jots.toArray();
+        for (const local of fresh) {
+          if (!local.googleTaskId) continue;
+          const r = remoteById.get(local.googleTaskId);
+          if (!r) {
+            // Présente localement, absente de la fenêtre Google des
+            // 14 derniers jours → on la considère supprimée si elle
+            // était déjà cochée OU si elle n'a jamais été touchée
+            // depuis plus de 14 jours. Une tâche active manquante
+            // signifie « supprimée à distance » : suppression locale.
+            if (local.id != null) await deleteJot(local.id);
+            continue;
+          }
+          const remoteDone = r.status === 'completed';
+          const remoteCompletedAt = r.completed
+            ? new Date(r.completed)
+            : remoteDone
+              ? new Date()
+              : undefined;
+          const remoteContent = (r.title ?? '').trim();
+          const needsUpdate =
+            remoteDone !== local.done ||
+            (remoteContent && remoteContent !== local.content) ||
+            (remoteDone &&
+              remoteCompletedAt &&
+              (!local.completedAt ||
+                remoteCompletedAt.getTime() !== local.completedAt.getTime()));
+          if (needsUpdate) {
+            await saveJot({
+              ...local,
+              content: remoteContent || local.content,
+              done: remoteDone,
+              completedAt: remoteDone ? remoteCompletedAt : undefined,
+              googleSyncedAt: new Date(),
+            });
+          }
+        }
+
+        // 2. Tâches Google sans pendant local → import.
+        const knownRemoteIds = new Set(
+          fresh
+            .map((j) => j.googleTaskId)
+            .filter((s): s is string => Boolean(s)),
+        );
+        const cutoff = Date.now() - DONE_WINDOW_MS;
+        for (const r of remote) {
+          if (knownRemoteIds.has(r.id)) continue;
+          const remoteDone = r.status === 'completed';
+          const completedAt = r.completed ? new Date(r.completed) : undefined;
+          // Évite d'importer les vieilles tâches cochées hors fenêtre
+          // d'affichage : elles n'apparaîtront pas dans le widget de
+          // toute façon, et on ne veut pas polluer la base locale.
+          if (remoteDone && completedAt && completedAt.getTime() < cutoff) {
+            continue;
+          }
+          const now = new Date();
+          await saveJot({
+            content: (r.title ?? '').trim() || 'Sans titre',
+            done: remoteDone,
+            completedAt: remoteDone ? completedAt : undefined,
+            createdAt: r.updated ? new Date(r.updated) : now,
+            updatedAt: now,
+            googleTaskId: r.id,
+            googleTaskListId: remoteListId,
+            googleSyncedAt: now,
+          });
+        }
+      }
+
       setLastSyncAt(new Date());
-    } catch (err: any) {
-      setLastError(err?.message ?? 'Synchronisation échouée');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Synchronisation échouée';
+      setLastError(message);
     } finally {
       setSyncing(false);
       syncInFlight.current = false;
@@ -95,16 +221,24 @@ export function JotCard() {
     if (connected) void syncAll();
   }, [connected, syncAll]);
 
-  // Auto-sync périodique très léger : si la page reste ouverte et que de
-  // nouvelles notes sont ajoutées puis oubliées, on pousse en arrière-plan.
+  // Pull périodique + au retour de focus / visibilité — c'est ce qui
+  // permet à une coche faite sur le téléphone de remonter en quelques
+  // dizaines de secondes côté Mylaw.
   useEffect(() => {
-    if (!connected || !jots) return;
-    const unpushed = jots.some((j) => !j.googleTaskId && !j.done);
-    if (unpushed) {
-      const t = setTimeout(() => void syncAll(), 300);
-      return () => clearTimeout(t);
-    }
-  }, [jots, connected, syncAll]);
+    if (!connected) return;
+    const id = window.setInterval(() => void syncAll(), PULL_INTERVAL_MS);
+    const onFocus = () => void syncAll();
+    const onVisibility = () => {
+      if (!document.hidden) void syncAll();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [connected, syncAll]);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -138,8 +272,9 @@ export function JotCard() {
             setLastSyncAt(new Date());
           }
         }
-      } catch { /* best-effort, la sync de fond rattrapera */ }
-      finally {
+      } catch {
+        /* best-effort, la sync de fond rattrapera */
+      } finally {
         setSyncing(false);
       }
     }
@@ -160,7 +295,9 @@ export function JotCard() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: willBeDone ? 'completed' : 'needsAction' }),
         });
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
     }
   }
 
@@ -172,7 +309,9 @@ export function JotCard() {
       if (jot.googleTaskListId) url.searchParams.set('listId', jot.googleTaskListId);
       try {
         await fetch(url.toString(), { method: 'DELETE' });
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
     }
     await deleteJot(jot.id);
   }
@@ -188,7 +327,20 @@ export function JotCard() {
     setLastSyncAt(null);
   }
 
+  /**
+   * Tâches affichées : ouvertes + terminées il y a moins de 7 jours.
+   * Les tâches cochées plus anciennes restent en base (utile pour la
+   * réconciliation) mais sortent du widget pour ne pas l'encombrer.
+   */
+  const cutoff = Date.now() - DONE_WINDOW_MS;
   const visibleJots = (jots ?? [])
+    .filter((j) => {
+      if (!j.done) return true;
+      const t = j.completedAt
+        ? new Date(j.completedAt).getTime()
+        : new Date(j.updatedAt).getTime();
+      return t >= cutoff;
+    })
     .slice()
     .sort((a, b) => {
       if (a.done !== b.done) return a.done ? 1 : -1;
@@ -200,8 +352,8 @@ export function JotCard() {
     <Card
       title={
         <span className="inline-flex items-center gap-2">
-          <StickyNote className="w-4 h-4 text-[var(--color-primary)]" />
-          Jot — notes rapides
+          <ListTodo className="w-4 h-4 text-[var(--color-primary)]" />
+          Liste de tâches
         </span>
       }
       padding={0}
@@ -235,7 +387,7 @@ export function JotCard() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ajouter une note rapide…"
+            placeholder="Ajouter une tâche…"
             className="flex-1 bg-transparent text-sm text-[var(--fg-primary)] placeholder:text-[var(--fg-tertiary)] focus:outline-none"
           />
           {input.trim() && (
@@ -251,7 +403,7 @@ export function JotCard() {
           className="px-5 py-8 text-center text-[var(--fg-secondary)]"
           style={{ fontFamily: 'var(--font-serif)', fontSize: 15 }}
         >
-          Aucune note.
+          Aucune tâche.
         </div>
       ) : (
         visibleJots.map((j, i) => (
@@ -264,7 +416,7 @@ export function JotCard() {
           >
             <button
               onClick={() => handleToggle(j)}
-              aria-label={j.done ? 'Marquer non terminé' : 'Marquer terminé'}
+              aria-label={j.done ? 'Marquer non terminée' : 'Marquer terminée'}
               className={
                 'mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border ' +
                 (j.done
@@ -289,7 +441,7 @@ export function JotCard() {
             <button
               onClick={() => handleDelete(j)}
               className="opacity-0 group-hover:opacity-100 transition-opacity text-[var(--fg-tertiary)] hover:text-red-500"
-              aria-label="Supprimer la note"
+              aria-label="Supprimer la tâche"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -302,7 +454,7 @@ export function JotCard() {
         {connected === false && (
           <>
             <CloudOff className="h-3 w-3" />
-            Notes enregistrées localement uniquement.
+            Tâches enregistrées localement uniquement.
           </>
         )}
         {connected === true && (

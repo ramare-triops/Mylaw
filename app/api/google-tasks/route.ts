@@ -59,13 +59,34 @@ async function getOrCreateMylawListId(
   const cached = listIdCache.get(cacheKey);
   if (cached && Date.now() - cached.at < LIST_CACHE_TTL) return cached.id;
 
-  const listRes = await fetch(TASKLISTS_API, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!listRes.ok) return null;
-  const data = await listRes.json();
-  const existing = (data.items ?? []).find(
-    (l: any) => typeof l?.title === 'string' && l.title === MYLAW_LIST_TITLE,
+  // Pagination défensive : Google Tasks renvoie au max 100 listes par
+  // page. Inutile en pratique mais garantit qu'on ne crée pas de
+  // doublon parce que la liste « MyLaw » serait sur la page 2.
+  let pageToken: string | undefined;
+  const allLists: { id?: string; title?: string }[] = [];
+  for (let i = 0; i < 5; i++) {
+    const url = new URL(TASKLISTS_API);
+    url.searchParams.set('maxResults', '100');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const listRes = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!listRes.ok) return null;
+    const data = await listRes.json();
+    for (const item of data.items ?? []) allLists.push(item);
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+
+  // Match insensible à la casse + trim. On a vu apparaître chez des
+  // utilisateurs des listes « Mylaw », « MyLaw » ou « MyLaw  » (avec
+  // espace final) : sans normalisation, le `===` strict d'origine
+  // échouait et on créait une nouvelle liste à chaque ajout.
+  const target = MYLAW_LIST_TITLE.trim().toLowerCase();
+  const existing = allLists.find(
+    (l) =>
+      typeof l?.title === 'string' &&
+      l.title.trim().toLowerCase() === target,
   );
   if (existing?.id) {
     listIdCache.set(cacheKey, { id: existing.id, at: Date.now() });
@@ -110,7 +131,28 @@ export async function GET(req: NextRequest) {
   if (!targetListId) {
     return NextResponse.json({ error: 'list_resolve_failed' }, { status: 500 });
   }
-  const res = await fetch(`${tasksApi(targetListId)}?maxResults=20&showCompleted=false`, {
+  // Le client peut demander explicitement les tâches terminées pour
+  // permettre la synchronisation bidirectionnelle (Google → Mylaw)
+  // des cases cochées et des suppressions. Quand le paramètre est
+  // présent, on remonte aussi les `hidden` (tâches que Google masque
+  // automatiquement après complétion). Default conservateur : on ne
+  // remonte que les tâches actives, pour ne pas changer le contrat
+  // historique des autres consommateurs.
+  const showCompleted = req.nextUrl.searchParams.get('showCompleted') === 'true';
+  const url = new URL(tasksApi(targetListId));
+  url.searchParams.set('maxResults', '100');
+  if (showCompleted) {
+    url.searchParams.set('showCompleted', 'true');
+    url.searchParams.set('showHidden', 'true');
+    // On limite aux tâches mises à jour ces 14 derniers jours pour
+    // éviter de remonter une historique massive ; le client filtre
+    // ensuite à 7 jours pour l'affichage.
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    url.searchParams.set('updatedMin', fourteenDaysAgo.toISOString());
+  } else {
+    url.searchParams.set('showCompleted', 'false');
+  }
+  const res = await fetch(url.toString(), {
     headers: { Authorization: `Bearer ${access}` },
   });
   if (!res.ok) return NextResponse.json({ error: 'tasks_fetch_failed' }, { status: res.status });

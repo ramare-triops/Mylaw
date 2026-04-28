@@ -239,12 +239,26 @@ export interface Jot {
   done: boolean;
   createdAt: Date;
   updatedAt: Date;
+  /**
+   * Horodatage du passage en « terminé ». Sert à filtrer les tâches
+   * encore visibles dans le widget — seules les tâches cochées il y a
+   * moins de 7 jours restent affichées. Renseigné à chaque toggle
+   * vers `done=true`, effacé au passage à `done=false`.
+   */
+  completedAt?: Date;
   /** Identifiant de la tâche Google Tasks liée, si synchronisée. */
   googleTaskId?: string;
   /** Identifiant de la liste Google Tasks (généralement '@default'). */
   googleTaskListId?: string;
   /** Dernier push vers Google Tasks. */
   googleSyncedAt?: Date;
+  /**
+   * Tombstone : tâche supprimée localement mais qui reste à
+   * propager vers Google Tasks lors de la prochaine synchronisation.
+   * Une fois la suppression confirmée côté Google, l'enregistrement
+   * est purgé.
+   */
+  pendingDelete?: boolean;
 }
 
 // ─── UI State ──────────────────────────────────────────────────────────────

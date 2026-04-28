@@ -955,5 +955,14 @@ export async function deleteJot(id: number): Promise<void> {
 export async function toggleJotDone(id: number): Promise<void> {
   const j = await db.jots.get(id);
   if (!j) return;
-  await db.jots.update(id, { done: !j.done, updatedAt: new Date() });
+  const willBeDone = !j.done;
+  const now = new Date();
+  // On enregistre `completedAt` au passage en terminé pour pouvoir
+  // appliquer la fenêtre de visibilité à 7 jours côté UI. Au retour
+  // en `needsAction`, on l'efface.
+  await db.jots.update(id, {
+    done: willBeDone,
+    updatedAt: now,
+    completedAt: willBeDone ? now : undefined,
+  });
 }
