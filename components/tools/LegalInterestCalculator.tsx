@@ -801,26 +801,6 @@ function CalculatorDetail({
 
       {result && (
         <div className="mt-5">
-          {result.hasExtrapolation && (
-            <div
-              className="mb-3 px-3 py-2 rounded-md text-sm flex items-start gap-2"
-              style={{
-                background: 'oklch(from var(--color-warning) l c h / 0.08)',
-                color: 'var(--color-text)',
-              }}
-            >
-              <AlertTriangle
-                size={14}
-                style={{ color: 'var(--color-warning)', marginTop: 2 }}
-              />
-              <span>
-                Au moins une période s'étend au-delà du dernier taux officiel
-                publié. Le calcul applique le dernier taux connu — à
-                vérifier dès la publication du nouvel arrêté.
-              </span>
-            </div>
-          )}
-
           <div className="grid grid-cols-3 gap-3">
             <Stat label="Capital total" value={fmtMoney.format(result.totalCapital)} />
             <Stat label="Intérêts totaux" value={fmtMoney.format(result.totalInterest)} />
