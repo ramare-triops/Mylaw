@@ -14,6 +14,8 @@ import {
   PauseCircle,
   PlayCircle,
   Clock,
+  Wrench,
+  CalendarPlus,
 } from 'lucide-react';
 import { db, saveDossier } from '@/lib/db';
 import { cn, formatDate } from '@/lib/utils';
@@ -23,8 +25,11 @@ import { NewDossierDialog } from './NewDossierDialog';
 import { PendingStatusDialog } from './PendingStatusDialog';
 import { DossierDocumentsTab } from './tabs/DossierDocumentsTab';
 import { DossierContactsTab } from './tabs/DossierContactsTab';
+import { DossierToolsTab } from './tabs/DossierToolsTab';
 import { DossierFinanceTab } from './tabs/DossierFinanceTab';
 import { DossierAuditTab } from './tabs/DossierAuditTab';
+import { DeadlineDialog, type DeadlineDraft } from '@/components/tools/DeadlineDialog';
+import { createDeadlineFromDraft } from '@/lib/deadlines';
 import {
   DOSSIER_TYPE_LABELS,
   DOSSIER_STATUS_LABELS,
@@ -32,11 +37,12 @@ import {
 } from './labels';
 import type { Dossier } from '@/types';
 
-type TabKey = 'documents' | 'contacts' | 'finance' | 'audit';
+type TabKey = 'documents' | 'contacts' | 'tools' | 'finance' | 'audit';
 
 const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: 'documents', label: 'Documents', icon: FileText },
   { key: 'contacts', label: 'Intervenants', icon: Users },
+  { key: 'tools', label: 'Outils', icon: Wrench },
   { key: 'finance', label: 'Finances', icon: Euro },
   { key: 'audit', label: 'Journal', icon: History },
 ];
@@ -51,6 +57,7 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
   const [activeTab, setActiveTab] = useState<TabKey>('documents');
   const [editOpen, setEditOpen] = useState(false);
   const [pendingOpen, setPendingOpen] = useState(false);
+  const [deadlineOpen, setDeadlineOpen] = useState(false);
 
   if (!dossier) return null;
 
@@ -165,9 +172,19 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
                     </>
                   ) : (
                     <>
-                      <PauseCircle className="w-3.5 h-3.5" /> Mettre en attente
+                      <PauseCircle className="w-3.5 h-3.5" /> En attente
                     </>
                   )}
+                </button>
+                <button
+                  onClick={() => setDeadlineOpen(true)}
+                  title="Ajouter un délai pour ce dossier"
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border transition-colors',
+                    'bg-[var(--color-primary)] border-[var(--color-primary)] text-white hover:opacity-90',
+                  )}
+                >
+                  <CalendarPlus className="w-3.5 h-3.5" /> Ajouter un délai
                 </button>
                 <button
                   onClick={() => setEditOpen(true)}
@@ -239,6 +256,7 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
             {activeTab === 'contacts' && (
               <DossierContactsTab dossier={dossier} />
             )}
+            {activeTab === 'tools' && <DossierToolsTab dossier={dossier} />}
             {activeTab === 'finance' && (
               <DossierFinanceTab dossier={dossier} />
             )}
@@ -259,6 +277,23 @@ export function DossierDetail({ dossierId }: { dossierId: number }) {
         dossier={dossier}
         onClose={() => setPendingOpen(false)}
         onConfirm={togglePending}
+      />
+
+      <DeadlineDialog
+        open={deadlineOpen}
+        editing={false}
+        initial={{
+          dossier: dossier.reference
+            ? `${dossier.reference} — ${dossier.name}`
+            : dossier.name,
+          dossierId: dossier.id,
+          category: 'autre',
+        }}
+        onClose={() => setDeadlineOpen(false)}
+        onSave={async (draft: DeadlineDraft) => {
+          await createDeadlineFromDraft(draft);
+          setDeadlineOpen(false);
+        }}
       />
     </>
   );
