@@ -75,8 +75,10 @@ interface DraftItem {
 }
 
 function emptyDraft(): DraftItem {
-  const today = ymd(new Date());
-  return { id: uuid(), label: '', amount: '', startDate: today, endDate: today };
+  // Volontairement laissées vides : l'utilisateur saisit ses dates,
+  // ce qui permet aussi à la pastille de recopie inter-lignes
+  // d'apparaître quand une ligne au-dessus a déjà la valeur.
+  return { id: uuid(), label: '', amount: '', startDate: '', endDate: '' };
 }
 
 function recordToDraft(r: InterestItemRecord): DraftItem {
@@ -219,20 +221,14 @@ function CalculatorList({
   async function createCalc() {
     const name = draftName.trim() || `Calcul du ${new Date().toLocaleDateString('fr-FR')}`;
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // Aucun item pré-saisi : l'éditeur affichera une ligne vide à l'ouverture
+    // (cf. CalculatorDetail). Évite d'avoir des dates « par défaut »
+    // qui empêchaient la pastille de recopie de fonctionner.
     const payload: InterestCalculation = {
       name,
       dossierId: dossier?.id,
       creditorType: 'particulier',
-      items: [
-        {
-          id: uuid(),
-          label: '',
-          amount: 0,
-          startDate: today,
-          endDate: today,
-        },
-      ],
+      items: [],
       capitalize: false,
       ratesSnapshot: LEGAL_INTEREST_RATES.map((r) => ({
         year: r.year,
@@ -767,6 +763,9 @@ function CalculatorDetail({
                 value={d.startDate}
                 onChange={(e) => updateLine(d.id, { startDate: e.target.value })}
                 className={lineInputCls}
+                style={{
+                  color: d.startDate ? 'var(--color-text)' : 'var(--color-text-muted)',
+                }}
               />
               <div className="flex items-center gap-1 min-w-0">
                 <input
@@ -774,6 +773,9 @@ function CalculatorDetail({
                   value={d.endDate}
                   onChange={(e) => updateLine(d.id, { endDate: e.target.value })}
                   className={cn(lineInputCls, 'flex-1 min-w-0')}
+                  style={{
+                    color: d.endDate ? 'var(--color-text)' : 'var(--color-text-muted)',
+                  }}
                 />
                 <button
                   onClick={() => updateLine(d.id, { endDate: ymd(new Date()) })}
@@ -1044,8 +1046,10 @@ function LineConnector({
   ];
   return (
     <div
-      className="grid grid-cols-[1.6fr_1fr_1fr_1fr_auto] gap-2 px-3 -my-1"
-      aria-hidden={false}
+      // Hauteur fixe : la barre intercalaire occupe toujours la même
+      // place, qu'il y ait des pastilles à afficher ou non. Évite les
+      // sauts de mise en page selon le contenu.
+      className="grid grid-cols-[1.6fr_1fr_1fr_1fr_auto] gap-2 px-3 h-5 items-center"
     >
       {fields.map((f) => {
         const aFilled = !!prev[f.key];
@@ -1059,7 +1063,7 @@ function LineConnector({
                 title={`Recopier ${f.label} dans la ligne vide`}
                 className={cn(
                   'flex items-center justify-center rounded-full',
-                  'w-5 h-5 -my-0.5',
+                  'w-5 h-5',
                   'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
                   'text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]',
                 )}
