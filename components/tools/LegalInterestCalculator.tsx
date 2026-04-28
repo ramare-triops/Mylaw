@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Calculator,
@@ -12,6 +12,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   CalendarClock,
+  Copy,
+  ArrowDownUp,
 } from 'lucide-react';
 import { db } from '@/lib/db';
 import { cn } from '@/lib/utils';
@@ -491,6 +493,36 @@ function CalculatorDetail({
   function updateLine(id: string, patch: Partial<DraftItem>) {
     setDrafts((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
   }
+  /** Duplique la ligne juste en dessous, avec un nouvel identifiant. */
+  function duplicateLine(id: string) {
+    setDrafts((prev) => {
+      const idx = prev.findIndex((d) => d.id === id);
+      if (idx < 0) return prev;
+      const copy: DraftItem = { ...prev[idx], id: uuid() };
+      return [...prev.slice(0, idx + 1), copy, ...prev.slice(idx + 1)];
+    });
+  }
+  /**
+   * Recopie la valeur d'un champ entre deux lignes adjacentes (idx et
+   * idx + 1) lorsque l'une des deux est vide. Si elles sont toutes les
+   * deux remplies (ou toutes les deux vides), le bouton n'est de
+   * toute façon pas affiché.
+   */
+  function copyBetweenLines(idx: number, key: keyof DraftItem) {
+    setDrafts((prev) => {
+      if (idx < 0 || idx >= prev.length - 1) return prev;
+      const a = prev[idx];
+      const b = prev[idx + 1];
+      const aFilled = !!a[key];
+      const bFilled = !!b[key];
+      if (aFilled === bFilled) return prev; // les deux pleins ou les deux vides
+      return prev.map((d, i) => {
+        if (aFilled && i === idx + 1) return { ...d, [key]: a[key] };
+        if (bFilled && i === idx) return { ...d, [key]: b[key] };
+        return d;
+      });
+    });
+  }
 
   function compute(): InterestComputationResult | null {
     setError(null);
@@ -678,7 +710,15 @@ function CalculatorDetail({
               value={capitalizationStartDate}
               onChange={(e) => setCapitalizationStartDate(e.target.value)}
               className={lineInputCls}
-              style={{ width: 160 }}
+              style={{
+                width: 160,
+                // Tant que l'utilisateur n'a pas choisi de date, le format
+                // « jj/mm/aaaa » du champ s'affiche en couleur estompée
+                // pour ressembler à un placeholder.
+                color: capitalizationStartDate
+                  ? 'var(--color-text)'
+                  : 'var(--color-text-muted)',
+              }}
             />
           </div>
         )}
@@ -699,68 +739,88 @@ function CalculatorDetail({
           <div>Date de fin</div>
           <div></div>
         </div>
-        {drafts.map((d) => (
-          <div
-            key={d.id}
-            className="grid grid-cols-[1.6fr_1fr_1fr_1fr_auto] gap-2 px-3 py-2 border-t items-center"
-            style={{ borderColor: 'var(--color-border)' }}
-          >
-            <input
-              type="text"
-              value={d.label}
-              onChange={(e) => updateLine(d.id, { label: e.target.value })}
-              placeholder="Ex. Capital dû, Indemnité, Solde…"
-              className={lineInputCls}
-            />
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              min="0"
-              value={d.amount}
-              onChange={(e) => updateLine(d.id, { amount: e.target.value })}
-              placeholder="0,00"
-              className={lineInputCls}
-            />
-            <input
-              type="date"
-              value={d.startDate}
-              onChange={(e) => updateLine(d.id, { startDate: e.target.value })}
-              className={lineInputCls}
-            />
-            <div className="flex items-center gap-1 min-w-0">
+        {drafts.map((d, idx) => (
+          <Fragment key={d.id}>
+            <div
+              className="grid grid-cols-[1.6fr_1fr_1fr_1fr_auto] gap-2 px-3 py-2 border-t items-center"
+              style={{ borderColor: 'var(--color-border)' }}
+            >
+              <input
+                type="text"
+                value={d.label}
+                onChange={(e) => updateLine(d.id, { label: e.target.value })}
+                placeholder="Ex. Capital dû, Indemnité, Solde…"
+                className={lineInputCls}
+              />
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                value={d.amount}
+                onChange={(e) => updateLine(d.id, { amount: e.target.value })}
+                placeholder="0,00"
+                className={lineInputCls}
+              />
               <input
                 type="date"
-                value={d.endDate}
-                onChange={(e) => updateLine(d.id, { endDate: e.target.value })}
-                className={cn(lineInputCls, 'flex-1 min-w-0')}
+                value={d.startDate}
+                onChange={(e) => updateLine(d.id, { startDate: e.target.value })}
+                className={lineInputCls}
               />
-              <button
-                onClick={() => updateLine(d.id, { endDate: ymd(new Date()) })}
-                title="Définir la date de fin sur aujourd'hui"
-                className={cn(
-                  'shrink-0 px-2 py-1 text-[11px] rounded-md',
-                  'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-                  'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]',
-                )}
-              >
-                Aujourd&apos;hui
-              </button>
+              <div className="flex items-center gap-1 min-w-0">
+                <input
+                  type="date"
+                  value={d.endDate}
+                  onChange={(e) => updateLine(d.id, { endDate: e.target.value })}
+                  className={cn(lineInputCls, 'flex-1 min-w-0')}
+                />
+                <button
+                  onClick={() => updateLine(d.id, { endDate: ymd(new Date()) })}
+                  title="Définir la date de fin sur aujourd'hui"
+                  className={cn(
+                    'shrink-0 px-2 py-1 text-[11px] rounded-md',
+                    'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+                    'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]',
+                  )}
+                >
+                  Aujourd&apos;hui
+                </button>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => duplicateLine(d.id)}
+                  title="Dupliquer la ligne"
+                  className={cn(
+                    'p-1.5 rounded-md',
+                    'text-[var(--color-text-muted)] hover:text-[var(--color-primary)]',
+                  )}
+                >
+                  <Copy size={14} />
+                </button>
+                <button
+                  onClick={() => removeLine(d.id)}
+                  disabled={drafts.length === 1}
+                  title="Supprimer la ligne"
+                  className={cn(
+                    'p-1.5 rounded-md',
+                    drafts.length === 1
+                      ? 'text-[var(--color-text-faint)] cursor-not-allowed'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-error)]',
+                  )}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             </div>
-            <button
-              onClick={() => removeLine(d.id)}
-              disabled={drafts.length === 1}
-              title="Supprimer la ligne"
-              className={cn(
-                'p-1.5 rounded-md',
-                drafts.length === 1
-                  ? 'text-[var(--color-text-faint)] cursor-not-allowed'
-                  : 'text-[var(--color-text-muted)] hover:text-[var(--color-error)]',
-              )}
-            >
-              <Trash2 size={14} />
-            </button>
-          </div>
+            {idx < drafts.length - 1 && (
+              <LineConnector
+                prev={d}
+                next={drafts[idx + 1]}
+                onCopy={(key) => copyBetweenLines(idx, key)}
+              />
+            )}
+          </Fragment>
         ))}
         <div
           className="px-3 py-2 border-t flex items-center justify-between"
@@ -959,3 +1019,59 @@ const lineInputCls = cn(
   'text-[var(--color-text)]',
   'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
 );
+
+/**
+ * Petite barre intercalaire entre deux lignes adjacentes : pour chaque
+ * colonne (poste, capital, date de départ, date de fin), une icône de
+ * recopie apparaît si exactement l'une des deux cellules est remplie.
+ * Cliquer recopie la valeur dans la cellule vide. Si les deux sont
+ * remplies (ou les deux vides), aucune icône n'est affichée.
+ */
+function LineConnector({
+  prev,
+  next,
+  onCopy,
+}: {
+  prev: DraftItem;
+  next: DraftItem;
+  onCopy: (key: keyof DraftItem) => void;
+}) {
+  const fields: { key: keyof DraftItem; label: string }[] = [
+    { key: 'label', label: 'le poste' },
+    { key: 'amount', label: 'le capital' },
+    { key: 'startDate', label: 'la date de départ' },
+    { key: 'endDate', label: 'la date de fin' },
+  ];
+  return (
+    <div
+      className="grid grid-cols-[1.6fr_1fr_1fr_1fr_auto] gap-2 px-3 -my-1"
+      aria-hidden={false}
+    >
+      {fields.map((f) => {
+        const aFilled = !!prev[f.key];
+        const bFilled = !!next[f.key];
+        const visible = aFilled !== bFilled;
+        return (
+          <div key={f.key} className="flex justify-center">
+            {visible && (
+              <button
+                onClick={() => onCopy(f.key)}
+                title={`Recopier ${f.label} dans la ligne vide`}
+                className={cn(
+                  'flex items-center justify-center rounded-full',
+                  'w-5 h-5 -my-0.5',
+                  'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+                  'text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]',
+                )}
+              >
+                <ArrowDownUp size={11} />
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {/* Spacer pour la colonne d'actions (aligne la grille). */}
+      <div />
+    </div>
+  );
+}
