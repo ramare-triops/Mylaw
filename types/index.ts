@@ -43,17 +43,6 @@ export interface Document {
   variables?: Record<string, string>;
   templateId?: number;
   sourceFile?: string;
-  /**
-   * Contenu binaire optionnel : utilisé par les outils qui produisent
-   * des fichiers (par exemple les pièces tamponnées générées par
-   * l'outil bordereau de pièces). Lorsqu'il est présent, le document
-   * est consommé/affiché à partir du blob plutôt que du `content`
-   * HTML. Ce champ N'est PAS synchronisé via Google Drive (trop
-   * lourd) et reste local à l'appareil.
-   */
-  fileBlob?: Blob;
-  /** Type MIME associé au `fileBlob` (ex. application/pdf). */
-  fileMimeType?: string;
   createdAt: Date;
   updatedAt: Date;
   wordCount: number;
@@ -904,8 +893,15 @@ export interface StampSettings {
   imageMimeType?: 'image/png' | 'image/svg+xml' | 'image/jpeg';
   /** Police utilisée pour écrire le numéro de pièce. */
   font: StampFont;
-  /** Taille relative du tampon (par rapport à la largeur de page). */
+  /** Taille de l'image du sceau (relative à la largeur de page). */
   size: StampSize;
+  /**
+   * Taille du numéro inscrit au centre du sceau (relative à la
+   * largeur de page). Indépendante de la taille de l'image, ce
+   * qui permet par exemple un grand sceau avec un numéro plus
+   * discret, ou l'inverse.
+   */
+  textSize?: StampSize;
   /** Position du tampon sur la page. */
   position: StampPosition;
   /** Couleur du numéro de pièce (hex, ex. #d22). */
@@ -956,14 +952,16 @@ export interface Bordereau {
    *  ou numérotation libre saisie par l'utilisateur. */
   autoNumbering: boolean;
   /**
-   * Identifiants des Documents PDF générés par la dernière exécution
-   * de « Générer le bordereau ». Permet de les supprimer en bloc via
-   * le bouton « Supprimer le bordereau » sans toucher au projet.
+   * Identifiants des pièces jointes (table `attachments`) générées
+   * par la dernière exécution de « Générer le bordereau ». Les PDF
+   * tamponnés sont stockés comme Attachments du dossier afin de
+   * s'ouvrir directement comme PDF (et non dans l'éditeur Tiptap).
+   * Permet de les supprimer en bloc via « Supprimer le bordereau ».
    */
-  generatedDocumentIds?: number[];
-  /** Identifiant du Document PDF récapitulatif (bordereau de
-   *  communication) généré, le cas échéant. */
-  generatedRecapDocumentId?: number;
+  generatedAttachmentIds?: number[];
+  /** Identifiant de la pièce jointe « bordereau de communication de
+   *  pièces » récapitulative, générée à la dernière exécution. */
+  generatedRecapAttachmentId?: number;
   /** Date de la dernière génération réussie. */
   lastGeneratedAt?: Date;
   createdAt: Date;

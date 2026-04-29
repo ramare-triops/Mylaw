@@ -1,19 +1,24 @@
 /**
- * Conversion HTML → pages PDF via la technique du `<foreignObject>`
- * SVG : on dessine le HTML dans un SVG sérialisé, on rend ce SVG dans
- * un canvas, puis on embarque le PNG résultant dans un `PDFDocument`
- * pdf-lib. La pagination est gérée en découpant le rendu vertical en
- * tranches A4.
+ * Conversion HTML → pages PDF.
  *
- * Cette technique :
- *   - ne nécessite aucune dépendance supplémentaire (html2canvas etc.) ;
- *   - rend correctement les styles inline (mammoth en produit beaucoup) ;
- *   - n'est PAS pixel-perfect sur des CSS complexes (positionnement,
- *     fontes externes, en-têtes/pieds de page) — voir limitations
- *     mentionnées dans le plan.
+ * Le rendu utilise `html2canvas` (présent dans les dépendances) plutôt
+ * que la technique du `<foreignObject>` SVG : cette dernière fait
+ * tainter le canvas dans Chrome dès que le HTML embarque la moindre
+ * ressource (image, certaines polices ou simplement un attribut SVG
+ * particulier). `html2canvas` clone le DOM et le redessine élément
+ * par élément, sans passer par un Blob image, donc sans taint.
+ *
+ * Limitations connues (best-effort, comme convenu) :
+ *   - les polices custom ne sont pas embarquées dans le PDF ;
+ *   - les images cross-origin sans CORS sont remplacées par un cadre
+ *     vide ;
+ *   - les sauts de page logiques ne sont pas honorés (la pagination
+ *     est simplement géométrique : on découpe verticalement en pages
+ *     A4).
  */
 
 import { PDFDocument, type PDFImage } from 'pdf-lib';
+import html2canvas from 'html2canvas';
 
 /** A4 en points PDF (1 pt = 1/72 in). */
 export const A4_WIDTH_PT = 595;
@@ -25,23 +30,28 @@ const RENDER_SCALE = 2;
 const PT_TO_PX = 96 / 72;
 
 /**
- * Style minimaliste ajouté à chaque tranche de rendu pour donner un
- * rendu correct aux DOCX convertis par mammoth (qui n'apporte pas
- * beaucoup de styles).
+ * Style minimaliste appliqué au wrapper. Ces règles couvrent le HTML
+ * produit par mammoth (DOCX) et celui produit par Tiptap (brouillons).
  */
 const BASE_CSS = `
-  body { margin: 0; padding: 0; font-family: 'Times New Roman', Times, serif; font-size: 11pt; line-height: 1.5; color: #111; }
-  h1, h2, h3, h4, h5, h6 { font-weight: 600; line-height: 1.25; margin: 0.6em 0 0.3em; }
-  h1 { font-size: 1.6em; } h2 { font-size: 1.35em; }
-  h3 { font-size: 1.15em; } h4, h5, h6 { font-size: 1em; }
-  p { margin: 0 0 0.6em; }
-  ul, ol { margin: 0 0 0.6em 1.4em; padding: 0; }
-  li { margin: 0.15em 0; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { border: 1px solid #888; padding: 4pt 6pt; vertical-align: top; }
-  img { max-width: 100%; height: auto; }
-  a { color: #1a4dc4; text-decoration: underline; }
-  blockquote { margin: 0.5em 0 0.5em 1em; padding-left: 0.8em; border-left: 2pt solid #999; color: #444; }
+  body { margin: 0; padding: 0; }
+  .mylaw-html-wrapper { font-family: 'Times New Roman', Times, serif; font-size: 11pt; line-height: 1.5; color: #111; background: white; }
+  .mylaw-html-wrapper h1, .mylaw-html-wrapper h2, .mylaw-html-wrapper h3,
+  .mylaw-html-wrapper h4, .mylaw-html-wrapper h5, .mylaw-html-wrapper h6 {
+    font-weight: 600; line-height: 1.25; margin: 0.6em 0 0.3em;
+  }
+  .mylaw-html-wrapper h1 { font-size: 1.6em; }
+  .mylaw-html-wrapper h2 { font-size: 1.35em; }
+  .mylaw-html-wrapper h3 { font-size: 1.15em; }
+  .mylaw-html-wrapper h4, .mylaw-html-wrapper h5, .mylaw-html-wrapper h6 { font-size: 1em; }
+  .mylaw-html-wrapper p { margin: 0 0 0.6em; }
+  .mylaw-html-wrapper ul, .mylaw-html-wrapper ol { margin: 0 0 0.6em 1.4em; padding: 0; }
+  .mylaw-html-wrapper li { margin: 0.15em 0; }
+  .mylaw-html-wrapper table { border-collapse: collapse; width: 100%; }
+  .mylaw-html-wrapper th, .mylaw-html-wrapper td { border: 1px solid #888; padding: 4pt 6pt; vertical-align: top; }
+  .mylaw-html-wrapper img { max-width: 100%; height: auto; }
+  .mylaw-html-wrapper a { color: #1a4dc4; text-decoration: underline; }
+  .mylaw-html-wrapper blockquote { margin: 0.5em 0 0.5em 1em; padding-left: 0.8em; border-left: 2pt solid #999; color: #444; }
 `;
 
 /**
@@ -57,8 +67,9 @@ export async function appendHtmlAsPdfPages(
   const contentWidthPx = Math.round(contentWidthPt * PT_TO_PX);
   const contentHeightPx = Math.round(contentHeightPt * PT_TO_PX);
 
-  // 1. Mesure du HTML rendu in-document à la largeur de page.
+  // 1. On insère le HTML dans un wrapper hors champ, à la bonne largeur.
   const wrapper = document.createElement('div');
+  wrapper.className = 'mylaw-html-wrapper';
   wrapper.style.cssText = `
     position: fixed;
     left: -99999px;
@@ -70,48 +81,82 @@ export async function appendHtmlAsPdfPages(
     padding: 0;
     box-sizing: border-box;
   `;
-  // Inclut les styles de base + le HTML utilisateur.
-  wrapper.innerHTML = `<style>${BASE_CSS}</style>${html}`;
+
+  const styleEl = document.createElement('style');
+  styleEl.textContent = BASE_CSS;
+  wrapper.appendChild(styleEl);
+
+  const content = document.createElement('div');
+  content.innerHTML = html;
+  wrapper.appendChild(content);
   document.body.appendChild(wrapper);
 
-  // Force un layout puis récupère la hauteur réelle.
+  // Attend un cycle de layout (et le chargement éventuel des images).
   await new Promise<void>((resolve) =>
     requestAnimationFrame(() => resolve()),
   );
-  const totalHeightPx = Math.max(wrapper.scrollHeight, contentHeightPx);
+  await waitForImages(wrapper);
 
-  // Sérialise le contenu (une fois) — on s'en sert pour chaque page.
-  const serialized = serializeNode(wrapper);
+  let fullCanvas: HTMLCanvasElement;
+  try {
+    fullCanvas = await html2canvas(wrapper, {
+      scale: RENDER_SCALE,
+      backgroundColor: '#ffffff',
+      // useCORS demande à html2canvas de tenter le chargement
+      // cross-origin avec crossOrigin="anonymous" — quand le serveur
+      // renvoie le bon entête, l'image est rendue ; sinon, html2canvas
+      // saute l'image plutôt que de tainter le canvas.
+      useCORS: true,
+      // Laisse html2canvas escamoter les ressources non-CORS plutôt
+      // que de tainter (allowTaint: false).
+      allowTaint: false,
+      logging: false,
+      width: contentWidthPx,
+      windowWidth: contentWidthPx,
+    });
+  } finally {
+    document.body.removeChild(wrapper);
+  }
 
-  document.body.removeChild(wrapper);
+  // 2. Découpe le canvas plein-format en tranches A4.
+  const sliceHeightPx = contentHeightPx * RENDER_SCALE;
+  const totalHeightPx = fullCanvas.height;
+  const numPages = Math.max(1, Math.ceil(totalHeightPx / sliceHeightPx));
 
-  // 2. Pour chaque page, on rend une tranche de hauteur contentHeightPx.
-  const numPages = Math.max(1, Math.ceil(totalHeightPx / contentHeightPx));
   for (let i = 0; i < numPages; i++) {
-    const sliceTopPx = i * contentHeightPx;
-    const sliceHeightPx = Math.min(contentHeightPx, totalHeightPx - sliceTopPx);
+    const yOffset = i * sliceHeightPx;
+    const thisHeight = Math.min(sliceHeightPx, totalHeightPx - yOffset);
 
-    // SVG foreignObject : on positionne le contenu avec un margin-top
-    // négatif pour que la tranche désirée s'aligne en haut du SVG.
-    const svgWidth = contentWidthPx * RENDER_SCALE;
-    const svgHeight = sliceHeightPx * RENDER_SCALE;
-    const svg =
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${contentWidthPx} ${sliceHeightPx}">` +
-      `<foreignObject width="100%" height="100%">` +
-      `<div xmlns="http://www.w3.org/1999/xhtml" style="margin:0;padding:0;width:${contentWidthPx}px;height:${sliceHeightPx}px;overflow:hidden;background:white;">` +
-      `<div style="margin-top:${-sliceTopPx}px;">${serialized}</div>` +
-      `</div></foreignObject></svg>`;
+    const slice = document.createElement('canvas');
+    slice.width = fullCanvas.width;
+    slice.height = thisHeight;
+    const ctx = slice.getContext('2d');
+    if (!ctx) throw new Error('Canvas indisponible');
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, slice.width, slice.height);
+    ctx.drawImage(
+      fullCanvas,
+      0,
+      yOffset,
+      fullCanvas.width,
+      thisHeight,
+      0,
+      0,
+      fullCanvas.width,
+      thisHeight,
+    );
 
-    const pngBytes = await svgToPng(svg, svgWidth, svgHeight);
+    const pngBlob = await new Promise<Blob | null>((resolve) =>
+      slice.toBlob((b) => resolve(b), 'image/png'),
+    );
+    if (!pngBlob) throw new Error('Conversion canvas → PNG échouée');
+    const pngBytes = new Uint8Array(await pngBlob.arrayBuffer());
     const pngImage = await pdfDoc.embedPng(pngBytes);
 
     const page = pdfDoc.addPage([A4_WIDTH_PT, A4_HEIGHT_PT]);
-    // Convertit la hauteur de tranche pixels → points pour respecter
-    // l'échelle (la dernière page peut être plus courte).
-    const drawHeightPt = sliceHeightPx / PT_TO_PX;
+    const drawHeightPt = thisHeight / RENDER_SCALE / PT_TO_PX;
     page.drawImage(pngImage, {
       x: PAGE_MARGIN_PT,
-      // Origine pdf-lib en bas-gauche : on remonte d'autant.
       y: A4_HEIGHT_PT - PAGE_MARGIN_PT - drawHeightPt,
       width: contentWidthPt,
       height: drawHeightPt,
@@ -120,57 +165,32 @@ export async function appendHtmlAsPdfPages(
 }
 
 /**
- * Sérialise le contenu d'un nœud DOM en chaîne XHTML utilisable
- * dans un <foreignObject>. On contourne `XMLSerializer` qui ne sait
- * pas toujours produire du XHTML strict, en passant par `outerHTML`
- * et en encodant les éventuelles ampersands restants.
+ * Attend que toutes les `<img>` du wrapper aient terminé de charger
+ * (ou échoué). Sans ça, html2canvas peut prendre une mesure de
+ * hauteur prématurée.
  */
-function serializeNode(node: HTMLElement): string {
-  // L'outerHTML d'un div HTML est généralement compatible XHTML pour
-  // les sous-éléments produits par mammoth/Tiptap (balises auto-fermantes
-  // correctes, attributs entre guillemets…).
-  return node.innerHTML;
-}
-
-/**
- * Rend un SVG en PNG via Image + Canvas. Renvoie les octets PNG.
- */
-async function svgToPng(
-  svg: string,
-  width: number,
-  height: number,
-): Promise<Uint8Array> {
-  const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(svgBlob);
-  try {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.src = url;
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () =>
-        reject(
-          new Error(
-            "Impossible de rendre la page HTML : le navigateur a refusé le SVG (CSS exotique ?).",
-          ),
-        );
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas indisponible');
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob((b) => resolve(b), 'image/png'),
-    );
-    if (!blob) throw new Error('Conversion canvas → PNG échouée');
-    return new Uint8Array(await blob.arrayBuffer());
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+async function waitForImages(root: HTMLElement, timeoutMs = 8000): Promise<void> {
+  const imgs = Array.from(root.querySelectorAll('img'));
+  if (imgs.length === 0) return;
+  const all = imgs.map(
+    (img) =>
+      new Promise<void>((resolve) => {
+        if (img.complete) {
+          resolve();
+          return;
+        }
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        img.addEventListener('load', finish, { once: true });
+        img.addEventListener('error', finish, { once: true });
+        setTimeout(finish, timeoutMs);
+      }),
+  );
+  await Promise.all(all);
 }
 
 /** Variante utilitaire : intègre une image bitmap (PNG/JPG) en pleine

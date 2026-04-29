@@ -4,22 +4,24 @@
  * Pour chaque pièce :
  *   1. convertit le blob source en `PDFDocument` (pdf-lib) via
  *      `sourceBlobToPdf` ;
- *   2. apppose le tampon (image + numéro) selon les réglages ;
- *   3. sauvegarde le PDF résultant et crée un `Document` dans la GED
- *      du dossier (avec `fileBlob` local — non synchronisé via Drive).
+ *   2. apposition du tampon (image + numéro) selon les réglages ;
+ *   3. sauvegarde le PDF résultant comme `Attachment` du dossier (le
+ *      blob binaire vit dans la table `attachments`, locale, et la
+ *      pièce s'ouvre directement comme PDF dans la GED — non comme
+ *      brouillon Tiptap vide).
  *
  * Génère ensuite le PDF récap « Bordereau de communication de pièces »
- * et l'ajoute également comme `Document`.
+ * et l'ajoute également comme `Attachment`.
  *
- * Si une génération précédente existe (`generatedDocumentIds`), elle
+ * Si une génération précédente existe (`generatedAttachmentIds`), elle
  * est supprimée AVANT la nouvelle génération pour éviter d'accumuler.
  */
 
-import { db, getStampSettings } from '@/lib/db';
+import { db, getStampSettings, saveAttachment, deleteAttachment } from '@/lib/db';
 import type {
+  Attachment,
   Bordereau,
   BordereauPiece,
-  Document,
   Dossier,
 } from '@/types';
 import { sourceBlobToPdf } from './source-to-pdf';
@@ -39,8 +41,8 @@ export interface GenerationProgress {
 }
 
 export interface GenerationResult {
-  generatedDocumentIds: number[];
-  recapDocumentId: number;
+  generatedAttachmentIds: number[];
+  recapAttachmentId: number;
 }
 
 function sanitizeFileName(name: string): string {
@@ -59,13 +61,23 @@ function pieceTitleFor(pieceNumber: string, customName: string): string {
 
 async function deletePreviousGeneration(b: Bordereau): Promise<void> {
   const ids = [
-    ...(b.generatedDocumentIds ?? []),
-    ...(b.generatedRecapDocumentId != null
-      ? [b.generatedRecapDocumentId]
+    ...(b.generatedAttachmentIds ?? []),
+    ...(b.generatedRecapAttachmentId != null
+      ? [b.generatedRecapAttachmentId]
       : []),
   ];
   if (ids.length === 0) return;
-  await db.documents.bulkDelete(ids);
+  // On utilise deleteAttachment plutôt que bulkDelete pour conserver
+  // l'audit log et un retour d'erreur cohérent en cas d'attachement
+  // déjà supprimé manuellement par l'utilisateur.
+  for (const id of ids) {
+    try {
+      await deleteAttachment(id);
+    } catch {
+      // ignoré : l'utilisateur a peut-être déjà retiré le fichier
+      // depuis la GED.
+    }
+  }
 }
 
 export async function generateBordereau(
@@ -89,7 +101,7 @@ export async function generateBordereau(
   await deletePreviousGeneration(bordereau);
 
   const now = new Date();
-  const generatedDocumentIds: number[] = [];
+  const generatedAttachmentIds: number[] = [];
 
   for (let i = 0; i < pieces.length; i++) {
     const piece = pieces[i];
@@ -115,21 +127,18 @@ export async function generateBordereau(
       type: 'application/pdf',
     });
 
-    const docPayload: Document = {
-      title,
-      type: 'imported',
-      content: '',
-      dossierId: dossier.id,
+    const filename = `${title}.pdf`;
+    const att: Attachment = {
+      dossierId: dossier.id!,
+      name: filename,
+      mimeType: 'application/pdf',
+      size: blob.size,
+      blob,
       tags: ['pièce', `bordereau:${bordereau.id}`],
-      fileBlob: blob,
-      fileMimeType: 'application/pdf',
-      sourceFile: piece.sourceFileName,
-      createdAt: now,
-      updatedAt: now,
-      wordCount: 0,
+      uploadedAt: now,
     };
-    const id = await db.documents.add(docPayload);
-    generatedDocumentIds.push(Number(id));
+    const id = await saveAttachment(att);
+    generatedAttachmentIds.push(id);
   }
 
   // Récapitulatif
@@ -142,35 +151,32 @@ export async function generateBordereau(
       designation: p.customName,
     })),
   });
-  const recapTitle = sanitizeFileName(
+  const recapFilename = sanitizeFileName(
     `${bordereau.name} — Bordereau de communication de pièces`,
-  );
-  const recapDoc: Document = {
-    title: recapTitle,
-    type: 'imported',
-    content: '',
-    dossierId: dossier.id,
+  ) + '.pdf';
+  const recapAtt: Attachment = {
+    dossierId: dossier.id!,
+    name: recapFilename,
+    mimeType: 'application/pdf',
+    size: recapBlob.size,
+    blob: recapBlob,
     tags: ['bordereau-récap', `bordereau:${bordereau.id}`],
-    fileBlob: recapBlob,
-    fileMimeType: 'application/pdf',
-    createdAt: now,
-    updatedAt: now,
-    wordCount: 0,
+    uploadedAt: now,
   };
-  const recapId = Number(await db.documents.add(recapDoc));
+  const recapId = await saveAttachment(recapAtt);
 
   // Met à jour le projet de bordereau
   onProgress?.({ step: 'finalize' });
   await db.bordereaux.update(bordereau.id!, {
-    generatedDocumentIds,
-    generatedRecapDocumentId: recapId,
+    generatedAttachmentIds,
+    generatedRecapAttachmentId: recapId,
     lastGeneratedAt: now,
     updatedAt: now,
   });
 
   return {
-    generatedDocumentIds,
-    recapDocumentId: recapId,
+    generatedAttachmentIds,
+    recapAttachmentId: recapId,
   };
 }
 
@@ -184,8 +190,8 @@ export async function clearGeneratedBordereau(
 ): Promise<void> {
   await deletePreviousGeneration(bordereau);
   await db.bordereaux.update(bordereau.id!, {
-    generatedDocumentIds: [],
-    generatedRecapDocumentId: undefined,
+    generatedAttachmentIds: [],
+    generatedRecapAttachmentId: undefined,
     lastGeneratedAt: undefined,
     updatedAt: new Date(),
   });

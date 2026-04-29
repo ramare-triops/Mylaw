@@ -167,7 +167,7 @@ function BordereauList({
       dossierId: dossier.id,
       name,
       autoNumbering: true,
-      generatedDocumentIds: [],
+      generatedAttachmentIds: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -458,39 +458,24 @@ function BordereauDetail({
       let piece: BordereauPiece;
       if (it.kind === 'doc') {
         const d = it.doc;
-        if (d.fileBlob) {
-          // Document déjà sous forme binaire (PDF tamponné, fichier
-          // importé via l'outil bordereau, etc.) : on le réutilise tel
-          // quel.
-          piece = {
-            bordereauId,
-            order: order++,
-            pieceNumber: auto ? String(pieceNumber) : '',
-            customName: d.title || 'Pièce',
-            sourceFileName: filenameForDoc(d),
-            sourceMimeType: d.fileMimeType ?? 'application/pdf',
-            sourceBlob: d.fileBlob,
-            sourceDocumentId: d.id,
-            uid: uuid(),
-          };
-        } else {
-          // Brouillon Tiptap : on encapsule le HTML dans un Blob avec
-          // un type MIME `text/html`. La conversion HTML → PDF est
-          // effectuée à la génération via `appendHtmlAsPdfPages`.
-          const html = d.content || '';
-          const blob = new Blob([html], { type: 'text/html' });
-          piece = {
-            bordereauId,
-            order: order++,
-            pieceNumber: auto ? String(pieceNumber) : '',
-            customName: d.title || 'Pièce',
-            sourceFileName: `${d.title || 'document'}.html`,
-            sourceMimeType: 'text/html',
-            sourceBlob: blob,
-            sourceDocumentId: d.id,
-            uid: uuid(),
-          };
-        }
+        // Brouillons Tiptap (le seul cas pour des Documents : tous les
+        // fichiers binaires vivent dans la table `attachments`). On
+        // encapsule le HTML dans un Blob `text/html`. La conversion
+        // HTML → PDF est effectuée à la génération via
+        // `appendHtmlAsPdfPages` (rendu via html2canvas).
+        const html = d.content || '';
+        const blob = new Blob([html], { type: 'text/html' });
+        piece = {
+          bordereauId,
+          order: order++,
+          pieceNumber: auto ? String(pieceNumber) : '',
+          customName: d.title || 'Pièce',
+          sourceFileName: `${d.title || 'document'}.html`,
+          sourceMimeType: 'text/html',
+          sourceBlob: blob,
+          sourceDocumentId: d.id,
+          uid: uuid(),
+        };
       } else {
         const a = it.attachment;
         piece = {
@@ -548,7 +533,7 @@ function BordereauDetail({
       };
       const r = await generateBordereau(bordereau, dossier, onProgress);
       setGenerationDone(
-        `${r.generatedDocumentIds.length} pièce${r.generatedDocumentIds.length > 1 ? 's' : ''} générée${r.generatedDocumentIds.length > 1 ? 's' : ''} + 1 bordereau récapitulatif ajoutés au dossier.`,
+        `${r.generatedAttachmentIds.length} pièce${r.generatedAttachmentIds.length > 1 ? 's' : ''} générée${r.generatedAttachmentIds.length > 1 ? 's' : ''} + 1 bordereau récapitulatif ajoutés au dossier.`,
       );
     } catch (e) {
       setError((e as Error).message);
@@ -561,8 +546,8 @@ function BordereauDetail({
   async function handleClearGenerated() {
     if (!bordereau) return;
     const count =
-      (bordereau.generatedDocumentIds?.length ?? 0) +
-      (bordereau.generatedRecapDocumentId != null ? 1 : 0);
+      (bordereau.generatedAttachmentIds?.length ?? 0) +
+      (bordereau.generatedRecapAttachmentId != null ? 1 : 0);
     if (count === 0) {
       setError("Ce bordereau n'a pas encore été généré.");
       return;
@@ -763,13 +748,13 @@ function BordereauDetail({
             onClick={() => void handleClearGenerated()}
             disabled={
               generating ||
-              !bordereau.generatedDocumentIds?.length
+              !bordereau.generatedAttachmentIds?.length
             }
             className={cn(
               'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md',
               'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
               'hover:bg-[var(--color-border)]',
-              (generating || !bordereau.generatedDocumentIds?.length) &&
+              (generating || !bordereau.generatedAttachmentIds?.length) &&
                 'opacity-50 cursor-not-allowed',
             )}
           >
@@ -1275,17 +1260,7 @@ function kindLabel(it: PickedItem): string {
     const sub = it.attachment.mimeType?.split('/')[1];
     return sub || 'fichier';
   }
-  if (it.doc.fileMimeType) return it.doc.fileMimeType.split('/')[1] || 'fichier';
   return 'brouillon';
-}
-
-function filenameForDoc(d: Document): string {
-  if (d.fileMimeType?.includes('pdf')) return `${d.title || 'document'}.pdf`;
-  if (d.fileMimeType?.includes('word'))
-    return `${d.title || 'document'}.docx`;
-  if (d.fileMimeType?.startsWith('image/'))
-    return `${d.title || 'document'}.${d.fileMimeType.split('/')[1] || 'png'}`;
-  return d.title || 'document';
 }
 
 // ─── Aperçu d'une pièce (brut ou tamponné) ─────────────────────────────────

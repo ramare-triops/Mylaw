@@ -40,14 +40,27 @@ export function fontCss(font: StampFont): string {
   return FONTS.find((f) => f.value === font)?.css ?? FONTS[0].css;
 }
 
-const SIZES: { value: StampSize; label: string; ratio: number }[] = [
+/** Taille de l'image du sceau, en proportion de la largeur de page. */
+const IMAGE_SIZES: { value: StampSize; label: string; ratio: number }[] = [
   { value: 'small', label: 'Petite', ratio: 0.15 },
   { value: 'medium', label: 'Moyenne', ratio: 0.25 },
   { value: 'large', label: 'Grande', ratio: 0.35 },
 ];
 
+/** Taille de la fonte du numéro, en proportion de la largeur de page.
+ *  Indépendante de la taille de l'image. */
+const TEXT_SIZES: { value: StampSize; label: string; ratio: number }[] = [
+  { value: 'small', label: 'Petit', ratio: 0.04 },
+  { value: 'medium', label: 'Moyen', ratio: 0.07 },
+  { value: 'large', label: 'Grand', ratio: 0.11 },
+];
+
 export function sizeRatio(size: StampSize): number {
-  return SIZES.find((s) => s.value === size)?.ratio ?? 0.25;
+  return IMAGE_SIZES.find((s) => s.value === size)?.ratio ?? 0.25;
+}
+
+export function textSizeRatio(size: StampSize): number {
+  return TEXT_SIZES.find((s) => s.value === size)?.ratio ?? 0.07;
 }
 
 const POSITIONS: { value: StampPosition; label: string }[] = [
@@ -247,10 +260,10 @@ export function StampSettingsDialog({ open, onClose }: Props) {
               </div>
             </Section>
 
-            {/* ─── Taille ─────────────────────────────────────────────── */}
-            <Section title="Taille">
+            {/* ─── Taille de l'image ──────────────────────────────────── */}
+            <Section title="Taille du sceau (image)">
               <div className="inline-flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--color-border)' }}>
-                {SIZES.map((s) => (
+                {IMAGE_SIZES.map((s) => (
                   <button
                     key={s.value}
                     onClick={() => void update({ size: s.value })}
@@ -266,7 +279,30 @@ export function StampSettingsDialog({ open, onClose }: Props) {
                 ))}
               </div>
               <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-                Largeur du tampon en proportion de la largeur de la page.
+                Largeur du sceau en proportion de la largeur de la page.
+              </p>
+            </Section>
+
+            {/* ─── Taille du numéro ───────────────────────────────────── */}
+            <Section title="Taille du numéro">
+              <div className="inline-flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--color-border)' }}>
+                {TEXT_SIZES.map((s) => (
+                  <button
+                    key={s.value}
+                    onClick={() => void update({ textSize: s.value })}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium',
+                      (settings.textSize ?? 'medium') === s.value
+                        ? 'bg-[var(--color-primary)] text-white'
+                        : 'bg-[var(--color-surface-raised)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                    )}
+                  >
+                    {s.label} ({Math.round(s.ratio * 100)} %)
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                Taille de la police du numéro, indépendante de l&apos;image.
               </p>
             </Section>
 
@@ -406,10 +442,12 @@ function Section({
 
 function StampPreview({ settings }: { settings: StampSettings }) {
   // Une feuille A4 miniature, avec le tampon visualisé à sa position.
-  const ratio = sizeRatio(settings.size);
+  const imgRatio = sizeRatio(settings.size);
+  const txtRatio = textSizeRatio(settings.textSize ?? 'medium');
   const PAGE_W = 160;
   const PAGE_H = (PAGE_W * 297) / 210;
-  const stampSize = PAGE_W * ratio;
+  const stampSize = PAGE_W * imgRatio;
+  const fontSize = PAGE_W * txtRatio;
   const placement = positionStyles(settings.position, PAGE_W, PAGE_H, stampSize);
   return (
     <div
@@ -467,7 +505,7 @@ function StampPreview({ settings }: { settings: StampSettings }) {
             position: 'relative',
             color: settings.numberColor,
             fontFamily: fontCss(settings.font),
-            fontSize: stampSize * 0.3,
+            fontSize,
             fontWeight: 700,
             lineHeight: 1,
           }}

@@ -89,21 +89,7 @@ async function mergeTable<T extends { id?: number }>(
     const r = remoteById.get(id);
     if (r) {
       // Les deux existent : on garde celui au timestamp le plus récent.
-      if (recordTime(r) > recordTime(l)) {
-        // Préservation des blobs locaux : certaines tables (Documents)
-        // peuvent porter un `fileBlob` qui ne traverse pas Drive (binaire
-        // strippé à l'upload pour rester sous les limites JSON). Si le
-        // remote a une version sans blob et que le local en avait un, on
-        // intègre les nouvelles métadonnées du remote tout en gardant
-        // le binaire local.
-        const lAny = l as Record<string, unknown>;
-        const rAny = r as Record<string, unknown>;
-        if (lAny.fileBlob && !rAny.fileBlob) {
-          toPut.push({ ...r, fileBlob: lAny.fileBlob } as T);
-        } else {
-          toPut.push(r);
-        }
-      }
+      if (recordTime(r) > recordTime(l)) toPut.push(r);
       // sinon on ne touche pas (local est déjà plus récent ou égal).
       continue;
     }
@@ -177,24 +163,10 @@ export async function buildBackup(): Promise<MylawBackup> {
     if (!INTERNAL_SETTING_KEYS.has(row.key)) settings[row.key] = row.value;
   }
 
-  // Les Documents porteurs d'un `fileBlob` (par ex. les pièces tamponnées
-  // produites par l'outil Bordereau) embarquent un Blob qui ne survit pas
-  // à un round-trip JSON. On strippe le binaire avant la sérialisation :
-  // les métadonnées (titre, dossier, type, tags…) restent synchronisées
-  // mais le contenu binaire reste local à l'appareil qui l'a généré.
-  // Sur un autre appareil, l'utilisateur peut regénérer le bordereau pour
-  // recréer les fichiers.
-  const documentsForSync = documents.map((d) => {
-    if (!d.fileBlob) return d;
-    const { fileBlob: _b, ...rest } = d;
-    return rest;
-  });
-
   return {
     version: 7,
     exportedAt: new Date().toISOString(),
-    documents: documentsForSync,
-    folders, snippets, deadlines,
+    documents, folders, snippets, deadlines,
     templates, tools, aiChats,
     bricks, infoLabels, fieldDefs, sessions,
     dossiers, contacts, dossierContacts, documentContacts,

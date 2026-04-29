@@ -24,13 +24,12 @@ import {
   type PDFPage,
   type Color,
 } from 'pdf-lib';
-import { sizeRatio } from '@/components/tools/StampSettingsDialog';
+import {
+  sizeRatio,
+  textSizeRatio,
+} from '@/components/tools/StampSettingsDialog';
 import type { StampFont, StampPosition, StampSettings } from '@/types';
 
-/** Taille de la fonte du numéro en proportion de la largeur de la box.
- *  Le numéro est dessiné par-dessus le sceau, centré : on peut le faire
- *  un peu plus gros que lorsqu'il était écrit en dessous. */
-const TEXT_SIZE_RATIO = 0.3;
 /** Marge intérieure des 9 positions (en proportion de la dimension page). */
 const MARGIN_RATIO = 0.05;
 
@@ -162,19 +161,20 @@ function drawStampOnPage(
   }
 
   // Numéro : superposé au centre exact du sceau (par-dessus l'image).
+  // La taille du texte est indépendante de la taille de l'image — elle
+  // est calculée à partir de la largeur de PAGE, pas de la box image.
   const label = stampLabel(pieceNumber);
   if (label) {
-    const fontSize = boxW * TEXT_SIZE_RATIO;
+    const fontSize =
+      W * textSizeRatio(settings.textSize ?? settings.size);
     const textWidth = prepared.font.widthOfTextAtSize(label, fontSize);
     const textHeight = prepared.font.heightAtSize(fontSize);
-    const textX = boxX + (boxW - textWidth) / 2;
-    // Y est la baseline du texte chez pdf-lib. On veut le centre
-    // visuel du glyph (≈ moitié de la hauteur de capitale) au centre
-    // de la box.
-    const textY = boxY + (boxH - textHeight) / 2;
+    // Centre visuel du tampon = centre de la box image.
+    const centerX = boxX + boxW / 2;
+    const centerY = boxY + boxH / 2;
     page.drawText(label, {
-      x: textX,
-      y: textY,
+      x: centerX - textWidth / 2,
+      y: centerY - textHeight / 2,
       size: fontSize,
       font: prepared.font,
       color: prepared.color,

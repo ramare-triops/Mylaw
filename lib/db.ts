@@ -1096,6 +1096,7 @@ export const DEFAULT_STAMP_SETTINGS: StampSettings = {
   id: STAMP_SETTINGS_ID,
   font: 'Helvetica',
   size: 'medium',
+  textSize: 'medium',
   position: 'top-right',
   numberColor: '#c81e1e',
   allPages: false,
