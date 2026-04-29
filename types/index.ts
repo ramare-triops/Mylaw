@@ -806,6 +806,10 @@ export interface InterestResultSnapshot {
   totalInterest: number;
   totalAmount: number;
   hasExtrapolation: boolean;
+  capitalize?: boolean;
+  capitalizationStartDate?: Date;
+  increasedRate?: boolean;
+  judgmentNotificationDate?: Date;
 }
 
 export interface InterestCalculation {
@@ -826,6 +830,17 @@ export interface InterestCalculation {
    */
   capitalize?: boolean;
   capitalizationStartDate?: Date;
+  /**
+   * Majoration de plein droit du taux légal (art. L.313-3 du Code
+   * monétaire et financier) : en cas de condamnation pécuniaire par
+   * décision de justice, le taux est majoré de cinq points à
+   * l'expiration d'un délai de deux mois à compter de la signification
+   * du jugement (ou du jour où la décision est devenue exécutoire).
+   */
+  increasedRate?: boolean;
+  /** Date de signification du jugement. La majoration s'applique
+   *  2 mois après cette date. */
+  judgmentNotificationDate?: Date;
   /** Résultat de la dernière exécution. */
   result?: InterestResultSnapshot;
   /** Snapshot des taux utilisés au moment du calcul. */

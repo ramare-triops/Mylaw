@@ -54,6 +54,11 @@ export function exportInterestXlsx(args: {
         ? `Oui — à compter du ${result.capitalizationStartDate ? fmtDate(result.capitalizationStartDate) : '—'}`
         : 'Non',
     ],
+    ['Taux majoré (art. L.313-3 CMF)',
+      result.increasedRate
+        ? `Oui — signification le ${result.judgmentNotificationDate ? fmtDate(result.judgmentNotificationDate) : '—'}, majoration de +5 pts à compter du ${result.increasedRateStartDate ? fmtDate(result.increasedRateStartDate) : '—'}`
+        : 'Non',
+    ],
     ['Calculé le', fmtDate(result.computedAt)],
     [],
     ['Capital total (€)', result.totalCapital],
@@ -355,6 +360,12 @@ function renderHtml(args: {
         result.capitalize
           ? `<dt>Capitalisation</dt>
              <dd>À compter du ${result.capitalizationStartDate ? fmtDate(result.capitalizationStartDate) : '—'} (art. 1343-2 du Code civil)</dd>`
+          : ''
+      }
+      ${
+        result.increasedRate
+          ? `<dt>Taux majoré</dt>
+             <dd>Signification du jugement le ${result.judgmentNotificationDate ? fmtDate(result.judgmentNotificationDate) : '—'} — majoration de +5 points à compter du ${result.increasedRateStartDate ? fmtDate(result.increasedRateStartDate) : '—'} (art. L.313-3 du Code monétaire et financier)</dd>`
           : ''
       }
       <dt>Édité le</dt>

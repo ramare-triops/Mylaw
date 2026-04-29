@@ -19,6 +19,9 @@ import { db } from '@/lib/db';
 import { cn } from '@/lib/utils';
 import {
   computeAll,
+  addMonths,
+  INCREASED_RATE_BONUS,
+  INCREASED_RATE_DELAY_MONTHS,
   type InterestItemInput,
   type InterestComputationResult,
 } from '@/lib/legal-interest-calc';
@@ -132,6 +135,10 @@ function resultToSnapshot(r: InterestComputationResult): InterestResultSnapshot 
     totalInterest: r.totalInterest,
     totalAmount: r.totalAmount,
     hasExtrapolation: r.hasExtrapolation,
+    capitalize: r.capitalize,
+    capitalizationStartDate: r.capitalizationStartDate,
+    increasedRate: r.increasedRate,
+    judgmentNotificationDate: r.judgmentNotificationDate,
   };
 }
 
@@ -165,6 +172,18 @@ function snapshotToResult(s: InterestResultSnapshot): InterestComputationResult 
     totalInterest: s.totalInterest,
     totalAmount: s.totalAmount,
     hasExtrapolation: s.hasExtrapolation,
+    capitalize: s.capitalize,
+    capitalizationStartDate: s.capitalizationStartDate
+      ? new Date(s.capitalizationStartDate)
+      : undefined,
+    increasedRate: s.increasedRate,
+    judgmentNotificationDate: s.judgmentNotificationDate
+      ? new Date(s.judgmentNotificationDate)
+      : undefined,
+    increasedRateStartDate:
+      s.increasedRate && s.judgmentNotificationDate
+        ? addMonths(new Date(s.judgmentNotificationDate), INCREASED_RATE_DELAY_MONTHS)
+        : undefined,
   };
 }
 
@@ -428,6 +447,8 @@ function CalculatorDetail({
   const [drafts, setDrafts] = useState<DraftItem[]>([emptyDraft()]);
   const [capitalize, setCapitalize] = useState(false);
   const [capitalizationStartDate, setCapitalizationStartDate] = useState<string>('');
+  const [increasedRate, setIncreasedRate] = useState(false);
+  const [judgmentNotificationDate, setJudgmentNotificationDate] = useState<string>('');
   const [result, setResult] = useState<InterestComputationResult | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -453,6 +474,12 @@ function CalculatorDetail({
         : '';
       setCapitalize(cap);
       setCapitalizationStartDate(capDate);
+      const inc = !!c.increasedRate;
+      const incDate = c.judgmentNotificationDate
+        ? ymd(new Date(c.judgmentNotificationDate))
+        : '';
+      setIncreasedRate(inc);
+      setJudgmentNotificationDate(incDate);
       // Recalcul automatique à l'ouverture (auto-update demandé par
       // le cahier des charges si la table de taux a évolué).
       const inputs = draftsToInputs(
@@ -464,6 +491,8 @@ function CalculatorDetail({
             computeAll(inputs, c.creditorType, {
               capitalize: cap,
               capitalizationStartDate: capDate ? parseYmd(capDate) : undefined,
+              increasedRate: inc,
+              judgmentNotificationDate: incDate ? parseYmd(incDate) : undefined,
             }),
           );
         } catch {
@@ -541,11 +570,22 @@ function CalculatorDetail({
       setError("Indiquez la date à compter de laquelle la capitalisation est ordonnée.");
       return null;
     }
+    if (increasedRate && !judgmentNotificationDate) {
+      setError(
+        "Indiquez la date de signification du jugement (la majoration de 5 points s'applique à partir de cette date + 2 mois).",
+      );
+      return null;
+    }
     const r = computeAll(inputs, creditorType, {
       capitalize,
       capitalizationStartDate: capitalize && capitalizationStartDate
         ? parseYmd(capitalizationStartDate)
         : undefined,
+      increasedRate,
+      judgmentNotificationDate:
+        increasedRate && judgmentNotificationDate
+          ? parseYmd(judgmentNotificationDate)
+          : undefined,
     });
     setResult(r);
     return r;
@@ -571,6 +611,11 @@ function CalculatorDetail({
       capitalizationStartDate:
         capitalize && capitalizationStartDate
           ? parseYmd(capitalizationStartDate)
+          : undefined,
+      increasedRate,
+      judgmentNotificationDate:
+        increasedRate && judgmentNotificationDate
+          ? parseYmd(judgmentNotificationDate)
           : undefined,
       result: resultToSnapshot(r),
       ratesSnapshot: LEGAL_INTEREST_RATES.map((rate) => ({
@@ -716,6 +761,60 @@ function CalculatorDetail({
                   : 'var(--color-text-muted)',
               }}
             />
+          </div>
+        )}
+      </div>
+
+      {/* Taux majoré (art. L.313-3 CMF — +5 pts si non payé dans les 2 mois
+          de la signification du jugement) */}
+      <div
+        className="mb-3 rounded-md border px-3 py-2 flex items-center gap-3 flex-wrap"
+        style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
+      >
+        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={increasedRate}
+            onChange={(e) => setIncreasedRate(e.target.checked)}
+            className="w-4 h-4 accent-[var(--color-primary)]"
+          />
+          <span style={{ color: 'var(--color-text)' }}>
+            Taux majoré
+          </span>
+          <span
+            className="text-xs"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            (art. L.313-3 CMF — +{INCREASED_RATE_BONUS} pts à l&apos;expiration d&apos;un délai de {INCREASED_RATE_DELAY_MONTHS} mois après la signification)
+          </span>
+        </label>
+        {increasedRate && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <CalendarClock size={13} style={{ color: 'var(--color-text-muted)' }} />
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              signification du jugement le :
+            </span>
+            <input
+              type="date"
+              value={judgmentNotificationDate}
+              onChange={(e) => setJudgmentNotificationDate(e.target.value)}
+              className={lineInputCls}
+              style={{
+                width: 160,
+                color: judgmentNotificationDate
+                  ? 'var(--color-text)'
+                  : 'var(--color-text-muted)',
+              }}
+            />
+            {judgmentNotificationDate && (
+              <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                → majoration à compter du{' '}
+                {addMonths(
+                  parseYmd(judgmentNotificationDate),
+                  INCREASED_RATE_DELAY_MONTHS,
+                ).toLocaleDateString('fr-FR')}
+              </span>
+            )}
           </div>
         )}
       </div>

@@ -20,10 +20,21 @@
 import {
   splitByRatePeriods,
   daysInYear,
+  daysBetween,
   stripTime,
   type CreditorType,
   type RatePeriodSplit,
 } from '@/lib/legal-interest-rates';
+
+/**
+ * Nombre de points ajoutés au taux légal lorsque la créance résulte
+ * d'une condamnation pécuniaire et n'est pas réglée dans les deux
+ * mois de la signification du jugement (art. L.313-3 du Code
+ * monétaire et financier).
+ */
+export const INCREASED_RATE_BONUS = 5;
+/** Délai de grâce avant majoration : 2 mois après la signification. */
+export const INCREASED_RATE_DELAY_MONTHS = 2;
 
 export interface InterestItemInput {
   /** Identifiant local stable (uuid). */
@@ -75,6 +86,15 @@ export interface ComputeOptions {
    * intérêts de l'année écoulée sont ajoutés au capital.
    */
   capitalizationStartDate?: Date;
+  /**
+   * Active la majoration légale de 5 points (art. L.313-3 CMF) : le
+   * taux légal applicable aux segments postérieurs au délai de grâce
+   * est augmenté de cinq points.
+   */
+  increasedRate?: boolean;
+  /** Date de signification du jugement. La majoration s'applique
+   *  à partir de signification + 2 mois. */
+  judgmentNotificationDate?: Date;
 }
 
 export interface InterestComputationResult {
@@ -90,6 +110,14 @@ export interface InterestComputationResult {
    *  appliquée sur au moins un item. */
   capitalize?: boolean;
   capitalizationStartDate?: Date;
+  /** Vrai si la majoration légale (art. L.313-3 CMF) est activée. */
+  increasedRate?: boolean;
+  /** Date de signification du jugement (la majoration s'applique
+   *  2 mois après). */
+  judgmentNotificationDate?: Date;
+  /** Date effective d'application de la majoration (signification +
+   *  2 mois). Pré-calculée pour faciliter l'affichage. */
+  increasedRateStartDate?: Date;
 }
 
 function roundCents(n: number): number {
@@ -106,15 +134,59 @@ function addDays(d: Date, days: number): Date {
   return nd;
 }
 
+export function addMonths(d: Date, months: number): Date {
+  return new Date(d.getFullYear(), d.getMonth() + months, d.getDate());
+}
+
+/**
+ * Découpe les sous-périodes au passage de la date `cutoff` et applique
+ * `+INCREASED_RATE_BONUS` points aux segments situés à partir de cette
+ * date (incluse). Les segments qui chevauchent la date sont scindés en
+ * deux : la partie antérieure conserve le taux légal, la partie
+ * postérieure est majorée.
+ */
+function applyIncreasedRate(
+  splits: RatePeriodSplit[],
+  cutoff: Date,
+): RatePeriodSplit[] {
+  const cut = stripTime(cutoff);
+  const out: RatePeriodSplit[] = [];
+  for (const s of splits) {
+    if (s.to < cut) {
+      out.push(s);
+    } else if (s.from >= cut) {
+      out.push({ ...s, rate: s.rate + INCREASED_RATE_BONUS });
+    } else {
+      const beforeEnd = addDays(cut, -1);
+      out.push({
+        ...s,
+        to: beforeEnd,
+        days: daysBetween(s.from, beforeEnd),
+      });
+      out.push({
+        ...s,
+        from: cut,
+        days: daysBetween(cut, s.to),
+        rate: s.rate + INCREASED_RATE_BONUS,
+      });
+    }
+  }
+  return out;
+}
+
 /** Calcul intérêts simples sur [from, to] avec un capital constant. */
 function computeRange(
   capital: number,
   from: Date,
   to: Date,
   type: CreditorType,
+  increasedRateStart: Date | null = null,
 ): InterestSegment[] {
   if (to < from) return [];
-  const splits = splitByRatePeriods(from, to, type);
+  let splits = splitByRatePeriods(from, to, type);
+  if (increasedRateStart) {
+    splits = applyIncreasedRate(splits, increasedRateStart);
+  }
   return splits.map((s) => {
     const interest = (capital * (s.rate / 100) * s.days) / daysInYear(s.year);
     return { ...s, capital, interest: roundCents(interest) };
@@ -138,12 +210,23 @@ export function computeOne(
     ? stripTime(options.capitalizationStartDate as Date)
     : null;
 
+  const useIncrease =
+    options.increasedRate === true && options.judgmentNotificationDate != null;
+  const increaseStart = useIncrease
+    ? stripTime(
+        addMonths(
+          options.judgmentNotificationDate as Date,
+          INCREASED_RATE_DELAY_MONTHS,
+        ),
+      )
+    : null;
+
   if (!useCap || !capStart || capStart > end) {
     // ─── Intérêts simples sur toute la période ─────────────────────
     const phase = useCap && capStart ? capStart : addDays(end, 1); // capStart hors période → tout en simple
     const simpleEnd = useCap && capStart ? addDays(capStart, -1) : end;
     const upTo = simpleEnd < end ? simpleEnd : end;
-    const segs = computeRange(input.amount, start, upTo, type);
+    const segs = computeRange(input.amount, start, upTo, type, increaseStart);
     segments.push(...segs);
     totalInterest = segs.reduce((acc, s) => acc + s.interest, 0);
     void phase;
@@ -152,7 +235,13 @@ export function computeOne(
     let runningCapital = input.amount;
     if (capStart > start) {
       const phase1End = addDays(capStart, -1);
-      const phase1 = computeRange(runningCapital, start, phase1End, type);
+      const phase1 = computeRange(
+        runningCapital,
+        start,
+        phase1End,
+        type,
+        increaseStart,
+      );
       segments.push(...phase1);
       totalInterest += phase1.reduce((acc, s) => acc + s.interest, 0);
     }
@@ -163,7 +252,13 @@ export function computeOne(
     let safety = 200; // garde-fou, 200 ans max
     while (cursor <= end && safety-- > 0) {
       const periodEnd = anniversary > end ? end : addDays(anniversary, -1);
-      const segs = computeRange(runningCapital, cursor, periodEnd, type);
+      const segs = computeRange(
+        runningCapital,
+        cursor,
+        periodEnd,
+        type,
+        increaseStart,
+      );
       const yearInterest = segs.reduce((acc, s) => acc + s.interest, 0);
       segments.push(...segs);
       totalInterest += yearInterest;
@@ -207,6 +302,15 @@ export function computeAll(
   const computed = items.map((it) => computeOne(it, type, options));
   const totalCapital = roundCents(computed.reduce((acc, c) => acc + c.amount, 0));
   const totalInterest = roundCents(computed.reduce((acc, c) => acc + c.interest, 0));
+  const increasedRateStartDate =
+    options.increasedRate === true && options.judgmentNotificationDate
+      ? stripTime(
+          addMonths(
+            options.judgmentNotificationDate,
+            INCREASED_RATE_DELAY_MONTHS,
+          ),
+        )
+      : undefined;
   return {
     creditorType: type,
     computedAt: new Date(),
@@ -217,5 +321,8 @@ export function computeAll(
     hasExtrapolation: computed.some((c) => c.extrapolated),
     capitalize: options.capitalize === true,
     capitalizationStartDate: options.capitalizationStartDate,
+    increasedRate: options.increasedRate === true,
+    judgmentNotificationDate: options.judgmentNotificationDate,
+    increasedRateStartDate,
   };
 }
