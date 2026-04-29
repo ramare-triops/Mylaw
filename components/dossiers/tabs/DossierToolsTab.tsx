@@ -8,10 +8,11 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { LegalInterestCalculator } from '@/components/tools/LegalInterestCalculator';
+import { PieceListTool } from '@/components/tools/PieceListTool';
 import { cn } from '@/lib/utils';
 import type { Dossier } from '@/types';
 
-type DossierToolKey = 'legal-interest' | 'piece-list';
+type DossierToolKey = 'piece-list' | 'legal-interest';
 
 interface ToolDef {
   key: DossierToolKey;
@@ -24,19 +25,18 @@ interface ToolDef {
 
 const TOOLS: ToolDef[] = [
   {
+    key: 'piece-list',
+    title: 'Bordereau de pièces',
+    description:
+      'Importer des documents comme pièces, leur apposer un tampon virtuel (numéro et sceau du cabinet) et générer un bordereau de communication.',
+    icon: FileStack,
+  },
+  {
     key: 'legal-interest',
     title: 'Calculateur d\'intérêts au taux légal',
     description:
       'Calcule automatiquement les intérêts d\'une ou plusieurs créances en appliquant les taux semestriels officiels. Export PDF / XLSX, sauvegarde dans le dossier.',
     icon: Calculator,
-  },
-  {
-    key: 'piece-list',
-    title: 'Bordereau de pièces',
-    description:
-      'Générer un bordereau de communication de pièces à partir des pièces du dossier.',
-    icon: FileStack,
-    comingSoon: true,
   },
 ];
 
@@ -69,6 +69,9 @@ export function DossierToolsTab({ dossier }: { dossier: Dossier }) {
             </span>
           )}
         </div>
+        {activeTool === 'piece-list' && (
+          <PieceListTool dossier={dossier} />
+        )}
         {activeTool === 'legal-interest' && (
           <LegalInterestCalculator dossier={dossier} />
         )}

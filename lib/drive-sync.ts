@@ -38,7 +38,14 @@ export interface MylawBackup {
   documentVersions?: any[];
   /** v5 — Jots / quick notes (tableau de bord) */
   jots?: any[];
-  // ⚠️ attachments (blobs) et auditLog (journal local) NE sont PAS sync.
+  /** v6 — Calculs d'intérêts au taux légal (outil dossier) */
+  interestCalculations?: any[];
+  /** v7 — Bordereaux de pièces (projet et réglages du tampon).
+   *  Les pièces sources (`bordereauPieces`) restent locales. */
+  bordereaux?: any[];
+  stampSettings?: any[];
+  // ⚠️ attachments (blobs), bordereauPieces (blobs sources) et
+  //    auditLog (journal local) NE sont PAS sync.
 }
 
 export type DriveStatus =

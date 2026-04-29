@@ -146,6 +146,16 @@ export async function buildBackup(): Promise<MylawBackup> {
     db.table('jots').toArray().catch(() => []),
   ]);
 
+  // v6 / v7 : tables d'outils ajoutées après coup. On les charge à part
+  // pour que `buildBackup` reste robuste si l'utilisateur tourne sur une
+  // base ancienne où la table n'existe pas encore.
+  const interestCalculations = await db
+    .table('interestCalculations').toArray().catch(() => []);
+  const bordereaux = await db
+    .table('bordereaux').toArray().catch(() => []);
+  const stampSettings = await db
+    .table('stampSettings').toArray().catch(() => []);
+
   // Settings : on EXCLUT les clés internes pour ne pas polluer les autres appareils.
   const settingsRows = await db.settings.toArray();
   const settings: Record<string, unknown> = {};
@@ -154,7 +164,7 @@ export async function buildBackup(): Promise<MylawBackup> {
   }
 
   return {
-    version: 5,
+    version: 7,
     exportedAt: new Date().toISOString(),
     documents, folders, snippets, deadlines,
     templates, tools, aiChats,
@@ -163,6 +173,9 @@ export async function buildBackup(): Promise<MylawBackup> {
     timeEntries, expenses, fixedFees, invoices,
     documentLinks, documentVersions,
     jots,
+    interestCalculations,
+    bordereaux,
+    stampSettings,
     settings,
   };
 }
@@ -205,6 +218,26 @@ export async function mergeFromBackup(
   await mergeTable(db.documentVersions,   backup.documentVersions, opts);
   // v5 — Jots / quick notes
   if (backup.jots) await mergeTable(db.table('jots'), backup.jots, opts);
+  // v6 — Calculs d'intérêts au taux légal
+  if (backup.interestCalculations) {
+    await mergeTable(
+      db.table('interestCalculations'),
+      backup.interestCalculations,
+      opts,
+    );
+  }
+  // v7 — Bordereaux de pièces (projets + réglages du tampon).
+  // Les fichiers sources des pièces (`bordereauPieces`) restent locaux.
+  if (backup.bordereaux) {
+    await mergeTable(db.table('bordereaux'), backup.bordereaux, opts);
+  }
+  if (backup.stampSettings) {
+    await mergeTable(
+      db.table('stampSettings'),
+      backup.stampSettings,
+      opts,
+    );
+  }
 
   // Settings : clé par clé, on ne touche JAMAIS aux clés internes locales.
   const remoteSettings = backup.settings ?? {};

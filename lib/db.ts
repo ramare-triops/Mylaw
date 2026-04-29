@@ -27,6 +27,9 @@ import type {
   AuditEntry,
   Jot,
   InterestCalculation,
+  Bordereau,
+  BordereauPiece,
+  StampSettings,
 } from '@/types';
 
 type SettingsRecord = { key: string; value: unknown };
@@ -111,6 +114,12 @@ export class MyLexDatabase extends Dexie {
   jots!: Table<Jot>;
   /** Calculs d'intérêts au taux légal (outil dossier). */
   interestCalculations!: Table<InterestCalculation>;
+  /** Projets de bordereau de pièces (outil dossier). */
+  bordereaux!: Table<Bordereau>;
+  /** Pièces d'un bordereau (fichier source binaire — non synchronisé). */
+  bordereauPieces!: Table<BordereauPiece>;
+  /** Réglages du tampon virtuel (singleton id = 1). */
+  stampSettings!: Table<StampSettings>;
 
   constructor() {
     super('MyLexDB');
@@ -320,6 +329,63 @@ export class MyLexDatabase extends Dexie {
         '++id, dossierId, name, updatedAt',
     });
 
+    // ─── Version 7 : Bordereau de pièces (outil dossier) ───────────────────
+    // Trois tables ajoutées :
+    //  - bordereaux       : projets de bordereau (synchronisé)
+    //  - bordereauPieces  : pièces d'un bordereau, contiennent un Blob du
+    //                       fichier source (NON synchronisé via Drive,
+    //                       traité comme la table `attachments`).
+    //  - stampSettings    : singleton (id = 1) avec l'image du sceau et
+    //                       les réglages du tampon (synchronisé).
+    this.version(7).stores({
+      documents:
+        '++id, title, type, folderId, dossierId, status, category, updatedAt, tags, *searchTokens',
+      documentVersions: '++id, documentId, timestamp',
+      folders: '++id, name, parentId, color, createdAt',
+      tools: '++id, slug, name, pinned, order, config, lastUsedAt',
+      templates: '++id, name, category, content, variables, createdAt',
+      sessions: '++id, date, toolId, content, tags',
+      snippets: '++id, trigger, expansion, category',
+      aiChats: '++id, documentId, messages, createdAt',
+      settings: 'key',
+      history: '++id, action, entityId, entityType, timestamp',
+      deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
+      bricks: '++id, title, category, infoLabelId, updatedAt, *tags',
+      infoLabels: '++id, name, color, createdAt',
+      fieldDefs: '++id, name, type, category, updatedAt',
+      dossiers:
+        '++id, reference, name, type, status, updatedAt, createdAt, *tags',
+      contacts:
+        '++id, type, lastName, companyName, email, updatedAt, *tags',
+      dossierContacts:
+        '++id, dossierId, contactId, role, [dossierId+contactId]',
+      documentContacts:
+        '++id, documentId, contactId, role, [documentId+contactId]',
+      timeEntries:
+        '++id, dossierId, documentId, contactId, date, billable, billed, invoiceId',
+      expenses:
+        '++id, dossierId, documentId, date, category, billed, invoiceId',
+      fixedFees:
+        '++id, dossierId, documentId, date, kind, billed, invoiceId',
+      invoices:
+        '++id, dossierId, reference, date, status',
+      attachments:
+        '++id, dossierId, documentId, name, mimeType, uploadedAt, *tags',
+      documentLinks:
+        '++id, documentId, dossierId, [documentId+dossierId]',
+      auditLog:
+        '++id, dossierId, entityType, entityId, action, timestamp',
+      jots: '++id, createdAt, done, googleTaskId',
+      interestCalculations:
+        '++id, dossierId, name, updatedAt',
+      bordereaux:
+        '++id, dossierId, name, updatedAt',
+      bordereauPieces:
+        '++id, bordereauId, order, uid',
+      stampSettings:
+        '++id, updatedAt',
+    });
+
     // ─── Middleware : déclenche le sync Drive sur toute mutation ───
     // On intercepte add, put, delete, clear sur toutes les tables sauf :
     //   - 'history' (audit log interne, jamais synchronisé)
@@ -339,10 +405,16 @@ export class MyLexDatabase extends Dexie {
             // Tables jamais synchronisées vers Drive (locales pures) :
             //  - history / auditLog : journaux internes
             //  - attachments : blobs binaires, trop lourds pour un JSON Drive
+            //  - bordereauPieces : contiennent les fichiers sources (Blob)
+            //    importés par l'utilisateur dans l'outil bordereau ; trop
+            //    lourds eux aussi pour un JSON Drive. Seuls le projet de
+            //    bordereau (table `bordereaux`) et les réglages du tampon
+            //    (table `stampSettings`) voyagent par Drive.
             if (
               tableName === 'history' ||
               tableName === 'auditLog' ||
-              tableName === 'attachments'
+              tableName === 'attachments' ||
+              tableName === 'bordereauPieces'
             ) return table;
             return {
               ...table,
@@ -1014,4 +1086,53 @@ export async function toggleJotDone(id: number): Promise<void> {
     updatedAt: now,
     completedAt: willBeDone ? now : undefined,
   });
+}
+
+// ─── Stamp settings helpers (singleton id = 1) ─────────────────────────────
+
+const STAMP_SETTINGS_ID = 1;
+
+export const DEFAULT_STAMP_SETTINGS: StampSettings = {
+  id: STAMP_SETTINGS_ID,
+  font: 'Helvetica',
+  size: 'medium',
+  position: 'top-right',
+  numberColor: '#c81e1e',
+  allPages: false,
+  updatedAt: new Date(0),
+};
+
+export async function getStampSettings(): Promise<StampSettings> {
+  const existing = await db.stampSettings.get(STAMP_SETTINGS_ID);
+  if (existing) return existing;
+  return { ...DEFAULT_STAMP_SETTINGS, updatedAt: new Date(0) };
+}
+
+export async function saveStampSettings(
+  patch: Partial<StampSettings>,
+): Promise<void> {
+  const current = await getStampSettings();
+  const merged: StampSettings = {
+    ...current,
+    ...patch,
+    id: STAMP_SETTINGS_ID,
+    updatedAt: new Date(),
+  };
+  await db.stampSettings.put(merged);
+}
+
+// ─── Bordereau helpers ─────────────────────────────────────────────────────
+
+export async function deleteBordereau(id: number): Promise<void> {
+  // Supprime le projet ET toutes ses pièces sources locales.
+  const pieces = await db.bordereauPieces
+    .where('bordereauId')
+    .equals(id)
+    .toArray();
+  if (pieces.length) {
+    await db.bordereauPieces.bulkDelete(
+      pieces.map((p) => p.id!).filter((x) => x != null),
+    );
+  }
+  await db.bordereaux.delete(id);
 }

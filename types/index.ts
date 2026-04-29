@@ -43,6 +43,17 @@ export interface Document {
   variables?: Record<string, string>;
   templateId?: number;
   sourceFile?: string;
+  /**
+   * Contenu binaire optionnel : utilisé par les outils qui produisent
+   * des fichiers (par exemple les pièces tamponnées générées par
+   * l'outil bordereau de pièces). Lorsqu'il est présent, le document
+   * est consommé/affiché à partir du blob plutôt que du `content`
+   * HTML. Ce champ N'est PAS synchronisé via Google Drive (trop
+   * lourd) et reste local à l'appareil.
+   */
+  fileBlob?: Blob;
+  /** Type MIME associé au `fileBlob` (ex. application/pdf). */
+  fileMimeType?: string;
   createdAt: Date;
   updatedAt: Date;
   wordCount: number;
@@ -854,6 +865,107 @@ export interface InterestCalculation {
   /** Snapshot des taux utilisés au moment du calcul. */
   ratesSnapshot?: InterestRateSnapshot[];
   notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// ─── Bordereau de pièces (outil dossier) ──────────────────────────────────
+
+/**
+ * Position du tampon sur la page selon une grille 3×3. Chaque clé
+ * combine une position verticale et une position horizontale.
+ */
+export type StampPosition =
+  | 'top-left' | 'top-center' | 'top-right'
+  | 'middle-left' | 'middle-center' | 'middle-right'
+  | 'bottom-left' | 'bottom-center' | 'bottom-right';
+
+/** Trois tailles relatives à la largeur de la page. */
+export type StampSize = 'small' | 'medium' | 'large';
+
+/** Polices web sûres autorisées pour le numéro du tampon. */
+export type StampFont =
+  | 'Helvetica'
+  | 'Times'
+  | 'Courier'
+  | 'Georgia'
+  | 'Inter';
+
+/**
+ * Réglages du tampon virtuel apposé sur les pièces. Il existe un
+ * unique enregistrement (singleton id = 1). L'image du sceau est
+ * stockée en base64 pour permettre la synchronisation Drive.
+ */
+export interface StampSettings {
+  id?: number;
+  /** Image du sceau encodée en data URL (data:image/png;base64,…). */
+  imageDataUrl?: string;
+  /** Type MIME originel de l'image importée. */
+  imageMimeType?: 'image/png' | 'image/svg+xml' | 'image/jpeg';
+  /** Police utilisée pour écrire le numéro de pièce. */
+  font: StampFont;
+  /** Taille relative du tampon (par rapport à la largeur de page). */
+  size: StampSize;
+  /** Position du tampon sur la page. */
+  position: StampPosition;
+  /** Couleur du numéro de pièce (hex, ex. #d22). */
+  numberColor: string;
+  /** Vrai = tampon sur toutes les pages, faux = première page seulement. */
+  allPages: boolean;
+  updatedAt: Date;
+}
+
+/**
+ * Une pièce au sein d'un bordereau. Conserve le fichier source
+ * binaire (pdf/docx/png/jpeg) ainsi que les choix utilisateur :
+ * numéro de pièce et nom personnalisé. La table `bordereauPieces`
+ * n'est PAS synchronisée via Drive (les blobs sources sont locaux).
+ */
+export interface BordereauPiece {
+  id?: number;
+  bordereauId: number;
+  /** Position dans le bordereau (utilisée pour l'ordre d'affichage). */
+  order: number;
+  /** Numéro de pièce affiché et inscrit sur le tampon (ex. "1", "2 bis"). */
+  pieceNumber: string;
+  /** Nom donné à la pièce par l'utilisateur (ex. « Attestation de Mme X »). */
+  customName: string;
+  /** Nom du fichier source (avant renommage). */
+  sourceFileName: string;
+  /** Type MIME du fichier source. */
+  sourceMimeType: string;
+  /** Contenu binaire du fichier source. Stocké localement uniquement. */
+  sourceBlob: Blob;
+  /** Référence vers le Document du dossier d'où la pièce a été tirée
+   *  (sélection « depuis le dossier »). Non rempli si import disque. */
+  sourceDocumentId?: number;
+  /** Identifiant local stable (uuid) pour le tracking côté UI. */
+  uid: string;
+}
+
+/**
+ * Projet de bordereau de pièces, rattaché à un dossier. Le projet
+ * en lui-même est synchronisé (métadonnées). Les blobs des pièces
+ * sources vivent dans `bordereauPieces` et restent locaux.
+ */
+export interface Bordereau {
+  id?: number;
+  dossierId: number;
+  name: string;
+  /** Numérotation automatique 1, 2, 3… (avec drag-drop pour réordonner)
+   *  ou numérotation libre saisie par l'utilisateur. */
+  autoNumbering: boolean;
+  /**
+   * Identifiants des Documents PDF générés par la dernière exécution
+   * de « Générer le bordereau ». Permet de les supprimer en bloc via
+   * le bouton « Supprimer le bordereau » sans toucher au projet.
+   */
+  generatedDocumentIds?: number[];
+  /** Identifiant du Document PDF récapitulatif (bordereau de
+   *  communication) généré, le cas échéant. */
+  generatedRecapDocumentId?: number;
+  /** Date de la dernière génération réussie. */
+  lastGeneratedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
