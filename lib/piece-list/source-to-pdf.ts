@@ -54,5 +54,13 @@ export async function sourceBlobToPdf(
     await appendHtmlAsPdfPages(result.value || '<p></p>', pdf);
     return pdf;
   }
+  if (lower === 'text/html' || lower.startsWith('text/html')) {
+    // Brouillons rédigés dans l'éditeur Tiptap : le contenu HTML est
+    // rendu via le même pipeline foreignObject que pour les DOCX.
+    const html = await blob.text();
+    const pdf = await PDFDocument.create();
+    await appendHtmlAsPdfPages(html || '<p></p>', pdf);
+    return pdf;
+  }
   throw new Error(`Type non supporté : ${mimeType}`);
 }

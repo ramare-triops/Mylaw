@@ -14,7 +14,10 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ArrowLeft,
   FileStack,
+  FileText,
+  Paperclip,
   Plus,
+  Search,
   Trash2,
   Settings2,
   Upload,
@@ -35,6 +38,7 @@ import {
 } from '@/lib/piece-list/generate';
 import { StampSettingsDialog } from './StampSettingsDialog';
 import type {
+  Attachment,
   Bordereau,
   BordereauPiece,
   Dossier,
@@ -441,7 +445,7 @@ function BordereauDetail({
     await db.bordereaux.update(bordereauId, { updatedAt: new Date() });
   }
 
-  async function addPiecesFromDossier(docs: Document[]) {
+  async function addPiecesFromDossier(items: PickedItem[]) {
     const existing = await db.bordereauPieces
       .where('bordereauId')
       .equals(bordereauId)
@@ -449,21 +453,57 @@ function BordereauDetail({
     let order = existing.length;
     let pieceNumber = order;
     const auto = !!bordereau?.autoNumbering;
-    for (const d of docs) {
-      if (!d.fileBlob) continue;
+    for (const it of items) {
       pieceNumber += 1;
-      const piece: BordereauPiece = {
-        bordereauId,
-        order: order++,
-        pieceNumber: auto ? String(pieceNumber) : '',
-        customName: d.title || 'Pièce',
-        sourceFileName:
-          d.title + (d.fileMimeType?.includes('pdf') ? '.pdf' : ''),
-        sourceMimeType: d.fileMimeType ?? 'application/pdf',
-        sourceBlob: d.fileBlob,
-        sourceDocumentId: d.id,
-        uid: uuid(),
-      };
+      let piece: BordereauPiece;
+      if (it.kind === 'doc') {
+        const d = it.doc;
+        if (d.fileBlob) {
+          // Document déjà sous forme binaire (PDF tamponné, fichier
+          // importé via l'outil bordereau, etc.) : on le réutilise tel
+          // quel.
+          piece = {
+            bordereauId,
+            order: order++,
+            pieceNumber: auto ? String(pieceNumber) : '',
+            customName: d.title || 'Pièce',
+            sourceFileName: filenameForDoc(d),
+            sourceMimeType: d.fileMimeType ?? 'application/pdf',
+            sourceBlob: d.fileBlob,
+            sourceDocumentId: d.id,
+            uid: uuid(),
+          };
+        } else {
+          // Brouillon Tiptap : on encapsule le HTML dans un Blob avec
+          // un type MIME `text/html`. La conversion HTML → PDF est
+          // effectuée à la génération via `appendHtmlAsPdfPages`.
+          const html = d.content || '';
+          const blob = new Blob([html], { type: 'text/html' });
+          piece = {
+            bordereauId,
+            order: order++,
+            pieceNumber: auto ? String(pieceNumber) : '',
+            customName: d.title || 'Pièce',
+            sourceFileName: `${d.title || 'document'}.html`,
+            sourceMimeType: 'text/html',
+            sourceBlob: blob,
+            sourceDocumentId: d.id,
+            uid: uuid(),
+          };
+        }
+      } else {
+        const a = it.attachment;
+        piece = {
+          bordereauId,
+          order: order++,
+          pieceNumber: auto ? String(pieceNumber) : '',
+          customName: stripExtension(a.name) || 'Pièce',
+          sourceFileName: a.name,
+          sourceMimeType: a.mimeType || resolveMime('', a.name),
+          sourceBlob: a.blob,
+          uid: uuid(),
+        };
+      }
       await db.bordereauPieces.add(piece);
     }
     await db.bordereaux.update(bordereauId, { updatedAt: new Date() });
@@ -763,7 +803,7 @@ function BordereauDetail({
         </div>
       )}
 
-      {/* Dialog : choisir des documents du dossier */}
+      {/* Dialog : choisir des documents et pièces jointes du dossier */}
       {pickerOpen && (
         <DossierFilesPickerDialog
           dossier={dossier}
@@ -775,8 +815,8 @@ function BordereauDetail({
             )
           }
           onClose={() => setPickerOpen(false)}
-          onAdd={async (docs) => {
-            await addPiecesFromDossier(docs);
+          onAdd={async (items) => {
+            await addPiecesFromDossier(items);
             setPickerOpen(false);
           }}
         />
@@ -971,7 +1011,17 @@ function PieceTable({
   );
 }
 
-// ─── Sélecteur de documents du dossier ─────────────────────────────────────
+// ─── Sélecteur de documents et pièces jointes du dossier ──────────────────
+//
+// Reprend la même logique que le picker des pièces jointes du
+// `MailComposeDialog` : on présente côte à côte les Documents (qu'ils
+// soient des brouillons HTML, des modèles instanciés ou des fichiers
+// importés) et les Attachments (fichiers binaires liés au dossier).
+// Une recherche textuelle filtre les deux.
+
+type PickedItem =
+  | { kind: 'doc'; key: string; doc: Document }
+  | { kind: 'attachment'; key: string; attachment: Attachment };
 
 function DossierFilesPickerDialog({
   dossier,
@@ -982,7 +1032,7 @@ function DossierFilesPickerDialog({
   dossier: Dossier;
   alreadyAddedDocIds: Set<number>;
   onClose: () => void;
-  onAdd: (docs: Document[]) => Promise<void> | void;
+  onAdd: (items: PickedItem[]) => Promise<void> | void;
 }) {
   const docs = useLiveQuery<Document[]>(
     () =>
@@ -991,19 +1041,61 @@ function DossierFilesPickerDialog({
         : Promise.resolve([] as Document[]),
     [dossier.id],
   );
-  const filtered = useMemo(
-    () => (docs ?? []).filter((d) => !!d.fileBlob),
-    [docs],
+  const attachments = useLiveQuery<Attachment[]>(
+    () =>
+      dossier.id
+        ? db.attachments.where('dossierId').equals(dossier.id).toArray()
+        : Promise.resolve([] as Attachment[]),
+    [dossier.id],
   );
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  function toggle(id: number) {
+  const items = useMemo<PickedItem[]>(() => {
+    const list: PickedItem[] = [];
+    for (const d of docs ?? []) {
+      if (d.id == null) continue;
+      // On exclut les pièces tamponnées générées précédemment par
+      // l'outil bordereau pour éviter de re-tamponner ses propres
+      // sorties par mégarde (elles portent un tag `bordereau:N`).
+      if (
+        Array.isArray(d.tags) &&
+        d.tags.some((t) => /^bordereau-récap$|^bordereau:/.test(t))
+      )
+        continue;
+      list.push({ kind: 'doc', key: `doc-${d.id}`, doc: d });
+    }
+    for (const a of attachments ?? []) {
+      if (a.id == null) continue;
+      list.push({
+        kind: 'attachment',
+        key: `att-${a.id}`,
+        attachment: a,
+      });
+    }
+    return list;
+  }, [docs, attachments]);
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    if (!q) return items;
+    return items.filter((it) =>
+      titleOf(it).toLowerCase().includes(q),
+    );
+  }, [items, search]);
+
+  function toggle(key: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
+  }
+
+  function handleConfirm() {
+    const picked = items.filter((it) => selected.has(it.key));
+    void onAdd(picked);
   }
 
   return (
@@ -1021,15 +1113,21 @@ function DossierFilesPickerDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div
-          className="flex items-center justify-between px-4 py-3 border-b"
+          className="flex items-center justify-between gap-2 px-4 py-3 border-b"
           style={{ borderColor: 'var(--color-border)' }}
         >
           <h3
-            className="text-sm font-semibold"
+            className="text-sm font-semibold flex-1"
             style={{ color: 'var(--color-text)' }}
           >
             Sélectionner depuis le dossier
           </h3>
+          <span
+            className="text-xs"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            {selected.size} sélectionné{selected.size > 1 ? 's' : ''}
+          </span>
           <button
             onClick={onClose}
             className="p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)]"
@@ -1038,58 +1136,92 @@ function DossierFilesPickerDialog({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-3">
+        <div
+          className="px-4 py-3 border-b"
+          style={{ borderColor: 'var(--color-border)' }}
+        >
+          <div className="relative">
+            <Search
+              className="absolute left-3 top-1/2 -translate-y-1/2"
+              size={14}
+              style={{ color: 'var(--color-text-muted)' }}
+            />
+            <input
+              type="text"
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Rechercher dans les documents et pièces jointes…"
+              className={cn(
+                'w-full pl-9 pr-3 py-2 text-sm rounded-md',
+                'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+                'text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]',
+                'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
+              )}
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
           {filtered.length === 0 ? (
             <div
-              className="text-sm py-8 text-center"
+              className="text-sm py-8 px-6 text-center"
               style={{ color: 'var(--color-text-muted)' }}
             >
-              Aucun fichier importé dans ce dossier.
-              <br />
-              Utilisez « Depuis l&apos;ordinateur » pour importer des
-              pièces directement.
+              {items.length === 0
+                ? 'Aucun document ni pièce jointe dans ce dossier.'
+                : 'Aucun résultat pour cette recherche.'}
             </div>
           ) : (
-            <ul className="space-y-1">
-              {filtered.map((d) => {
+            <ul className="divide-y divide-[var(--color-border)]">
+              {filtered.map((it) => {
                 const already =
-                  d.id != null && alreadyAddedDocIds.has(d.id);
+                  it.kind === 'doc' &&
+                  it.doc.id != null &&
+                  alreadyAddedDocIds.has(it.doc.id);
+                const checked = selected.has(it.key);
+                const Icon = it.kind === 'doc' ? FileText : Paperclip;
                 return (
-                  <li key={d.id}>
+                  <li key={it.key}>
                     <label
                       className={cn(
-                        'flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer',
+                        'flex items-center gap-3 px-4 py-2 text-sm cursor-pointer',
                         already
-                          ? 'opacity-50'
+                          ? 'opacity-50 cursor-not-allowed'
                           : 'hover:bg-[var(--color-surface-raised)]',
                       )}
                     >
                       <input
                         type="checkbox"
-                        checked={d.id != null && selected.has(d.id)}
-                        onChange={() => d.id != null && toggle(d.id)}
+                        checked={checked && !already}
                         disabled={already}
+                        onChange={() => toggle(it.key)}
                         className="w-4 h-4 accent-[var(--color-primary)]"
                       />
+                      <Icon
+                        size={14}
+                        style={{ color: 'var(--color-text-muted)' }}
+                        className="flex-shrink-0"
+                      />
                       <span
-                        className="text-sm flex-1 truncate"
+                        className="flex-1 truncate"
                         style={{ color: 'var(--color-text)' }}
                       >
-                        {d.title}
+                        {titleOf(it)}
                       </span>
                       <span
-                        className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded"
+                        className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded flex-shrink-0"
                         style={{
                           background: 'var(--color-surface-raised)',
                           color: 'var(--color-text-muted)',
                         }}
                       >
-                        {d.fileMimeType?.split('/')[1] ?? 'fichier'}
+                        {kindLabel(it)}
                       </span>
                       {already && (
                         <span
-                          className="text-xs"
-                          style={{ color: 'var(--color-text-muted)' }}
+                          className="text-[10px] uppercase tracking-wider"
+                          style={{ color: 'var(--color-text-faint)' }}
                         >
                           déjà ajouté
                         </span>
@@ -1103,47 +1235,57 @@ function DossierFilesPickerDialog({
         </div>
 
         <div
-          className="flex items-center justify-between px-4 py-3 border-t"
+          className="flex items-center justify-end gap-2 px-4 py-3 border-t"
           style={{ borderColor: 'var(--color-border)' }}
         >
-          <span
-            className="text-xs"
-            style={{ color: 'var(--color-text-muted)' }}
+          <button
+            onClick={onClose}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded-md',
+              'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+              'hover:bg-[var(--color-border)]',
+            )}
           >
-            {selected.size} sélectionné{selected.size > 1 ? 's' : ''}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              className={cn(
-                'px-3 py-1.5 text-sm rounded-md',
-                'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-                'hover:bg-[var(--color-border)]',
-              )}
-            >
-              Annuler
-            </button>
-            <button
-              disabled={selected.size === 0}
-              onClick={() => {
-                const chosen = filtered.filter(
-                  (d) => d.id != null && selected.has(d.id),
-                );
-                void onAdd(chosen);
-              }}
-              className={cn(
-                'px-3 py-1.5 text-sm rounded-md font-medium text-white',
-                'bg-[var(--color-primary)] hover:opacity-90',
-                selected.size === 0 && 'opacity-50 cursor-not-allowed',
-              )}
-            >
-              Ajouter {selected.size > 0 ? `(${selected.size})` : ''}
-            </button>
-          </div>
+            Annuler
+          </button>
+          <button
+            disabled={selected.size === 0}
+            onClick={handleConfirm}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded-md font-medium text-white',
+              'bg-[var(--color-primary)] hover:opacity-90',
+              selected.size === 0 && 'opacity-50 cursor-not-allowed',
+            )}
+          >
+            Ajouter {selected.size > 0 ? `(${selected.size})` : ''}
+          </button>
         </div>
       </div>
     </div>
   );
+}
+
+function titleOf(it: PickedItem): string {
+  if (it.kind === 'doc') return it.doc.title || 'Sans titre';
+  return it.attachment.name;
+}
+
+function kindLabel(it: PickedItem): string {
+  if (it.kind === 'attachment') {
+    const sub = it.attachment.mimeType?.split('/')[1];
+    return sub || 'fichier';
+  }
+  if (it.doc.fileMimeType) return it.doc.fileMimeType.split('/')[1] || 'fichier';
+  return 'brouillon';
+}
+
+function filenameForDoc(d: Document): string {
+  if (d.fileMimeType?.includes('pdf')) return `${d.title || 'document'}.pdf`;
+  if (d.fileMimeType?.includes('word'))
+    return `${d.title || 'document'}.docx`;
+  if (d.fileMimeType?.startsWith('image/'))
+    return `${d.title || 'document'}.${d.fileMimeType.split('/')[1] || 'png'}`;
+  return d.title || 'document';
 }
 
 // ─── Aperçu d'une pièce (brut ou tamponné) ─────────────────────────────────
