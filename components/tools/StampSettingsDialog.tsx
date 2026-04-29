@@ -471,7 +471,7 @@ function StampPreview({ settings }: { settings: StampSettings }) {
             lineHeight: 1,
           }}
         >
-          n°1
+          n° 1
         </span>
       </div>
     </div>

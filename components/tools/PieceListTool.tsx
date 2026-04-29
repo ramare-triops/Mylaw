@@ -9,7 +9,7 @@
  *     pièces, génération, suppression).
  */
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ArrowLeft,
@@ -27,6 +27,12 @@ import {
 } from 'lucide-react';
 import { db, deleteBordereau } from '@/lib/db';
 import { cn } from '@/lib/utils';
+import {
+  buildStampedPreview,
+  clearGeneratedBordereau,
+  generateBordereau,
+  type GenerationProgress,
+} from '@/lib/piece-list/generate';
 import { StampSettingsDialog } from './StampSettingsDialog';
 import type {
   Bordereau,
@@ -353,6 +359,9 @@ function BordereauDetail({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [previewPiece, setPreviewPiece] = useState<BordereauPiece | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState<string | null>(null);
+  const [generationDone, setGenerationDone] = useState<string | null>(null);
 
   const sortedPieces = useMemo(
     () => (pieces ?? []).slice().sort((a, b) => a.order - b.order),
@@ -475,6 +484,59 @@ function BordereauDetail({
 
   async function updatePieceName(id: number, value: string) {
     await db.bordereauPieces.update(id, { customName: value });
+  }
+
+  async function handleGenerate() {
+    if (!bordereau || !dossier) return;
+    if (sortedPieces.length === 0) {
+      setError('Ajoutez au moins une pièce avant de générer le bordereau.');
+      return;
+    }
+    setError(null);
+    setGenerationDone(null);
+    setGenerating(true);
+    try {
+      const onProgress = (p: GenerationProgress) => {
+        if (p.step === 'cleanup') setGenerationStatus('Nettoyage…');
+        else if (p.step === 'piece')
+          setGenerationStatus(
+            `Pièce ${(p.index ?? 0) + 1}/${p.total} — ${p.pieceLabel ?? ''}`,
+          );
+        else if (p.step === 'recap')
+          setGenerationStatus('Génération du bordereau récapitulatif…');
+        else if (p.step === 'finalize') setGenerationStatus('Finalisation…');
+      };
+      const r = await generateBordereau(bordereau, dossier, onProgress);
+      setGenerationDone(
+        `${r.generatedDocumentIds.length} pièce${r.generatedDocumentIds.length > 1 ? 's' : ''} générée${r.generatedDocumentIds.length > 1 ? 's' : ''} + 1 bordereau récapitulatif ajoutés au dossier.`,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setGenerating(false);
+      setGenerationStatus(null);
+    }
+  }
+
+  async function handleClearGenerated() {
+    if (!bordereau) return;
+    const count =
+      (bordereau.generatedDocumentIds?.length ?? 0) +
+      (bordereau.generatedRecapDocumentId != null ? 1 : 0);
+    if (count === 0) {
+      setError("Ce bordereau n'a pas encore été généré.");
+      return;
+    }
+    if (
+      !confirm(
+        `Supprimer les ${count} document${count > 1 ? 's' : ''} PDF généré${count > 1 ? 's' : ''} dans le dossier ? Le projet de bordereau (pièces, numéros, désignations) est conservé.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setGenerationDone(null);
+    await clearGeneratedBordereau(bordereau);
   }
 
   async function reorderPieces(fromIdx: number, toIdx: number) {
@@ -636,7 +698,7 @@ function BordereauDetail({
         onReorder={reorderPieces}
       />
 
-      {/* Bandeau de génération (Phase 5/6 — boutons branchés bientôt) */}
+      {/* Bandeau de génération */}
       <div className="mt-4 flex items-center justify-between flex-wrap gap-2">
         <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
           {sortedPieces.length} pièce{sortedPieces.length > 1 ? 's' : ''}
@@ -647,31 +709,59 @@ function BordereauDetail({
               {new Date(bordereau.lastGeneratedAt).toLocaleString('fr-FR')}.
             </>
           )}
+          {generationStatus && (
+            <span
+              className="ml-2 italic"
+              style={{ color: 'var(--color-primary)' }}
+            >
+              {generationStatus}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
-            disabled
-            title="Sera activé en Phase 5"
+            onClick={() => void handleClearGenerated()}
+            disabled={
+              generating ||
+              !bordereau.generatedDocumentIds?.length
+            }
             className={cn(
               'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md',
               'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-              'text-[var(--color-text-muted)] cursor-not-allowed opacity-60',
+              'hover:bg-[var(--color-border)]',
+              (generating || !bordereau.generatedDocumentIds?.length) &&
+                'opacity-50 cursor-not-allowed',
             )}
           >
             Supprimer le bordereau
           </button>
           <button
-            disabled
-            title="Sera activé en Phase 5"
+            onClick={() => void handleGenerate()}
+            disabled={generating || sortedPieces.length === 0}
             className={cn(
               'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md font-medium text-white',
-              'bg-[var(--color-primary)] opacity-50 cursor-not-allowed',
+              'bg-[var(--color-primary)] hover:opacity-90',
+              (generating || sortedPieces.length === 0) &&
+                'opacity-50 cursor-not-allowed',
             )}
           >
-            <FileCheck2 size={13} /> Générer le bordereau
+            <FileCheck2 size={13} />
+            {generating ? 'Génération…' : 'Générer le bordereau'}
           </button>
         </div>
       </div>
+
+      {generationDone && (
+        <div
+          className="mt-3 px-3 py-2 rounded-md text-sm flex items-center gap-2"
+          style={{
+            background: 'oklch(from var(--color-primary) l c h / 0.08)',
+            color: 'var(--color-primary)',
+          }}
+        >
+          <FileCheck2 size={14} /> {generationDone}
+        </div>
+      )}
 
       {/* Dialog : choisir des documents du dossier */}
       {pickerOpen && (
@@ -698,7 +788,7 @@ function BordereauDetail({
       />
 
       {previewPiece && (
-        <RawPreviewDialog
+        <PiecePreviewDialog
           piece={previewPiece}
           onClose={() => setPreviewPiece(null)}
         />
@@ -1056,23 +1146,60 @@ function DossierFilesPickerDialog({
   );
 }
 
-// ─── Aperçu brut d'une pièce (Phase 4 ajoutera l'option « tamponné ») ─────
+// ─── Aperçu d'une pièce (brut ou tamponné) ─────────────────────────────────
 
-function RawPreviewDialog({
+function PiecePreviewDialog({
   piece,
   onClose,
 }: {
   piece: BordereauPiece;
   onClose: () => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [stamped, setStamped] = useState(false);
+  const [rawUrl, setRawUrl] = useState<string | null>(null);
+  const [stampedUrl, setStampedUrl] = useState<string | null>(null);
+  const [stampedLoading, setStampedLoading] = useState(false);
+  const [stampedError, setStampedError] = useState<string | null>(null);
 
-  useMemo(() => {
+  // URL brute (recréée si la pièce change)
+  useEffect(() => {
     const u = URL.createObjectURL(piece.sourceBlob);
-    setUrl(u);
+    setRawUrl(u);
     return () => URL.revokeObjectURL(u);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [piece.uid]);
+  }, [piece.uid, piece.sourceBlob]);
+
+  // URL tamponnée (générée à la demande)
+  useEffect(() => {
+    if (!stamped) return;
+    if (stampedUrl) return;
+    let cancelled = false;
+    setStampedLoading(true);
+    setStampedError(null);
+    void (async () => {
+      try {
+        const blob = await buildStampedPreview(piece);
+        if (cancelled) return;
+        const u = URL.createObjectURL(blob);
+        setStampedUrl(u);
+      } catch (err) {
+        if (!cancelled) setStampedError((err as Error).message);
+      } finally {
+        if (!cancelled) setStampedLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [stamped, stampedUrl, piece]);
+
+  // Libère l'URL tamponnée à la fermeture / au démontage
+  useEffect(() => {
+    return () => {
+      if (stampedUrl) URL.revokeObjectURL(stampedUrl);
+    };
+  }, [stampedUrl]);
+
+  const previewUrl = stamped ? stampedUrl : rawUrl;
 
   return (
     <div
@@ -1089,7 +1216,7 @@ function RawPreviewDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div
-          className="flex items-center justify-between px-4 py-2 border-b"
+          className="flex items-center justify-between gap-3 px-4 py-2 border-b"
           style={{ borderColor: 'var(--color-border)' }}
         >
           <div className="min-w-0 flex-1">
@@ -1104,22 +1231,69 @@ function RawPreviewDialog({
               style={{ color: 'var(--color-text-muted)' }}
             >
               {piece.sourceFileName}
+              {piece.pieceNumber && ` — n° ${piece.pieceNumber}`}
             </div>
+          </div>
+          <div
+            className="inline-flex rounded-md overflow-hidden border shrink-0"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
+            <button
+              onClick={() => setStamped(false)}
+              className={cn(
+                'px-3 py-1 text-xs font-medium',
+                !stamped
+                  ? 'bg-[var(--color-primary)] text-white'
+                  : 'bg-[var(--color-surface-raised)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+              )}
+            >
+              Brut
+            </button>
+            <button
+              onClick={() => setStamped(true)}
+              className={cn(
+                'px-3 py-1 text-xs font-medium',
+                stamped
+                  ? 'bg-[var(--color-primary)] text-white'
+                  : 'bg-[var(--color-surface-raised)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+              )}
+            >
+              Avec tampon
+            </button>
           </div>
           <button
             onClick={onClose}
-            className="p-1 ml-3 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)]"
+            className="p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)]"
           >
             <X size={14} />
           </button>
         </div>
         <div
-          className="flex-1 overflow-hidden"
+          className="flex-1 overflow-hidden relative"
           style={{ background: '#444' }}
         >
-          {url && (
+          {stamped && stampedLoading && (
+            <div className="absolute inset-0 flex items-center justify-center text-white text-sm">
+              Application du tampon…
+            </div>
+          )}
+          {stamped && stampedError && (
+            <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+              <div
+                className="px-4 py-3 rounded-md text-sm"
+                style={{
+                  background: 'oklch(from var(--color-error) l c h / 0.12)',
+                  color: 'var(--color-error)',
+                }}
+              >
+                <AlertTriangle size={14} className="inline mr-1" />
+                {stampedError}
+              </div>
+            </div>
+          )}
+          {previewUrl && !(stamped && stampedLoading) && !stampedError && (
             <iframe
-              src={url}
+              src={previewUrl}
               title={piece.customName || piece.sourceFileName}
               className="w-full h-full"
               style={{ border: 0, background: 'white' }}
