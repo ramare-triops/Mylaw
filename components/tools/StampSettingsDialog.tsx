@@ -320,7 +320,7 @@ export function StampSettingsDialog({ open, onClose }: Props) {
                     fontFamily: fontCss(settings.font),
                   }}
                 >
-                  Pièce n°1
+                  1
                 </span>
               </div>
             </Section>
@@ -431,8 +431,6 @@ function StampPreview({ settings }: { settings: StampSettings }) {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          flexDirection: 'column',
-          gap: 2,
         }}
       >
         {settings.imageDataUrl ? (
@@ -440,16 +438,18 @@ function StampPreview({ settings }: { settings: StampSettings }) {
             src={settings.imageDataUrl}
             alt="sceau"
             style={{
-              maxWidth: '100%',
-              maxHeight: '70%',
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
               objectFit: 'contain',
             }}
           />
         ) : (
           <div
             style={{
-              width: '70%',
-              height: '70%',
+              position: 'absolute',
+              inset: 0,
               borderRadius: '50%',
               border: '1.5px dashed #999',
               display: 'flex',
@@ -464,14 +464,15 @@ function StampPreview({ settings }: { settings: StampSettings }) {
         )}
         <span
           style={{
+            position: 'relative',
             color: settings.numberColor,
             fontFamily: fontCss(settings.font),
-            fontSize: stampSize * 0.18,
-            fontWeight: 600,
+            fontSize: stampSize * 0.3,
+            fontWeight: 700,
             lineHeight: 1,
           }}
         >
-          n° 1
+          1
         </span>
       </div>
     </div>

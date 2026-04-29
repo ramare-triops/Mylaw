@@ -27,10 +27,10 @@ import {
 import { sizeRatio } from '@/components/tools/StampSettingsDialog';
 import type { StampFont, StampPosition, StampSettings } from '@/types';
 
-/** Largeur du tampon en proportion de la box (le reste va au texte). */
-const IMAGE_BOX_HEIGHT_RATIO = 0.7;
-/** Taille de la fonte du numéro en proportion de la largeur de la box. */
-const TEXT_SIZE_RATIO = 0.16;
+/** Taille de la fonte du numéro en proportion de la largeur de la box.
+ *  Le numéro est dessiné par-dessus le sceau, centré : on peut le faire
+ *  un peu plus gros que lorsqu'il était écrit en dessous. */
+const TEXT_SIZE_RATIO = 0.3;
 /** Marge intérieure des 9 positions (en proportion de la dimension page). */
 const MARGIN_RATIO = 0.05;
 
@@ -126,13 +126,9 @@ function dataUrlToUint8Array(dataUrl: string): Uint8Array {
   return out;
 }
 
-/** Texte inscrit sur le tampon. On préfixe « n° » pour rendre la
- *  numérotation explicite, comme en pratique judiciaire. */
+/** Texte inscrit sur le tampon : uniquement le numéro de la pièce. */
 function stampLabel(pieceNumber: string): string {
-  const trimmed = pieceNumber.trim();
-  if (!trimmed) return '';
-  if (/^n[°o]/i.test(trimmed)) return trimmed;
-  return `n° ${trimmed}`;
+  return pieceNumber.trim();
 }
 
 function drawStampOnPage(
@@ -149,34 +145,33 @@ function drawStampOnPage(
     boxSize,
   );
 
-  // Image (haut de la box) : conserve son ratio dans 70 % de la
-  // hauteur et toute la largeur.
+  // Image : occupe toute la box, ratio préservé, centrée.
   if (prepared.image) {
-    const imgBoxH = boxH * IMAGE_BOX_HEIGHT_RATIO;
-    const imgBoxW = boxW;
     const iw = prepared.image.width;
     const ih = prepared.image.height;
-    const scale = Math.min(imgBoxW / iw, imgBoxH / ih);
+    const scale = Math.min(boxW / iw, boxH / ih);
     const w = iw * scale;
     const h = ih * scale;
     page.drawImage(prepared.image, {
       x: boxX + (boxW - w) / 2,
-      y: boxY + boxH - imgBoxH + (imgBoxH - h) / 2,
+      y: boxY + (boxH - h) / 2,
       width: w,
       height: h,
       opacity: 1,
     });
   }
 
-  // Texte (sous l'image) : centré horizontalement.
+  // Numéro : superposé au centre exact du sceau (par-dessus l'image).
   const label = stampLabel(pieceNumber);
   if (label) {
     const fontSize = boxW * TEXT_SIZE_RATIO;
     const textWidth = prepared.font.widthOfTextAtSize(label, fontSize);
     const textHeight = prepared.font.heightAtSize(fontSize);
     const textX = boxX + (boxW - textWidth) / 2;
-    const textArea = boxH * (1 - IMAGE_BOX_HEIGHT_RATIO);
-    const textY = boxY + (textArea - textHeight) / 2;
+    // Y est la baseline du texte chez pdf-lib. On veut le centre
+    // visuel du glyph (≈ moitié de la hauteur de capitale) au centre
+    // de la box.
+    const textY = boxY + (boxH - textHeight) / 2;
     page.drawText(label, {
       x: textX,
       y: textY,
