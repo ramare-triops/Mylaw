@@ -808,6 +808,7 @@ export interface InterestResultSnapshot {
   hasExtrapolation: boolean;
   capitalize?: boolean;
   capitalizationStartDate?: Date;
+  capitalizationPeriodMonths?: number;
   increasedRate?: boolean;
   judgmentNotificationDate?: Date;
 }
@@ -830,6 +831,13 @@ export interface InterestCalculation {
    */
   capitalize?: boolean;
   capitalizationStartDate?: Date;
+  /**
+   * Périodicité de la capitalisation, exprimée en mois. Par défaut
+   * 12 mois (l'art. 1343-2 du Code civil exige « au moins une année
+   * entière »). Le juge ou le contrat peuvent fixer un intervalle
+   * plus long.
+   */
+  capitalizationPeriodMonths?: number;
   /**
    * Majoration de plein droit du taux légal (art. L.313-3 du Code
    * monétaire et financier) : en cas de condamnation pécuniaire par

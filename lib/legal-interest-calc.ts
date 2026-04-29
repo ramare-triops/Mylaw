@@ -36,6 +36,13 @@ export const INCREASED_RATE_BONUS = 5;
 /** Délai de grâce avant majoration : 2 mois après la signification. */
 export const INCREASED_RATE_DELAY_MONTHS = 2;
 
+/**
+ * Périodicité par défaut de la capitalisation (anatocisme — art. 1343-2
+ * du Code civil) : douze mois. Cette valeur correspond au minimum légal
+ * (« intérêts dus au moins pour une année entière »).
+ */
+export const DEFAULT_CAPITALIZATION_PERIOD_MONTHS = 12;
+
 export interface InterestItemInput {
   /** Identifiant local stable (uuid). */
   id: string;
@@ -82,10 +89,17 @@ export interface ComputeOptions {
   capitalize?: boolean;
   /**
    * Date à compter de laquelle la capitalisation est ordonnée. À
-   * chaque anniversaire de cette date inclus dans la période, les
-   * intérêts de l'année écoulée sont ajoutés au capital.
+   * chaque échéance de la périodicité incluse dans la période, les
+   * intérêts cumulés depuis la dernière capitalisation sont ajoutés
+   * au capital.
    */
   capitalizationStartDate?: Date;
+  /**
+   * Périodicité de la capitalisation en mois (par défaut 12). La
+   * capitalisation s'opère à chaque multiple de cette période depuis
+   * `capitalizationStartDate`.
+   */
+  capitalizationPeriodMonths?: number;
   /**
    * Active la majoration légale de 5 points (art. L.313-3 CMF) : le
    * taux légal applicable aux segments postérieurs au délai de grâce
@@ -110,6 +124,8 @@ export interface InterestComputationResult {
    *  appliquée sur au moins un item. */
   capitalize?: boolean;
   capitalizationStartDate?: Date;
+  /** Périodicité de capitalisation effectivement utilisée, en mois. */
+  capitalizationPeriodMonths?: number;
   /** Vrai si la majoration légale (art. L.313-3 CMF) est activée. */
   increasedRate?: boolean;
   /** Date de signification du jugement (la majoration s'applique
@@ -122,10 +138,6 @@ export interface InterestComputationResult {
 
 function roundCents(n: number): number {
   return Math.round(n * 100) / 100;
-}
-
-function addYears(d: Date, years: number): Date {
-  return new Date(d.getFullYear() + years, d.getMonth(), d.getDate());
 }
 
 function addDays(d: Date, days: number): Date {
@@ -246,10 +258,17 @@ export function computeOne(
       totalInterest += phase1.reduce((acc, s) => acc + s.interest, 0);
     }
 
-    // ─── Phase 2 : capitalisation annuelle de capStart → end ─────
+    // ─── Phase 2 : capitalisation périodique de capStart → end ─────
+    const periodMonths =
+      options.capitalizationPeriodMonths &&
+      options.capitalizationPeriodMonths > 0
+        ? options.capitalizationPeriodMonths
+        : DEFAULT_CAPITALIZATION_PERIOD_MONTHS;
     let cursor = capStart > start ? capStart : start;
-    let anniversary = addYears(cursor, 1);
-    let safety = 200; // garde-fou, 200 ans max
+    let anniversary = addMonths(cursor, periodMonths);
+    // Garde-fou : 200 ans × 12 mois → 2400 itérations max quand la
+    // périodicité est mensuelle.
+    let safety = 2400;
     while (cursor <= end && safety-- > 0) {
       const periodEnd = anniversary > end ? end : addDays(anniversary, -1);
       const segs = computeRange(
@@ -259,21 +278,21 @@ export function computeOne(
         type,
         increaseStart,
       );
-      const yearInterest = segs.reduce((acc, s) => acc + s.interest, 0);
+      const periodInterest = segs.reduce((acc, s) => acc + s.interest, 0);
       segments.push(...segs);
-      totalInterest += yearInterest;
+      totalInterest += periodInterest;
 
       if (anniversary <= end) {
-        // Année entière échue → capitalisation
-        runningCapital = roundCents(runningCapital + yearInterest);
+        // Échéance complète → capitalisation
+        runningCapital = roundCents(runningCapital + periodInterest);
         if (segments.length > 0) {
           segments[segments.length - 1].capitalizedAfter = true;
         }
         capitalized = true;
         cursor = anniversary;
-        anniversary = addYears(anniversary, 1);
+        anniversary = addMonths(anniversary, periodMonths);
       } else {
-        // Fraction d'année restante → pas de capitalisation
+        // Échéance incomplète restante → pas de capitalisation
         break;
       }
     }
@@ -321,6 +340,13 @@ export function computeAll(
     hasExtrapolation: computed.some((c) => c.extrapolated),
     capitalize: options.capitalize === true,
     capitalizationStartDate: options.capitalizationStartDate,
+    capitalizationPeriodMonths:
+      options.capitalize === true
+        ? (options.capitalizationPeriodMonths &&
+          options.capitalizationPeriodMonths > 0
+            ? options.capitalizationPeriodMonths
+            : DEFAULT_CAPITALIZATION_PERIOD_MONTHS)
+        : undefined,
     increasedRate: options.increasedRate === true,
     judgmentNotificationDate: options.judgmentNotificationDate,
     increasedRateStartDate,

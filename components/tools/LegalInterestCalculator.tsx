@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import {
   computeAll,
   addMonths,
+  DEFAULT_CAPITALIZATION_PERIOD_MONTHS,
   INCREASED_RATE_BONUS,
   INCREASED_RATE_DELAY_MONTHS,
   type InterestItemInput,
@@ -137,6 +138,7 @@ function resultToSnapshot(r: InterestComputationResult): InterestResultSnapshot 
     hasExtrapolation: r.hasExtrapolation,
     capitalize: r.capitalize,
     capitalizationStartDate: r.capitalizationStartDate,
+    capitalizationPeriodMonths: r.capitalizationPeriodMonths,
     increasedRate: r.increasedRate,
     judgmentNotificationDate: r.judgmentNotificationDate,
   };
@@ -176,6 +178,7 @@ function snapshotToResult(s: InterestResultSnapshot): InterestComputationResult 
     capitalizationStartDate: s.capitalizationStartDate
       ? new Date(s.capitalizationStartDate)
       : undefined,
+    capitalizationPeriodMonths: s.capitalizationPeriodMonths,
     increasedRate: s.increasedRate,
     judgmentNotificationDate: s.judgmentNotificationDate
       ? new Date(s.judgmentNotificationDate)
@@ -447,6 +450,9 @@ function CalculatorDetail({
   const [drafts, setDrafts] = useState<DraftItem[]>([emptyDraft()]);
   const [capitalize, setCapitalize] = useState(false);
   const [capitalizationStartDate, setCapitalizationStartDate] = useState<string>('');
+  const [capitalizationPeriodMonths, setCapitalizationPeriodMonths] = useState<string>(
+    String(DEFAULT_CAPITALIZATION_PERIOD_MONTHS),
+  );
   const [increasedRate, setIncreasedRate] = useState(false);
   const [judgmentNotificationDate, setJudgmentNotificationDate] = useState<string>('');
   const [result, setResult] = useState<InterestComputationResult | null>(null);
@@ -474,6 +480,11 @@ function CalculatorDetail({
         : '';
       setCapitalize(cap);
       setCapitalizationStartDate(capDate);
+      const capPeriod =
+        c.capitalizationPeriodMonths && c.capitalizationPeriodMonths > 0
+          ? c.capitalizationPeriodMonths
+          : DEFAULT_CAPITALIZATION_PERIOD_MONTHS;
+      setCapitalizationPeriodMonths(String(capPeriod));
       const inc = !!c.increasedRate;
       const incDate = c.judgmentNotificationDate
         ? ymd(new Date(c.judgmentNotificationDate))
@@ -491,6 +502,7 @@ function CalculatorDetail({
             computeAll(inputs, c.creditorType, {
               capitalize: cap,
               capitalizationStartDate: capDate ? parseYmd(capDate) : undefined,
+              capitalizationPeriodMonths: capPeriod,
               increasedRate: inc,
               judgmentNotificationDate: incDate ? parseYmd(incDate) : undefined,
             }),
@@ -570,6 +582,11 @@ function CalculatorDetail({
       setError("Indiquez la date à compter de laquelle la capitalisation est ordonnée.");
       return null;
     }
+    const capPeriod = Number(capitalizationPeriodMonths);
+    if (capitalize && (!Number.isFinite(capPeriod) || capPeriod < 1)) {
+      setError("Indiquez une périodicité de capitalisation valide (en mois).");
+      return null;
+    }
     if (increasedRate && !judgmentNotificationDate) {
       setError(
         "Indiquez la date de signification du jugement (la majoration de 5 points s'applique à partir de cette date + 2 mois).",
@@ -581,6 +598,7 @@ function CalculatorDetail({
       capitalizationStartDate: capitalize && capitalizationStartDate
         ? parseYmd(capitalizationStartDate)
         : undefined,
+      capitalizationPeriodMonths: capitalize ? capPeriod : undefined,
       increasedRate,
       judgmentNotificationDate:
         increasedRate && judgmentNotificationDate
@@ -612,6 +630,10 @@ function CalculatorDetail({
         capitalize && capitalizationStartDate
           ? parseYmd(capitalizationStartDate)
           : undefined,
+      capitalizationPeriodMonths: capitalize
+        ? Number(capitalizationPeriodMonths) ||
+          DEFAULT_CAPITALIZATION_PERIOD_MONTHS
+        : undefined,
       increasedRate,
       judgmentNotificationDate:
         increasedRate && judgmentNotificationDate
@@ -741,7 +763,7 @@ function CalculatorDetail({
           </span>
         </label>
         {capitalize && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <CalendarClock size={13} style={{ color: 'var(--color-text-muted)' }} />
             <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               à compter du :
@@ -761,6 +783,22 @@ function CalculatorDetail({
                   : 'var(--color-text-muted)',
               }}
             />
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              tous les
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              step={1}
+              value={capitalizationPeriodMonths}
+              onChange={(e) => setCapitalizationPeriodMonths(e.target.value)}
+              className={lineInputCls}
+              style={{ width: 70, textAlign: 'right' }}
+            />
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              mois
+            </span>
           </div>
         )}
       </div>

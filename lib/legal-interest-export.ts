@@ -51,7 +51,7 @@ export function exportInterestXlsx(args: {
     ['Profil créancier', result.creditorType === 'particulier' ? 'Particulier' : 'Professionnel'],
     ['Capitalisation des intérêts',
       result.capitalize
-        ? `Oui — à compter du ${result.capitalizationStartDate ? fmtDate(result.capitalizationStartDate) : '—'}`
+        ? `Oui — à compter du ${result.capitalizationStartDate ? fmtDate(result.capitalizationStartDate) : '—'}, tous les ${result.capitalizationPeriodMonths ?? 12} mois`
         : 'Non',
     ],
     ['Taux majoré (art. L.313-3 CMF)',
@@ -359,7 +359,7 @@ function renderHtml(args: {
       ${
         result.capitalize
           ? `<dt>Capitalisation</dt>
-             <dd>À compter du ${result.capitalizationStartDate ? fmtDate(result.capitalizationStartDate) : '—'} (art. 1343-2 du Code civil)</dd>`
+             <dd>À compter du ${result.capitalizationStartDate ? fmtDate(result.capitalizationStartDate) : '—'}, tous les ${result.capitalizationPeriodMonths ?? 12} mois (art. 1343-2 du Code civil)</dd>`
           : ''
       }
       ${
