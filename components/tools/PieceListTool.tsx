@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { db, deleteBordereau } from '@/lib/db';
 import { cn } from '@/lib/utils';
+import { StampSettingsDialog } from './StampSettingsDialog';
 import type { Bordereau, Dossier } from '@/types';
 
 interface Props {
@@ -283,6 +284,7 @@ function BordereauDetail({
     () => db.bordereaux.get(bordereauId),
     [bordereauId],
   );
+  const [stampOpen, setStampOpen] = useState(false);
 
   async function rename(newName: string) {
     if (!bordereau) return;
@@ -330,12 +332,11 @@ function BordereauDetail({
           style={{ color: 'var(--color-text)' }}
         />
         <button
-          disabled
-          title="Réglages du tampon (à venir)"
+          onClick={() => setStampOpen(true)}
           className={cn(
             'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md',
             'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
-            'text-[var(--color-text-muted)] cursor-not-allowed opacity-60',
+            'hover:bg-[var(--color-border)]',
           )}
         >
           <Settings2 size={13} /> Réglages du tampon
@@ -360,13 +361,18 @@ function BordereauDetail({
           </span>
         </div>
         <p className="text-sm leading-relaxed">
-          La gestion des pièces, des réglages du tampon et la génération
-          des PDF tamponnés seront ajoutées dans les prochaines phases.
+          La gestion des pièces et la génération des PDF tamponnés
+          seront ajoutées dans les prochaines phases.
         </p>
         <p className="text-xs mt-3">
           Dossier : {dossier.reference} — {dossier.name}
         </p>
       </div>
+
+      <StampSettingsDialog
+        open={stampOpen}
+        onClose={() => setStampOpen(false)}
+      />
     </div>
   );
 }
