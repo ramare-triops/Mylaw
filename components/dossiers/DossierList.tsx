@@ -92,6 +92,9 @@ export function DossierList() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [openMenu, setOpenMenu] = useState<'status' | 'type' | null>(null);
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
+  // Dossier en attente de confirmation de suppression. L'utilisateur doit
+  // taper « Supprimer » dans la boîte de dialogue pour valider.
+  const [deleteTarget, setDeleteTarget] = useState<Dossier | null>(null);
 
   // Lecture initiale du tri persistant en settings. On passe par un flag
   // `sortLoaded` : tant que le setting n'a pas été lu, on n'écrit pas
@@ -245,15 +248,20 @@ export function DossierList() {
     if (!d.id) router.push(`/dossiers/${id}`);
   }
 
-  async function handleDelete(e: React.MouseEvent, d: Dossier) {
+  function handleDelete(e: React.MouseEvent, d: Dossier) {
     e.stopPropagation();
-    if (
-      !confirm(
-        `Supprimer le dossier "${d.name}" ? Les documents seront détachés mais conservés.`
-      )
-    )
-      return;
-    if (d.id) await deleteDossier(d.id);
+    // Plutôt qu'un `confirm()` natif (un clic suffit, accident facile),
+    // on ouvre une boîte de dialogue qui demande de RETAPER « Supprimer »
+    // pour valider — la suppression d'un dossier est irréversible
+    // (détache aussi tous les documents).
+    setDeleteTarget(d);
+  }
+
+  async function confirmDelete() {
+    const d = deleteTarget;
+    if (!d?.id) return;
+    setDeleteTarget(null);
+    await deleteDossier(d.id);
   }
 
   return (
@@ -530,7 +538,153 @@ export function DossierList() {
         }}
         onSave={handleSave}
       />
+
+      <DeleteDossierDialog
+        dossier={deleteTarget}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
     </>
+  );
+}
+
+// ─── Dialog : confirmation de suppression d'un dossier ─────────────────────
+//
+// L'action est irréversible (détache tous les documents du dossier) : on
+// demande à l'utilisateur de RETAPER « Supprimer » avant de débloquer le
+// bouton de validation. La saisie est insensible à la casse et tolère les
+// espaces avant/après.
+
+const CONFIRM_WORD = 'Supprimer';
+
+function DeleteDossierDialog({
+  dossier,
+  onCancel,
+  onConfirm,
+}: {
+  dossier: Dossier | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [typed, setTyped] = useState('');
+
+  // Reset le champ à chaque ouverture sur un nouveau dossier.
+  useEffect(() => {
+    if (dossier) setTyped('');
+  }, [dossier?.id]);
+
+  if (!dossier) return null;
+
+  const isValid = typed.trim().toLowerCase() === CONFIRM_WORD.toLowerCase();
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.45)' }}
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-md rounded-md border shadow-lg"
+        style={{
+          background: 'var(--color-surface)',
+          borderColor: 'var(--color-border)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex items-center gap-2 px-4 py-3 border-b"
+          style={{ borderColor: 'var(--color-border)' }}
+        >
+          <Trash2 size={16} style={{ color: 'var(--color-error)' }} />
+          <h3
+            className="text-sm font-semibold"
+            style={{ color: 'var(--color-text)' }}
+          >
+            Supprimer le dossier
+          </h3>
+        </div>
+
+        <div className="px-4 py-4 space-y-3">
+          <p className="text-sm" style={{ color: 'var(--color-text)' }}>
+            Vous êtes sur le point de supprimer le dossier{' '}
+            <strong>« {dossier.name} »</strong>
+            {dossier.reference && (
+              <>
+                {' '}
+                <span style={{ color: 'var(--color-text-muted)' }}>
+                  ({dossier.reference})
+                </span>
+              </>
+            )}
+            . Les documents qui lui sont rattachés seront <strong>détachés</strong>{' '}
+            mais conservés dans la GED.
+          </p>
+          <p
+            className="text-xs"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            Pour confirmer, tapez exactement{' '}
+            <code
+              className="px-1.5 py-0.5 rounded"
+              style={{
+                background: 'var(--color-surface-raised)',
+                color: 'var(--color-text)',
+              }}
+            >
+              {CONFIRM_WORD}
+            </code>
+            {' '}ci-dessous :
+          </p>
+          <input
+            type="text"
+            autoFocus
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && isValid) onConfirm();
+              if (e.key === 'Escape') onCancel();
+            }}
+            placeholder={CONFIRM_WORD}
+            className={cn(
+              'w-full px-3 py-2 text-sm rounded-md',
+              'bg-[var(--color-surface)] border',
+              'text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]',
+              'focus:outline-none focus:ring-1',
+              isValid
+                ? 'border-[var(--color-error)] focus:ring-[var(--color-error)]'
+                : 'border-[var(--color-border)] focus:ring-[var(--color-primary)]',
+            )}
+          />
+        </div>
+
+        <div
+          className="flex items-center justify-end gap-2 px-4 py-3 border-t"
+          style={{ borderColor: 'var(--color-border)' }}
+        >
+          <button
+            onClick={onCancel}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded-md',
+              'bg-[var(--color-surface-raised)] border border-[var(--color-border)]',
+              'hover:bg-[var(--color-border)]',
+            )}
+          >
+            Annuler
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!isValid}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md font-medium text-white',
+              'bg-[var(--color-error)] hover:opacity-90',
+              !isValid && 'opacity-40 cursor-not-allowed',
+            )}
+          >
+            <Trash2 size={13} /> Supprimer définitivement
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
