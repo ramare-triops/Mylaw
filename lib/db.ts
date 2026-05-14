@@ -574,11 +574,14 @@ export class MyLexDatabase extends Dexie {
                 result.then(() => {
                   if (shouldTrigger && !_restoreInProgress) {
                     if (deletedKeys.length > 0) {
-                      void writeTombstones(
+                      // Best-effort, ne doit JAMAIS rejeter (sinon
+                      // unhandled rejection au niveau global) : on
+                      // attache explicitement un .catch.
+                      writeTombstones(
                         getTombstoneTable(),
                         tableName,
                         deletedKeys,
-                      );
+                      ).catch(() => {});
                     }
                     triggerDriveSync();
                   }
@@ -600,12 +603,26 @@ export const db = new MyLexDatabase();
 // Le middleware (cf. ci-dessus) appelle `writeTombstones` après chaque
 // `delete` réussi. La table `tombstones` est exclue du déclencheur de
 // sync, donc on peut écrire ici sans cascade d'événements.
+
+/** Vrai si la table `tombstones` est bien créée dans la base ouverte.
+ *  Sur les sessions où la migration v9 n'a pas encore eu lieu (vieux
+ *  onglet ouvert avant le déploiement, race au chargement), on saute
+ *  silencieusement les écritures de tombstones plutôt que de planter. */
+function tombstoneTableAvailable(): boolean {
+  try {
+    return db.tables.some((t) => t.name === 'tombstones');
+  } catch {
+    return false;
+  }
+}
+
 async function writeTombstones(
   _tombstoneTable: unknown,
   tableName: string,
   recordIds: number[],
 ): Promise<void> {
   if (recordIds.length === 0) return;
+  if (!tombstoneTableAvailable()) return;
   const now = new Date();
   try {
     // L'index unique [tableName+recordId] garantit qu'un put écrase
@@ -632,6 +649,7 @@ export async function hasTombstone(
   tableName: string,
   recordId: number,
 ): Promise<boolean> {
+  if (!tombstoneTableAvailable()) return false;
   try {
     const row = await db.tombstones
       .where('[tableName+recordId]').equals([tableName, recordId]).first();
@@ -649,6 +667,7 @@ export async function loadTombstonesByTable(): Promise<
   Map<string, Set<number>>
 > {
   const map = new Map<string, Set<number>>();
+  if (!tombstoneTableAvailable()) return map;
   try {
     const all = await db.tombstones.toArray();
     for (const t of all) {
@@ -660,7 +679,7 @@ export async function loadTombstonesByTable(): Promise<
       set.add(t.recordId);
     }
   } catch {
-    // Table absente (rare, premier load) : on retourne une map vide.
+    // Table absente ou non encore migrée — on retourne une map vide.
   }
   return map;
 }
@@ -673,6 +692,7 @@ export async function loadTombstonesByTable(): Promise<
  * d'exister.
  */
 export async function clearTombstonesUpTo(cutoff: Date): Promise<void> {
+  if (!tombstoneTableAvailable()) return;
   try {
     await db.tombstones
       .where('deletedAt').belowOrEqual(cutoff)
