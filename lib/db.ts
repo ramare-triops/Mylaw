@@ -604,13 +604,18 @@ export const db = new MyLexDatabase();
 // `delete` réussi. La table `tombstones` est exclue du déclencheur de
 // sync, donc on peut écrire ici sans cascade d'événements.
 
-/** Vrai si la table `tombstones` est bien créée dans la base ouverte.
- *  Sur les sessions où la migration v9 n'a pas encore eu lieu (vieux
- *  onglet ouvert avant le déploiement, race au chargement), on saute
- *  silencieusement les écritures de tombstones plutôt que de planter. */
+/** Vrai si le STORE IndexedDB `tombstones` existe réellement dans la
+ *  base ouverte (et pas seulement dans le schéma JS déclaré). Quand
+ *  un autre onglet tient encore l'ancienne version du schéma, la
+ *  migration v9 est mise en pause par IDB ; Dexie connait alors la
+ *  table côté code mais le store sous-jacent n'est pas créé. Dans ce
+ *  cas, toute écriture lève `NotFoundError`. On saute silencieusement
+ *  jusqu'au prochain rechargement (où la migration aura eu lieu). */
 function tombstoneTableAvailable(): boolean {
   try {
-    return db.tables.some((t) => t.name === 'tombstones');
+    const idb = db.backendDB?.();
+    if (!idb) return false;
+    return idb.objectStoreNames.contains('tombstones');
   } catch {
     return false;
   }
