@@ -386,6 +386,63 @@ export class MyLexDatabase extends Dexie {
         '++id, updatedAt',
     });
 
+    // ─── Version 8 : ajout des index `updatedAt` et `driveFileId` ─────────
+    // Pour la synchronisation cross-device des fichiers binaires :
+    //   - les blobs (`attachments.blob`, `bordereauPieces.sourceBlob`)
+    //     transitent par des fichiers Drive séparés (un par blob) ;
+    //   - les métadonnées (`name`, `mimeType`, `driveFileId`,
+    //     `contentHash`, etc.) voyagent dans le JSON backup ;
+    //   - `updatedAt` sert au merge timestamp-based (recordTime).
+    // Aucune mutation de données : on ne fait qu'ajouter des index.
+    this.version(8).stores({
+      documents:
+        '++id, title, type, folderId, dossierId, status, category, updatedAt, tags, *searchTokens',
+      documentVersions: '++id, documentId, timestamp',
+      folders: '++id, name, parentId, color, createdAt',
+      tools: '++id, slug, name, pinned, order, config, lastUsedAt',
+      templates: '++id, name, category, content, variables, createdAt',
+      sessions: '++id, date, toolId, content, tags',
+      snippets: '++id, trigger, expansion, category',
+      aiChats: '++id, documentId, messages, createdAt',
+      settings: 'key',
+      history: '++id, action, entityId, entityType, timestamp',
+      deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
+      bricks: '++id, title, category, infoLabelId, updatedAt, *tags',
+      infoLabels: '++id, name, color, createdAt',
+      fieldDefs: '++id, name, type, category, updatedAt',
+      dossiers:
+        '++id, reference, name, type, status, updatedAt, createdAt, *tags',
+      contacts:
+        '++id, type, lastName, companyName, email, updatedAt, *tags',
+      dossierContacts:
+        '++id, dossierId, contactId, role, [dossierId+contactId]',
+      documentContacts:
+        '++id, documentId, contactId, role, [documentId+contactId]',
+      timeEntries:
+        '++id, dossierId, documentId, contactId, date, billable, billed, invoiceId',
+      expenses:
+        '++id, dossierId, documentId, date, category, billed, invoiceId',
+      fixedFees:
+        '++id, dossierId, documentId, date, kind, billed, invoiceId',
+      invoices:
+        '++id, dossierId, reference, date, status',
+      attachments:
+        '++id, dossierId, documentId, name, mimeType, uploadedAt, updatedAt, driveFileId, *tags',
+      documentLinks:
+        '++id, documentId, dossierId, [documentId+dossierId]',
+      auditLog:
+        '++id, dossierId, entityType, entityId, action, timestamp',
+      jots: '++id, createdAt, done, googleTaskId',
+      interestCalculations:
+        '++id, dossierId, name, updatedAt',
+      bordereaux:
+        '++id, dossierId, name, updatedAt',
+      bordereauPieces:
+        '++id, bordereauId, order, uid, updatedAt, driveFileId',
+      stampSettings:
+        '++id, updatedAt',
+    });
+
     // ─── Middleware : déclenche le sync Drive sur toute mutation ───
     // On intercepte add, put, delete, clear sur toutes les tables sauf :
     //   - 'history' (audit log interne, jamais synchronisé)

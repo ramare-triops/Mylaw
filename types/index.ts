@@ -695,11 +695,32 @@ export interface Attachment {
   name: string;
   mimeType: string;
   size: number;
-  /** Blob stocké en IndexedDB (ne voyage PAS via Drive JSON). */
-  blob: Blob;
+  /**
+   * Blob stocké en IndexedDB. Optionnel : si la pièce a été
+   * synchronisée depuis un autre appareil, le blob peut être
+   * temporairement absent en attendant le téléchargement Drive
+   * (champ `driveFileId` ci-dessous).
+   */
+  blob?: Blob;
+  /**
+   * Identifiant du fichier Drive (AppData) qui contient le binaire
+   * de cette pièce. Permet la synchronisation cross-device : la
+   * métadonnée voyage par le backup JSON, le binaire par un
+   * appel séparé `/api/drive/blob/[id]`. Non défini tant que le
+   * blob n'a pas encore été uploadé pour la première fois.
+   */
+  driveFileId?: string;
+  /**
+   * Empreinte SHA-256 (hex) du blob courant. Sert à détecter qu'un
+   * blob local a changé depuis le dernier upload, et donc qu'il
+   * faut le ré-uploader. Mis à jour à chaque upload réussi.
+   */
+  contentHash?: string;
   category?: string;
   tags: string[];
   uploadedAt: Date;
+  /** Horodatage de la dernière modification (pour le merge Drive). */
+  updatedAt?: Date;
 }
 
 // ─── Liens inter-dossiers ──────────────────────────────────────────────────
@@ -930,8 +951,25 @@ export interface BordereauPiece {
   sourceFileName: string;
   /** Type MIME du fichier source. */
   sourceMimeType: string;
-  /** Contenu binaire du fichier source. Stocké localement uniquement. */
-  sourceBlob: Blob;
+  /**
+   * Contenu binaire du fichier source. Optionnel : si la pièce a été
+   * synchronisée depuis un autre appareil, le blob peut être
+   * temporairement absent en attendant le téléchargement Drive
+   * (champ `driveFileId` ci-dessous).
+   */
+  sourceBlob?: Blob;
+  /**
+   * Identifiant du fichier Drive (AppData) qui contient le binaire
+   * source de cette pièce. Permet la synchronisation cross-device.
+   */
+  driveFileId?: string;
+  /** Empreinte SHA-256 (hex) du blob source courant. */
+  contentHash?: string;
+  /** Taille en octets du blob source (utile pour l'affichage avant
+   *  téléchargement). */
+  size?: number;
+  /** Horodatage de la dernière modification (pour le merge Drive). */
+  updatedAt?: Date;
   /** Référence vers le Document du dossier d'où la pièce a été tirée
    *  (sélection « depuis le dossier »). Non rempli si import disque. */
   sourceDocumentId?: number;
