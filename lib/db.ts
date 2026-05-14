@@ -539,42 +539,60 @@ export class MyLexDatabase extends Dexie {
             ) return table;
             return {
               ...table,
-              mutate(req: any) {
-                // Capture (avant exécution) des clés à supprimer : on
-                // écrit le tombstone APRÈS un delete réussi pour empêcher
-                // qu'un cycle de sync ne re-fasse remonter le record
-                // depuis Drive avant qu'on n'ait poussé la suppression.
-                //
-                // On enregistre les tombstones MÊME pendant un restore
-                // (`_restoreInProgress = true`). En théorie, les deletes
-                // pendant un merge venant de Drive ne devraient pas être
-                // tombstonés, mais une race assez fréquente fait que le
-                // delete utilisateur tombe pendant un merge en cours
-                // (initialLoad au démarrage, polling, etc.) — et dans ce
-                // cas on PERD le tombstone, donc la résurrection refait
-                // surface. Le coût d'un tombstone « en trop » est nul :
-                // il est purgé après le prochain push.
+              // Pour un `Collection.delete()` Dexie peut produire un
+              // `deleteRange` (et pas un `delete` à clés). Dans ce cas
+              // on résout d'abord les clés primaires concernées par le
+              // range, puis on convertit la mutation en `delete` à
+              // clés. Ça nous donne une liste de tombstones précise
+              // (sinon les enfants de cascade type
+              // `dossierContacts.where('dossierId').equals(id).delete()`
+              // sortiraient de Dexie sans tombstone, et seraient
+              // ressuscités au prochain merge).
+              async mutate(req: any) {
+                let effectiveReq = req;
                 let deletedKeys: number[] = [];
-                if (req?.type === 'delete' && Array.isArray(req.keys)) {
+
+                if (req?.type === 'deleteRange' && req.range) {
+                  try {
+                    const queryReq: any = {
+                      trans: req.trans,
+                      values: false,
+                      query: { index: table.schema.primaryKey, range: req.range },
+                      limit: Infinity,
+                    };
+                    const res = await table.query(queryReq);
+                    const keys = Array.isArray(res?.result) ? res.result : [];
+                    const numericKeys: number[] = [];
+                    for (const k of keys) {
+                      if (typeof k === 'number') numericKeys.push(k);
+                    }
+                    deletedKeys = numericKeys;
+                    if (keys.length > 0) {
+                      effectiveReq = { trans: req.trans, type: 'delete', keys };
+                    }
+                  } catch {
+                    // Best-effort : si on ne peut pas résoudre le
+                    // range, on laisse la mutation passer telle quelle
+                    // (sans tombstone).
+                  }
+                } else if (req?.type === 'delete' && Array.isArray(req.keys)) {
                   for (const k of req.keys) {
                     if (typeof k === 'number') deletedKeys.push(k);
                   }
                 }
 
-                const result = table.mutate(req);
-                const shouldTrigger = !isInternalSettingsMutation(tableName, req);
+                const result = table.mutate(effectiveReq);
+                const shouldTrigger = !isInternalSettingsMutation(tableName, effectiveReq);
                 result.then(() => {
                   if (deletedKeys.length > 0) {
-                    // Toujours enregistrer : ne dépend pas de
-                    // `_restoreInProgress` (cf. supra).
+                    // Toujours enregistrer, MÊME pendant un restore
+                    // (`_restoreInProgress = true`) : une race fréquente
+                    // fait tomber le delete utilisateur pendant un
+                    // merge en cours (initialLoad au démarrage,
+                    // polling, etc.), et dans ce cas on perd la
+                    // tombstone si on conditionne. Le coût d'une
+                    // tombstone « en trop » est nul.
                     recordTombstones(tableName, deletedKeys);
-                    if (typeof console !== 'undefined' && console.debug) {
-                      console.debug(
-                        '[tombstone] +',
-                        tableName,
-                        deletedKeys,
-                      );
-                    }
                   }
                   if (shouldTrigger && !_restoreInProgress) {
                     triggerDriveSync();
@@ -595,24 +613,74 @@ export const db = new MyLexDatabase();
 // ─── Tombstones : utilitaires ──────────────────────────────────────────────
 //
 // Les tombstones (marqueurs des suppressions locales non encore propagées
-// à Drive) sont stockés EN MÉMOIRE dans la session courante du navigateur.
-// Précédemment ils vivaient dans une table Dexie `tombstones` (cf. v9 du
-// schéma), mais cette approche déclenchait des `NotFoundError` quand la
-// migration IDB était mise en pause par un autre onglet : Dexie « voyait »
-// la table déclarée côté JS, IDB n'avait pas encore créé le store, et
-// l'écriture échouait avec une erreur affichée par Next.js comme
-// « Unhandled Runtime Error ». Le mécanisme anti-resurrection en sortait
-// pris en défaut.
+// à Drive) sont stockés EN MÉMOIRE *et* persistés dans `localStorage` du
+// navigateur. La double couche est nécessaire :
 //
-// La fenêtre utile (entre un clic « Supprimer » et le push Drive 1,5 s
-// plus tard) est largement couverte par une Map module-level : si
-// l'utilisateur ferme l'onglet avant le push, la suppression n'a de
-// toute façon pas été propagée et le record reviendra légitimement du
-// remote au prochain login — pas un bug. La table Dexie reste déclarée
-// (v9) mais n'est plus lue ni écrite ; un cleanup futur pourra la
-// retirer.
+//  - L'accès en lecture/écriture doit être SYNCHRONE (le middleware
+//    Dexie est dans le hot-path d'une mutation, et `mergeTable` lit la
+//    table en flux). Une table Dexie ne convient pas (race avec la
+//    migration v9 si un autre onglet tient l'ancien schéma — cf.
+//    historique de NotFoundError).
+//  - Une Map module-level seule ne survit pas au reload de la page :
+//    si l'utilisateur supprime un dossier puis recharge avant que le
+//    push debounced (1,5 s) ait atteint Drive, le tombstone est perdu
+//    et `initialLoad` ressuscite le dossier au prochain merge. Par
+//    construction du sync, le record EST encore dans le backup Drive
+//    tant qu'on n'a pas pushé.
+//
+// `localStorage` est synchrone, persistant onglet-par-onglet, et largement
+// suffisant pour la taille (quelques entiers par table). On ne synchronise
+// pas entre onglets — chaque onglet a ses propres tombstones, qui seront
+// purgés après son propre push réussi.
+
+const TOMBSTONE_STORAGE_KEY = 'mylaw_tombstones_v1';
 
 const _localTombstones = new Map<string, Set<number>>();
+
+function hasLocalStorage(): boolean {
+  try {
+    return typeof window !== 'undefined' && !!window.localStorage;
+  } catch {
+    return false;
+  }
+}
+
+function persistTombstones(): void {
+  if (!hasLocalStorage()) return;
+  try {
+    const out: Record<string, number[]> = {};
+    for (const [table, set] of _localTombstones.entries()) {
+      if (set.size > 0) out[table] = Array.from(set);
+    }
+    window.localStorage.setItem(TOMBSTONE_STORAGE_KEY, JSON.stringify(out));
+  } catch {
+    // Quota plein ou autre — best-effort. La couche mémoire continue
+    // de fonctionner pour la session en cours.
+  }
+}
+
+function hydrateTombstonesFromStorage(): void {
+  if (!hasLocalStorage()) return;
+  try {
+    const raw = window.localStorage.getItem(TOMBSTONE_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') return;
+    for (const [table, ids] of Object.entries(parsed)) {
+      if (!Array.isArray(ids)) continue;
+      const set = new Set<number>();
+      for (const id of ids) {
+        if (typeof id === 'number') set.add(id);
+      }
+      if (set.size > 0) _localTombstones.set(table, set);
+    }
+  } catch {
+    // Donnée corrompue — on ignore et on repart d'une map vide.
+  }
+}
+
+// Hydratation au chargement du module (côté navigateur).
+hydrateTombstonesFromStorage();
 
 function recordTombstones(tableName: string, recordIds: number[]): void {
   if (recordIds.length === 0) return;
@@ -622,6 +690,7 @@ function recordTombstones(tableName: string, recordIds: number[]): void {
     _localTombstones.set(tableName, set);
   }
   for (const id of recordIds) set.add(id);
+  persistTombstones();
 }
 
 /**
@@ -642,26 +711,53 @@ export function hasTombstone(
  */
 export function loadTombstonesByTable(): Map<string, Set<number>> {
   // On renvoie la même Map (pas une copie) : le merge l'utilise en
-  // lecture seule, et entre l'appel et le merge, aucune mutation ne
-  // touche la map (le restore-in-progress flag est actif).
+  // lecture seule, et la couche mutate la met à jour de manière
+  // synchrone — il est important que le merge voie les tombstones
+  // ajoutés MÊME pendant son exécution (race delete-pendant-merge).
   return _localTombstones;
 }
 
 /**
- * Purge tous les tombstones. Appelé après un push réussi : la
- * suppression vient d'être propagée à Drive (record absent du JSON),
- * le tombstone a rempli son rôle.
- *
- * Le paramètre `cutoff` est conservé pour la compat avec le précédent
- * code asynchrone basé sur Dexie, mais en pratique on purge tout :
- * tout tombstone vivant dans la map est plus récent que le snapshot
- * qu'on vient de pusher (les tombstones n'ont pas de timestamp ici,
- * mais ils sont créés au même rythme que les deletes, et les deletes
- * qui ont eu lieu APRÈS le snapshot du build n'ont pas eu le temps
- * d'être ajoutés à la map avant que ce code ne s'exécute).
+ * Copie immuable des tombstones à un instant T. Le push utilise cette
+ * photo pour ne purger ensuite QUE les clés qu'il a effectivement
+ * propagées à Drive — les tombstones ajoutés après la photo restent
+ * actifs jusqu'au prochain cycle.
+ */
+export function snapshotTombstones(): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  for (const [table, set] of _localTombstones.entries()) {
+    out.set(table, new Set(set));
+  }
+  return out;
+}
+
+/**
+ * Retire les tombstones listés dans `snapshot` de la map vivante.
+ * Appelé après un push réussi : les suppressions qu'on a effectivement
+ * propagées (record absent du JSON envoyé) n'ont plus besoin de leur
+ * marqueur. Les tombstones nés APRÈS le snapshot ne sont pas dans
+ * `snapshot` et restent donc en place pour le prochain cycle.
+ */
+export function clearTombstonesFromSnapshot(
+  snapshot: Map<string, Set<number>>,
+): void {
+  for (const [table, ids] of snapshot.entries()) {
+    const live = _localTombstones.get(table);
+    if (!live) continue;
+    for (const id of ids) live.delete(id);
+    if (live.size === 0) _localTombstones.delete(table);
+  }
+  persistTombstones();
+}
+
+/**
+ * Conservé pour la compat — purge inconditionnelle. Nouveau code :
+ * utiliser `snapshotTombstones()` + `clearTombstonesFromSnapshot()`
+ * pour ne purger que ce qui a réellement été propagé.
  */
 export function clearTombstonesUpTo(_cutoff: Date): void {
   _localTombstones.clear();
+  persistTombstones();
 }
 
 // ─── Flag anti-boucle pour le restore ────────────────────────────────────────────────

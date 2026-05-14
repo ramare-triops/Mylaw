@@ -114,6 +114,13 @@ async function mergeTable<T extends { id?: number }>(
 
   // Parcours local : gestion des collisions + détection des suppressions distantes
   for (const [id, l] of Array.from(localById.entries())) {
+    // Anti-résurrection même quand le record figure dans le snapshot
+    // local : la photo a pu être prise avant que l'utilisateur ne
+    // clique « Supprimer ». Sans ce garde, la branche « Both exist »
+    // ressusciterait le record si `recordTime(remote) > recordTime(local)`
+    // (édition cross-device, dérive d'horloge, ou ré-écriture par
+    // `ensureBlobsUploaded` d'un cycle précédent).
+    if (tombstones?.has(id)) continue;
     const r = remoteById.get(id);
     if (r) {
       // Les deux existent : on garde celui au timestamp le plus récent.
@@ -144,7 +151,16 @@ async function mergeTable<T extends { id?: number }>(
     toPut.push(r);
   }
 
-  if (toPut.length) await table.bulkPut(toPut);
+  // Filet de sécurité final : un delete utilisateur peut tomber ENTRE
+  // l'itération ci-dessus et l'appel à `bulkPut` (chaque await
+  // intercalé laisse du temps à la boucle d'événements). On filtre
+  // une dernière fois contre la Set vivante avant d'écrire — c'est
+  // la seule garantie d'éviter une résurrection dans tous les cas.
+  const finalToPut = tombstones
+    ? toPut.filter((r) => r.id == null || !tombstones.has(r.id))
+    : toPut;
+
+  if (finalToPut.length) await table.bulkPut(finalToPut);
   if (toDelete.length) await table.bulkDelete(toDelete);
 }
 

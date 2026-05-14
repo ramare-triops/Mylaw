@@ -7,7 +7,8 @@ import {
   setSetting,
   registerDriveSyncCallback,
   setRestoreInProgress,
-  clearTombstonesUpTo,
+  snapshotTombstones,
+  clearTombstonesFromSnapshot,
 } from '@/lib/db';
 import { buildBackup, mergeFromBackup } from '@/lib/drive-merge';
 
@@ -91,24 +92,20 @@ export function useDriveSync() {
 
       // ── 2. PUSH (conditionnel) ────────────────────────────────────────
       if (shouldPush) {
+        // Photographie des tombstones JUSTE avant le build. Le backup
+        // sérialisé ne contiendra pas les records correspondants —
+        // après un upload réussi, ces tombstones-là ont rempli leur
+        // office. Les tombstones nés ENTRE le build et la fin du push
+        // ne sont pas dans la photo et resteront actifs jusqu'au
+        // prochain cycle (sinon un delete utilisateur tombant pendant
+        // l'upload serait silencieusement effacé, et le merge suivant
+        // ressusciterait le record).
+        const inFlightTombstones = snapshotTombstones();
         const backup = await buildBackup();
         const uploadResult = await client.upload(backup);
         if (uploadResult?.modifiedTime) lastRemoteTime.current = uploadResult.modifiedTime;
         await setSetting('last_synced_at', backup.exportedAt);
-        // Le push contient une « photographie » qui acte les
-        // suppressions locales en cours (les records supprimés
-        // ne sont plus dans le JSON). Les tombstones plus anciens
-        // que le snapshot ont rempli leur office et peuvent
-        // disparaître. Les tombstones créés APRÈS le build seront
-        // propagés au prochain cycle.
-        try {
-          const exportedAtMs = Date.parse(backup.exportedAt);
-          if (Number.isFinite(exportedAtMs)) {
-            clearTombstonesUpTo(new Date(exportedAtMs));
-          }
-        } catch {
-          // ignoré
-        }
+        clearTombstonesFromSnapshot(inFlightTombstones);
       } else if (remoteExportedAt) {
         // Pas de push mais on a pullé : aligner last_synced_at sur le distant
         // pour que le prochain cycle n'ait pas à re-pull le même backup.
