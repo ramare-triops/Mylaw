@@ -455,7 +455,7 @@ export async function mergeFromBackup(
   // Indispensable pour empêcher la « résurrection » d'un record que
   // l'utilisateur vient de supprimer : le backup distant le contient
   // encore tant que notre push n'a pas été effectué.
-  const ts = await loadTombstonesByTable();
+  const ts = loadTombstonesByTable();
   const T = (name: string): Set<number> | undefined => ts.get(name);
 
   await mergeTable(db.documents,              backup.documents,  opts, T('documents'));

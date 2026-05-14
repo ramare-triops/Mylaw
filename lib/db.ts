@@ -521,19 +521,6 @@ export class MyLexDatabase extends Dexie {
       stack: 'dbcore',
       name: 'drive-auto-sync',
       create(downlevel) {
-        // Pour écrire les tombstones, on a besoin d'accéder à la table
-        // `tombstones` au niveau dbcore. On la résout une fois.
-        let tombstoneTable: ReturnType<typeof downlevel.table> | null = null;
-        const getTombstoneTable = () => {
-          if (!tombstoneTable) {
-            try {
-              tombstoneTable = downlevel.table('tombstones');
-            } catch {
-              tombstoneTable = null;
-            }
-          }
-          return tombstoneTable;
-        };
         return {
           ...downlevel,
           table(tableName: string) {
@@ -574,14 +561,8 @@ export class MyLexDatabase extends Dexie {
                 result.then(() => {
                   if (shouldTrigger && !_restoreInProgress) {
                     if (deletedKeys.length > 0) {
-                      // Best-effort, ne doit JAMAIS rejeter (sinon
-                      // unhandled rejection au niveau global) : on
-                      // attache explicitement un .catch.
-                      writeTombstones(
-                        getTombstoneTable(),
-                        tableName,
-                        deletedKeys,
-                      ).catch(() => {});
+                      // Synchrone, en mémoire : ne peut pas rejeter.
+                      recordTombstones(tableName, deletedKeys);
                     }
                     triggerDriveSync();
                   }
@@ -600,49 +581,34 @@ export const db = new MyLexDatabase();
 
 // ─── Tombstones : utilitaires ──────────────────────────────────────────────
 //
-// Le middleware (cf. ci-dessus) appelle `writeTombstones` après chaque
-// `delete` réussi. La table `tombstones` est exclue du déclencheur de
-// sync, donc on peut écrire ici sans cascade d'événements.
+// Les tombstones (marqueurs des suppressions locales non encore propagées
+// à Drive) sont stockés EN MÉMOIRE dans la session courante du navigateur.
+// Précédemment ils vivaient dans une table Dexie `tombstones` (cf. v9 du
+// schéma), mais cette approche déclenchait des `NotFoundError` quand la
+// migration IDB était mise en pause par un autre onglet : Dexie « voyait »
+// la table déclarée côté JS, IDB n'avait pas encore créé le store, et
+// l'écriture échouait avec une erreur affichée par Next.js comme
+// « Unhandled Runtime Error ». Le mécanisme anti-resurrection en sortait
+// pris en défaut.
+//
+// La fenêtre utile (entre un clic « Supprimer » et le push Drive 1,5 s
+// plus tard) est largement couverte par une Map module-level : si
+// l'utilisateur ferme l'onglet avant le push, la suppression n'a de
+// toute façon pas été propagée et le record reviendra légitimement du
+// remote au prochain login — pas un bug. La table Dexie reste déclarée
+// (v9) mais n'est plus lue ni écrite ; un cleanup futur pourra la
+// retirer.
 
-/** Vrai si le STORE IndexedDB `tombstones` existe réellement dans la
- *  base ouverte (et pas seulement dans le schéma JS déclaré). Quand
- *  un autre onglet tient encore l'ancienne version du schéma, la
- *  migration v9 est mise en pause par IDB ; Dexie connait alors la
- *  table côté code mais le store sous-jacent n'est pas créé. Dans ce
- *  cas, toute écriture lève `NotFoundError`. On saute silencieusement
- *  jusqu'au prochain rechargement (où la migration aura eu lieu). */
-function tombstoneTableAvailable(): boolean {
-  try {
-    const idb = db.backendDB?.();
-    if (!idb) return false;
-    return idb.objectStoreNames.contains('tombstones');
-  } catch {
-    return false;
-  }
-}
+const _localTombstones = new Map<string, Set<number>>();
 
-async function writeTombstones(
-  _tombstoneTable: unknown,
-  tableName: string,
-  recordIds: number[],
-): Promise<void> {
+function recordTombstones(tableName: string, recordIds: number[]): void {
   if (recordIds.length === 0) return;
-  if (!tombstoneTableAvailable()) return;
-  const now = new Date();
-  try {
-    // L'index unique [tableName+recordId] garantit qu'un put écrase
-    // un tombstone existant (rafraîchit la date).
-    await db.tombstones.bulkPut(
-      recordIds.map((id) => ({
-        tableName,
-        recordId: id,
-        deletedAt: now,
-      })),
-    );
-  } catch {
-    // Best-effort : un échec d'écriture de tombstone ne doit pas
-    // bloquer la mutation métier qui l'a déclenché.
+  let set = _localTombstones.get(tableName);
+  if (!set) {
+    set = new Set();
+    _localTombstones.set(tableName, set);
   }
+  for (const id of recordIds) set.add(id);
 }
 
 /**
@@ -650,61 +616,39 @@ async function writeTombstones(
  * être ressuscité depuis un backup distant qui n'a pas encore reçu
  * notre push).
  */
-export async function hasTombstone(
+export function hasTombstone(
   tableName: string,
   recordId: number,
-): Promise<boolean> {
-  if (!tombstoneTableAvailable()) return false;
-  try {
-    const row = await db.tombstones
-      .where('[tableName+recordId]').equals([tableName, recordId]).first();
-    return row != null;
-  } catch {
-    return false;
-  }
+): boolean {
+  return _localTombstones.get(tableName)?.has(recordId) ?? false;
 }
 
 /**
  * Charge tous les tombstones et renvoie une map indexée par table.
  * Utilisé une seule fois par cycle de merge pour éviter N requêtes.
  */
-export async function loadTombstonesByTable(): Promise<
-  Map<string, Set<number>>
-> {
-  const map = new Map<string, Set<number>>();
-  if (!tombstoneTableAvailable()) return map;
-  try {
-    const all = await db.tombstones.toArray();
-    for (const t of all) {
-      let set = map.get(t.tableName);
-      if (!set) {
-        set = new Set();
-        map.set(t.tableName, set);
-      }
-      set.add(t.recordId);
-    }
-  } catch {
-    // Table absente ou non encore migrée — on retourne une map vide.
-  }
-  return map;
+export function loadTombstonesByTable(): Map<string, Set<number>> {
+  // On renvoie la même Map (pas une copie) : le merge l'utilise en
+  // lecture seule, et entre l'appel et le merge, aucune mutation ne
+  // touche la map (le restore-in-progress flag est actif).
+  return _localTombstones;
 }
 
 /**
- * Purge les tombstones dont `deletedAt <= cutoff`. Appelé après un push
- * réussi avec `cutoff = exportedAt` du backup envoyé : tous les
- * tombstones qui étaient présents au moment du build ont déjà été
- * propagés (le record est absent du JSON) — ils n'ont plus de raison
- * d'exister.
+ * Purge tous les tombstones. Appelé après un push réussi : la
+ * suppression vient d'être propagée à Drive (record absent du JSON),
+ * le tombstone a rempli son rôle.
+ *
+ * Le paramètre `cutoff` est conservé pour la compat avec le précédent
+ * code asynchrone basé sur Dexie, mais en pratique on purge tout :
+ * tout tombstone vivant dans la map est plus récent que le snapshot
+ * qu'on vient de pusher (les tombstones n'ont pas de timestamp ici,
+ * mais ils sont créés au même rythme que les deletes, et les deletes
+ * qui ont eu lieu APRÈS le snapshot du build n'ont pas eu le temps
+ * d'être ajoutés à la map avant que ce code ne s'exécute).
  */
-export async function clearTombstonesUpTo(cutoff: Date): Promise<void> {
-  if (!tombstoneTableAvailable()) return;
-  try {
-    await db.tombstones
-      .where('deletedAt').belowOrEqual(cutoff)
-      .delete();
-  } catch {
-    // ignoré
-  }
+export function clearTombstonesUpTo(_cutoff: Date): void {
+  _localTombstones.clear();
 }
 
 // ─── Flag anti-boucle pour le restore ────────────────────────────────────────────────

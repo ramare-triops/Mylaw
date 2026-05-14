@@ -104,7 +104,7 @@ export function useDriveSync() {
         try {
           const exportedAtMs = Date.parse(backup.exportedAt);
           if (Number.isFinite(exportedAtMs)) {
-            await clearTombstonesUpTo(new Date(exportedAtMs));
+            clearTombstonesUpTo(new Date(exportedAtMs));
           }
         } catch {
           // ignoré
