@@ -15,7 +15,11 @@
  */
 
 import type { Table } from 'dexie';
-import { db, deleteAttachment as deleteAttachmentRecord } from './db';
+import {
+  db,
+  deleteAttachment as deleteAttachmentRecord,
+  loadTombstonesByTable,
+} from './db';
 import type { MylawBackup } from './drive-sync';
 import type { Attachment, BordereauPiece } from '@/types';
 import {
@@ -91,6 +95,10 @@ async function mergeTable<T extends { id?: number }>(
   table: Table<T>,
   remoteRecords: T[] | undefined,
   opts: MergeOptions,
+  /** Set des `id` supprimés localement et pas encore poussés. Les
+   *  records distants présents dans ce set NE sont PAS ré-importés
+   *  (anti-resurrection). */
+  tombstones: Set<number> | undefined = undefined,
 ): Promise<void> {
   const remote = Array.isArray(remoteRecords) ? remoteRecords : [];
   const local = await table.toArray();
@@ -125,9 +133,15 @@ async function mergeTable<T extends { id?: number }>(
     // Sinon : création locale postérieure au dernier sync → on la conserve.
   }
 
-  // Parcours distant : on ajoute les records absents localement.
+  // Parcours distant : on ajoute les records absents localement, SAUF
+  // ceux que nous venons de supprimer en local (tombstones). Sans
+  // cette protection, le record disparaîtrait quelques secondes après
+  // suppression, le temps du prochain pull, puis réapparaîtrait —
+  // jusqu'à ce que notre push propre soit envoyé.
   for (const [id, r] of Array.from(remoteById.entries())) {
-    if (!localById.has(id)) toPut.push(r);
+    if (localById.has(id)) continue;
+    if (tombstones?.has(id)) continue;
+    toPut.push(r);
   }
 
   if (toPut.length) await table.bulkPut(toPut);
@@ -437,57 +451,83 @@ export async function mergeFromBackup(
     localSyncedAt:    localSyncedAtIso   ? Date.parse(localSyncedAtIso)  : 0,
   };
 
-  await mergeTable(db.documents,              backup.documents,  opts);
-  await mergeTable(db.folders,                backup.folders,    opts);
-  await mergeTable(db.table('snippets'),      backup.snippets,   opts);
-  await mergeTable(db.table('deadlines'),     backup.deadlines,  opts);
-  await mergeTable(db.table('templates'),     backup.templates,  opts);
-  await mergeTable(db.table('tools'),         backup.tools,      opts);
-  await mergeTable(db.table('aiChats'),       backup.aiChats,    opts);
-  await mergeTable(db.table('bricks'),        backup.bricks,     opts);
-  await mergeTable(db.table('infoLabels'),    backup.infoLabels, opts);
-  await mergeTable(db.table('fieldDefs'),     backup.fieldDefs,  opts);
-  await mergeTable(db.table('sessions'),      backup.sessions,   opts);
+  // Chargement des tombstones locaux (suppressions en attente de push).
+  // Indispensable pour empêcher la « résurrection » d'un record que
+  // l'utilisateur vient de supprimer : le backup distant le contient
+  // encore tant que notre push n'a pas été effectué.
+  const ts = await loadTombstonesByTable();
+  const T = (name: string): Set<number> | undefined => ts.get(name);
+
+  await mergeTable(db.documents,              backup.documents,  opts, T('documents'));
+  await mergeTable(db.folders,                backup.folders,    opts, T('folders'));
+  await mergeTable(db.table('snippets'),      backup.snippets,   opts, T('snippets'));
+  await mergeTable(db.table('deadlines'),     backup.deadlines,  opts, T('deadlines'));
+  await mergeTable(db.table('templates'),     backup.templates,  opts, T('templates'));
+  await mergeTable(db.table('tools'),         backup.tools,      opts, T('tools'));
+  await mergeTable(db.table('aiChats'),       backup.aiChats,    opts, T('aiChats'));
+  await mergeTable(db.table('bricks'),        backup.bricks,     opts, T('bricks'));
+  await mergeTable(db.table('infoLabels'),    backup.infoLabels, opts, T('infoLabels'));
+  await mergeTable(db.table('fieldDefs'),     backup.fieldDefs,  opts, T('fieldDefs'));
+  await mergeTable(db.table('sessions'),      backup.sessions,   opts, T('sessions'));
   // v4 — onglet Dossiers
-  await mergeTable(db.dossiers,           backup.dossiers,         opts);
-  await mergeTable(db.contacts,           backup.contacts,         opts);
-  await mergeTable(db.dossierContacts,    backup.dossierContacts,  opts);
-  await mergeTable(db.documentContacts,   backup.documentContacts, opts);
-  await mergeTable(db.timeEntries,        backup.timeEntries,      opts);
-  await mergeTable(db.expenses,           backup.expenses,         opts);
-  await mergeTable(db.fixedFees,          backup.fixedFees,        opts);
-  await mergeTable(db.invoices,           backup.invoices,         opts);
-  await mergeTable(db.documentLinks,      backup.documentLinks,    opts);
-  await mergeTable(db.documentVersions,   backup.documentVersions, opts);
+  await mergeTable(db.dossiers,           backup.dossiers,         opts, T('dossiers'));
+  await mergeTable(db.contacts,           backup.contacts,         opts, T('contacts'));
+  await mergeTable(db.dossierContacts,    backup.dossierContacts,  opts, T('dossierContacts'));
+  await mergeTable(db.documentContacts,   backup.documentContacts, opts, T('documentContacts'));
+  await mergeTable(db.timeEntries,        backup.timeEntries,      opts, T('timeEntries'));
+  await mergeTable(db.expenses,           backup.expenses,         opts, T('expenses'));
+  await mergeTable(db.fixedFees,          backup.fixedFees,        opts, T('fixedFees'));
+  await mergeTable(db.invoices,           backup.invoices,         opts, T('invoices'));
+  await mergeTable(db.documentLinks,      backup.documentLinks,    opts, T('documentLinks'));
+  await mergeTable(db.documentVersions,   backup.documentVersions, opts, T('documentVersions'));
   // v5 — Jots / quick notes
-  if (backup.jots) await mergeTable(db.table('jots'), backup.jots, opts);
+  if (backup.jots) {
+    await mergeTable(db.table('jots'), backup.jots, opts, T('jots'));
+  }
   // v6 — Calculs d'intérêts au taux légal
   if (backup.interestCalculations) {
     await mergeTable(
       db.table('interestCalculations'),
       backup.interestCalculations,
       opts,
+      T('interestCalculations'),
     );
   }
   // v7 — Bordereaux de pièces (projets + réglages du tampon)
   if (backup.bordereaux) {
-    await mergeTable(db.table('bordereaux'), backup.bordereaux, opts);
+    await mergeTable(
+      db.table('bordereaux'),
+      backup.bordereaux,
+      opts,
+      T('bordereaux'),
+    );
   }
   if (backup.stampSettings) {
     await mergeTable(
       db.table('stampSettings'),
       backup.stampSettings,
       opts,
+      T('stampSettings'),
     );
   }
   // v8 — Attachments et BordereauPieces (métadonnées seules, blobs en
   // fichiers Drive séparés). Suit l'opération : on déclenche le
   // téléchargement asynchrone des blobs manquants en tâche de fond.
   if (backup.attachments) {
-    await mergeTable(db.attachments, backup.attachments, opts);
+    await mergeTable(
+      db.attachments,
+      backup.attachments,
+      opts,
+      T('attachments'),
+    );
   }
   if (backup.bordereauPieces) {
-    await mergeTable(db.bordereauPieces, backup.bordereauPieces, opts);
+    await mergeTable(
+      db.bordereauPieces,
+      backup.bordereauPieces,
+      opts,
+      T('bordereauPieces'),
+    );
   }
   fetchMissingBlobsBackground();
 

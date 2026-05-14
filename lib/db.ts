@@ -30,6 +30,7 @@ import type {
   Bordereau,
   BordereauPiece,
   StampSettings,
+  Tombstone,
 } from '@/types';
 
 type SettingsRecord = { key: string; value: unknown };
@@ -120,6 +121,16 @@ export class MyLexDatabase extends Dexie {
   bordereauPieces!: Table<BordereauPiece>;
   /** Réglages du tampon virtuel (singleton id = 1). */
   stampSettings!: Table<StampSettings>;
+  /**
+   * Tombstones locaux : marqueurs des suppressions effectuées sur cet
+   * appareil tant qu'elles n'ont pas été poussées vers Drive. Empêche
+   * le ressuscitement des records lors du pull-merge-push (le pull
+   * voit encore le record côté Drive et l'ajouterait au local sans
+   * cette protection).
+   *
+   * Table purement locale, jamais propagée par Drive.
+   */
+  tombstones!: Table<Tombstone>;
 
   constructor() {
     super('MyLexDB');
@@ -443,6 +454,61 @@ export class MyLexDatabase extends Dexie {
         '++id, updatedAt',
     });
 
+    // ─── Version 9 : Tombstones (anti-resurrection au merge) ───────────────
+    // Ajoute la table `tombstones` qui capture chaque suppression locale
+    // tant qu'elle n'a pas été poussée à Drive. Aucune mutation des autres
+    // tables.
+    this.version(9).stores({
+      documents:
+        '++id, title, type, folderId, dossierId, status, category, updatedAt, tags, *searchTokens',
+      documentVersions: '++id, documentId, timestamp',
+      folders: '++id, name, parentId, color, createdAt',
+      tools: '++id, slug, name, pinned, order, config, lastUsedAt',
+      templates: '++id, name, category, content, variables, createdAt',
+      sessions: '++id, date, toolId, content, tags',
+      snippets: '++id, trigger, expansion, category',
+      aiChats: '++id, documentId, messages, createdAt',
+      settings: 'key',
+      history: '++id, action, entityId, entityType, timestamp',
+      deadlines: '++id, title, dossier, dueDate, type, done, createdAt',
+      bricks: '++id, title, category, infoLabelId, updatedAt, *tags',
+      infoLabels: '++id, name, color, createdAt',
+      fieldDefs: '++id, name, type, category, updatedAt',
+      dossiers:
+        '++id, reference, name, type, status, updatedAt, createdAt, *tags',
+      contacts:
+        '++id, type, lastName, companyName, email, updatedAt, *tags',
+      dossierContacts:
+        '++id, dossierId, contactId, role, [dossierId+contactId]',
+      documentContacts:
+        '++id, documentId, contactId, role, [documentId+contactId]',
+      timeEntries:
+        '++id, dossierId, documentId, contactId, date, billable, billed, invoiceId',
+      expenses:
+        '++id, dossierId, documentId, date, category, billed, invoiceId',
+      fixedFees:
+        '++id, dossierId, documentId, date, kind, billed, invoiceId',
+      invoices:
+        '++id, dossierId, reference, date, status',
+      attachments:
+        '++id, dossierId, documentId, name, mimeType, uploadedAt, updatedAt, driveFileId, *tags',
+      documentLinks:
+        '++id, documentId, dossierId, [documentId+dossierId]',
+      auditLog:
+        '++id, dossierId, entityType, entityId, action, timestamp',
+      jots: '++id, createdAt, done, googleTaskId',
+      interestCalculations:
+        '++id, dossierId, name, updatedAt',
+      bordereaux:
+        '++id, dossierId, name, updatedAt',
+      bordereauPieces:
+        '++id, bordereauId, order, uid, updatedAt, driveFileId',
+      stampSettings:
+        '++id, updatedAt',
+      tombstones:
+        '++id, &[tableName+recordId], deletedAt',
+    });
+
     // ─── Middleware : déclenche le sync Drive sur toute mutation ───
     // On intercepte add, put, delete, clear sur toutes les tables sauf :
     //   - 'history' (audit log interne, jamais synchronisé)
@@ -455,28 +521,67 @@ export class MyLexDatabase extends Dexie {
       stack: 'dbcore',
       name: 'drive-auto-sync',
       create(downlevel) {
+        // Pour écrire les tombstones, on a besoin d'accéder à la table
+        // `tombstones` au niveau dbcore. On la résout une fois.
+        let tombstoneTable: ReturnType<typeof downlevel.table> | null = null;
+        const getTombstoneTable = () => {
+          if (!tombstoneTable) {
+            try {
+              tombstoneTable = downlevel.table('tombstones');
+            } catch {
+              tombstoneTable = null;
+            }
+          }
+          return tombstoneTable;
+        };
         return {
           ...downlevel,
           table(tableName: string) {
             const table = downlevel.table(tableName);
             // Tables jamais synchronisées vers Drive (locales pures) :
             //  - history / auditLog : journaux internes
+            //  - tombstones : marqueurs locaux d'anti-resurrection
             // attachments et bordereauPieces sont désormais synchronisés
             // (depuis l'introduction de la sync binaire multi-fichiers).
             // Leur métadonnée voyage par le backup JSON, leur contenu
             // binaire par des fichiers Drive séparés (un par blob).
             if (
               tableName === 'history' ||
-              tableName === 'auditLog'
+              tableName === 'auditLog' ||
+              tableName === 'tombstones'
             ) return table;
             return {
               ...table,
               mutate(req: any) {
+                // Capture (avant exécution) des clés à supprimer : on
+                // écrit le tombstone APRÈS un delete réussi pour empêcher
+                // qu'un cycle de sync ne re-fasse remonter le record
+                // depuis Drive avant qu'on n'ait poussé la suppression.
+                let deletedKeys: number[] = [];
+                if (
+                  req?.type === 'delete' &&
+                  Array.isArray(req.keys) &&
+                  !_restoreInProgress
+                ) {
+                  for (const k of req.keys) {
+                    if (typeof k === 'number') deletedKeys.push(k);
+                  }
+                }
+
                 const result = table.mutate(req);
                 // Décide si la mutation doit déclencher un sync.
                 const shouldTrigger = !isInternalSettingsMutation(tableName, req);
                 result.then(() => {
-                  if (shouldTrigger && !_restoreInProgress) triggerDriveSync();
+                  if (shouldTrigger && !_restoreInProgress) {
+                    if (deletedKeys.length > 0) {
+                      void writeTombstones(
+                        getTombstoneTable(),
+                        tableName,
+                        deletedKeys,
+                      );
+                    }
+                    triggerDriveSync();
+                  }
                 }).catch(() => {});
                 return result;
               },
@@ -489,6 +594,93 @@ export class MyLexDatabase extends Dexie {
 }
 
 export const db = new MyLexDatabase();
+
+// ─── Tombstones : utilitaires ──────────────────────────────────────────────
+//
+// Le middleware (cf. ci-dessus) appelle `writeTombstones` après chaque
+// `delete` réussi. La table `tombstones` est exclue du déclencheur de
+// sync, donc on peut écrire ici sans cascade d'événements.
+async function writeTombstones(
+  _tombstoneTable: unknown,
+  tableName: string,
+  recordIds: number[],
+): Promise<void> {
+  if (recordIds.length === 0) return;
+  const now = new Date();
+  try {
+    // L'index unique [tableName+recordId] garantit qu'un put écrase
+    // un tombstone existant (rafraîchit la date).
+    await db.tombstones.bulkPut(
+      recordIds.map((id) => ({
+        tableName,
+        recordId: id,
+        deletedAt: now,
+      })),
+    );
+  } catch {
+    // Best-effort : un échec d'écriture de tombstone ne doit pas
+    // bloquer la mutation métier qui l'a déclenché.
+  }
+}
+
+/**
+ * Vérifie si un record a été supprimé localement (et donc ne doit pas
+ * être ressuscité depuis un backup distant qui n'a pas encore reçu
+ * notre push).
+ */
+export async function hasTombstone(
+  tableName: string,
+  recordId: number,
+): Promise<boolean> {
+  try {
+    const row = await db.tombstones
+      .where('[tableName+recordId]').equals([tableName, recordId]).first();
+    return row != null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Charge tous les tombstones et renvoie une map indexée par table.
+ * Utilisé une seule fois par cycle de merge pour éviter N requêtes.
+ */
+export async function loadTombstonesByTable(): Promise<
+  Map<string, Set<number>>
+> {
+  const map = new Map<string, Set<number>>();
+  try {
+    const all = await db.tombstones.toArray();
+    for (const t of all) {
+      let set = map.get(t.tableName);
+      if (!set) {
+        set = new Set();
+        map.set(t.tableName, set);
+      }
+      set.add(t.recordId);
+    }
+  } catch {
+    // Table absente (rare, premier load) : on retourne une map vide.
+  }
+  return map;
+}
+
+/**
+ * Purge les tombstones dont `deletedAt <= cutoff`. Appelé après un push
+ * réussi avec `cutoff = exportedAt` du backup envoyé : tous les
+ * tombstones qui étaient présents au moment du build ont déjà été
+ * propagés (le record est absent du JSON) — ils n'ont plus de raison
+ * d'exister.
+ */
+export async function clearTombstonesUpTo(cutoff: Date): Promise<void> {
+  try {
+    await db.tombstones
+      .where('deletedAt').belowOrEqual(cutoff)
+      .delete();
+  } catch {
+    // ignoré
+  }
+}
 
 // ─── Flag anti-boucle pour le restore ────────────────────────────────────────────────
 // Pendant un restoreFromBackup, on désactive le middleware pour ne pas

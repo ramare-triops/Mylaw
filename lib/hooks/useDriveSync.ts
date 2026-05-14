@@ -2,7 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { DriveClient, DriveStatus } from '@/lib/drive-sync';
-import { getSetting, setSetting, registerDriveSyncCallback, setRestoreInProgress } from '@/lib/db';
+import {
+  getSetting,
+  setSetting,
+  registerDriveSyncCallback,
+  setRestoreInProgress,
+  clearTombstonesUpTo,
+} from '@/lib/db';
 import { buildBackup, mergeFromBackup } from '@/lib/drive-merge';
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '';
@@ -89,6 +95,20 @@ export function useDriveSync() {
         const uploadResult = await client.upload(backup);
         if (uploadResult?.modifiedTime) lastRemoteTime.current = uploadResult.modifiedTime;
         await setSetting('last_synced_at', backup.exportedAt);
+        // Le push contient une « photographie » qui acte les
+        // suppressions locales en cours (les records supprimés
+        // ne sont plus dans le JSON). Les tombstones plus anciens
+        // que le snapshot ont rempli leur office et peuvent
+        // disparaître. Les tombstones créés APRÈS le build seront
+        // propagés au prochain cycle.
+        try {
+          const exportedAtMs = Date.parse(backup.exportedAt);
+          if (Number.isFinite(exportedAtMs)) {
+            await clearTombstonesUpTo(new Date(exportedAtMs));
+          }
+        } catch {
+          // ignoré
+        }
       } else if (remoteExportedAt) {
         // Pas de push mais on a pullé : aligner last_synced_at sur le distant
         // pour que le prochain cycle n'ait pas à re-pull le même backup.

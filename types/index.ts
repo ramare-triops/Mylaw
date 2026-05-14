@@ -1007,3 +1007,22 @@ export interface Bordereau {
 }
 
 export type { FieldDef, FieldDefType } from './field-def';
+
+// ─── Tombstones (marqueurs de suppression locaux) ─────────────────────────
+
+/**
+ * Un tombstone est un marqueur écrit localement chaque fois qu'un record
+ * est supprimé sur cet appareil. Il évite que le cycle de sync suivant
+ * « ressuscite » le record depuis le backup distant (qui n'a pas encore
+ * la suppression). Après un push réussi, les tombstones plus anciens
+ * que le snapshot du build sont purgés.
+ */
+export interface Tombstone {
+  id?: number;
+  /** Nom de la table Dexie d'origine (ex. `'dossiers'`, `'documents'`). */
+  tableName: string;
+  /** Clé primaire du record supprimé. */
+  recordId: number;
+  /** Horodatage de la suppression locale. */
+  deletedAt: Date;
+}
