@@ -544,26 +544,39 @@ export class MyLexDatabase extends Dexie {
                 // écrit le tombstone APRÈS un delete réussi pour empêcher
                 // qu'un cycle de sync ne re-fasse remonter le record
                 // depuis Drive avant qu'on n'ait poussé la suppression.
+                //
+                // On enregistre les tombstones MÊME pendant un restore
+                // (`_restoreInProgress = true`). En théorie, les deletes
+                // pendant un merge venant de Drive ne devraient pas être
+                // tombstonés, mais une race assez fréquente fait que le
+                // delete utilisateur tombe pendant un merge en cours
+                // (initialLoad au démarrage, polling, etc.) — et dans ce
+                // cas on PERD le tombstone, donc la résurrection refait
+                // surface. Le coût d'un tombstone « en trop » est nul :
+                // il est purgé après le prochain push.
                 let deletedKeys: number[] = [];
-                if (
-                  req?.type === 'delete' &&
-                  Array.isArray(req.keys) &&
-                  !_restoreInProgress
-                ) {
+                if (req?.type === 'delete' && Array.isArray(req.keys)) {
                   for (const k of req.keys) {
                     if (typeof k === 'number') deletedKeys.push(k);
                   }
                 }
 
                 const result = table.mutate(req);
-                // Décide si la mutation doit déclencher un sync.
                 const shouldTrigger = !isInternalSettingsMutation(tableName, req);
                 result.then(() => {
-                  if (shouldTrigger && !_restoreInProgress) {
-                    if (deletedKeys.length > 0) {
-                      // Synchrone, en mémoire : ne peut pas rejeter.
-                      recordTombstones(tableName, deletedKeys);
+                  if (deletedKeys.length > 0) {
+                    // Toujours enregistrer : ne dépend pas de
+                    // `_restoreInProgress` (cf. supra).
+                    recordTombstones(tableName, deletedKeys);
+                    if (typeof console !== 'undefined' && console.debug) {
+                      console.debug(
+                        '[tombstone] +',
+                        tableName,
+                        deletedKeys,
+                      );
                     }
+                  }
+                  if (shouldTrigger && !_restoreInProgress) {
                     triggerDriveSync();
                   }
                 }).catch(() => {});

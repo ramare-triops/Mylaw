@@ -456,6 +456,12 @@ export async function mergeFromBackup(
   // l'utilisateur vient de supprimer : le backup distant le contient
   // encore tant que notre push n'a pas été effectué.
   const ts = loadTombstonesByTable();
+  if (ts.size > 0 && typeof console !== 'undefined' && console.debug) {
+    console.debug(
+      '[tombstone] merge with',
+      Array.from(ts.entries()).map(([k, v]) => `${k}:${Array.from(v).join(',')}`),
+    );
+  }
   const T = (name: string): Set<number> | undefined => ts.get(name);
 
   await mergeTable(db.documents,              backup.documents,  opts, T('documents'));
