@@ -843,6 +843,11 @@ function PieceTable({
 }) {
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
+  // Index de la ligne dont la poignée à 6 points est actuellement pressée.
+  // La ligne n'est `draggable` que tant que cette poignée est tenue, ce
+  // qui permet de sélectionner librement le texte des inputs du reste
+  // de la ligne sans déclencher de drag par accident.
+  const [armedIdx, setArmedIdx] = useState<number | null>(null);
 
   if (pieces.length === 0) {
     return (
@@ -882,8 +887,16 @@ function PieceTable({
       {pieces.map((p, idx) => (
         <Fragment key={p.id}>
           <div
-            draggable
+            draggable={armedIdx === idx}
             onDragStart={(e) => {
+              if (armedIdx !== idx) {
+                // Sécurité : le drag ne doit démarrer que si la poignée
+                // a été pressée (chrome appelle onDragStart pour tout
+                // élément draggable, mais on n'a `draggable=true` que
+                // sur la ligne armée).
+                e.preventDefault();
+                return;
+              }
               setDragIdx(idx);
               e.dataTransfer.effectAllowed = 'move';
               try {
@@ -907,10 +920,12 @@ function PieceTable({
               }
               setDragIdx(null);
               setOverIdx(null);
+              setArmedIdx(null);
             }}
             onDragEnd={() => {
               setDragIdx(null);
               setOverIdx(null);
+              setArmedIdx(null);
             }}
             className="grid grid-cols-[24px_90px_1fr_1.5fr_auto_auto] gap-2 px-3 py-2 border-t items-center"
             style={{
@@ -920,13 +935,24 @@ function PieceTable({
                   ? 'oklch(from var(--color-primary) l c h / 0.05)'
                   : 'var(--color-surface)',
               opacity: dragIdx === idx ? 0.5 : 1,
-              cursor: 'grab',
             }}
           >
-            <GripVertical
-              size={14}
-              style={{ color: 'var(--color-text-muted)' }}
-            />
+            <span
+              role="button"
+              aria-label="Glisser pour réordonner"
+              title="Glisser pour réordonner"
+              onMouseDown={() => setArmedIdx(idx)}
+              onMouseUp={() => setArmedIdx(null)}
+              onTouchStart={() => setArmedIdx(idx)}
+              onTouchEnd={() => setArmedIdx(null)}
+              className="inline-flex items-center justify-center select-none"
+              style={{
+                cursor: armedIdx === idx ? 'grabbing' : 'grab',
+                color: 'var(--color-text-muted)',
+              }}
+            >
+              <GripVertical size={14} />
+            </span>
             <input
               type="text"
               value={p.pieceNumber}
