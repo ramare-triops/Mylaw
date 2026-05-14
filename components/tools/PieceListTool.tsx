@@ -28,7 +28,7 @@ import {
   AlertTriangle,
   FileCheck2,
 } from 'lucide-react';
-import { db, deleteBordereau } from '@/lib/db';
+import { db, deleteBordereau, deleteBordereauPiece } from '@/lib/db';
 import { cn } from '@/lib/utils';
 import {
   buildStampedPreview,
@@ -496,7 +496,7 @@ function BordereauDetail({
 
   async function deletePiece(id: number | undefined) {
     if (!id) return;
-    await db.bordereauPieces.delete(id);
+    await deleteBordereauPiece(id);
     if (bordereau?.autoNumbering) {
       await renumberAuto();
     }
@@ -1304,8 +1304,15 @@ function PiecePreviewDialog({
   const [stampedLoading, setStampedLoading] = useState(false);
   const [stampedError, setStampedError] = useState<string | null>(null);
 
-  // URL brute (recréée si la pièce change)
+  // URL brute (recréée si la pièce change). Si le blob est encore en
+  // cours de téléchargement depuis Drive (synchro cross-device), on
+  // attend qu'il arrive : `useLiveQuery` re-déclenchera ce composant
+  // dès que `sourceBlob` est rempli par le téléchargement de fond.
   useEffect(() => {
+    if (!piece.sourceBlob) {
+      setRawUrl(null);
+      return;
+    }
     const u = URL.createObjectURL(piece.sourceBlob);
     setRawUrl(u);
     return () => URL.revokeObjectURL(u);

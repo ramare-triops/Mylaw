@@ -461,17 +461,13 @@ export class MyLexDatabase extends Dexie {
             const table = downlevel.table(tableName);
             // Tables jamais synchronisées vers Drive (locales pures) :
             //  - history / auditLog : journaux internes
-            //  - attachments : blobs binaires, trop lourds pour un JSON Drive
-            //  - bordereauPieces : contiennent les fichiers sources (Blob)
-            //    importés par l'utilisateur dans l'outil bordereau ; trop
-            //    lourds eux aussi pour un JSON Drive. Seuls le projet de
-            //    bordereau (table `bordereaux`) et les réglages du tampon
-            //    (table `stampSettings`) voyagent par Drive.
+            // attachments et bordereauPieces sont désormais synchronisés
+            // (depuis l'introduction de la sync binaire multi-fichiers).
+            // Leur métadonnée voyage par le backup JSON, leur contenu
+            // binaire par des fichiers Drive séparés (un par blob).
             if (
               tableName === 'history' ||
-              tableName === 'auditLog' ||
-              tableName === 'attachments' ||
-              tableName === 'bordereauPieces'
+              tableName === 'auditLog'
             ) return table;
             return {
               ...table,
@@ -989,6 +985,14 @@ export async function saveAttachment(att: Attachment): Promise<number> {
 export async function deleteAttachment(id: number): Promise<void> {
   const rec = await db.attachments.get(id);
   await db.attachments.delete(id);
+  // Best-effort GC du blob Drive associé. On ne bloque pas la
+  // suppression locale en cas d'échec réseau : la métadonnée a
+  // disparu, le ramasse-miettes Drive pourra être rejoué ultérieurement.
+  if (rec?.driveFileId) {
+    void import('./drive-blobs').then(({ deleteBlobFromDrive }) =>
+      deleteBlobFromDrive(rec.driveFileId!),
+    ).catch(() => {});
+  }
   if (rec) await logAudit({
     dossierId: rec.dossierId,
     entityType: 'attachment',
@@ -1181,6 +1185,22 @@ export async function saveStampSettings(
 
 // ─── Bordereau helpers ─────────────────────────────────────────────────────
 
+/**
+ * Supprime une pièce de bordereau et son blob Drive associé. À utiliser
+ * partout où l'on retire une pièce isolée (l'utilisateur clique sur la
+ * corbeille d'une ligne). Pour la suppression de TOUT un bordereau,
+ * `deleteBordereau` ci-dessous batch déjà le GC.
+ */
+export async function deleteBordereauPiece(id: number): Promise<void> {
+  const piece = await db.bordereauPieces.get(id);
+  await db.bordereauPieces.delete(id);
+  if (piece?.driveFileId) {
+    void import('./drive-blobs').then(({ deleteBlobFromDrive }) =>
+      deleteBlobFromDrive(piece.driveFileId!),
+    ).catch(() => {});
+  }
+}
+
 export async function deleteBordereau(id: number): Promise<void> {
   // Supprime le projet ET toutes ses pièces sources locales.
   const pieces = await db.bordereauPieces
@@ -1191,6 +1211,17 @@ export async function deleteBordereau(id: number): Promise<void> {
     await db.bordereauPieces.bulkDelete(
       pieces.map((p) => p.id!).filter((x) => x != null),
     );
+    // Best-effort GC Drive : les blobs sources des pièces sont stockés
+    // dans des fichiers Drive individuels. Une fois leur record local
+    // supprimé, on demande à Drive de les retirer aussi.
+    const fileIds = pieces
+      .map((p) => p.driveFileId)
+      .filter((x): x is string => !!x);
+    if (fileIds.length) {
+      void import('./drive-blobs').then(({ deleteBlobFromDrive }) =>
+        Promise.all(fileIds.map((fid) => deleteBlobFromDrive(fid))),
+      ).catch(() => {});
+    }
   }
   await db.bordereaux.delete(id);
 }

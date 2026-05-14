@@ -948,6 +948,12 @@ async function downloadAttachment(a: MailAttachment): Promise<void> {
   // Pièce déjà importée : on re-télécharge le binaire d'origine.
   const att = await db.attachments.get(a.id);
   if (!att) return;
+  if (!att.blob) {
+    alert(
+      'Cette pièce jointe est en cours de téléchargement depuis Google Drive. Réessayez dans quelques secondes.',
+    );
+    return;
+  }
   triggerDownload(att.blob, att.name);
 }
 

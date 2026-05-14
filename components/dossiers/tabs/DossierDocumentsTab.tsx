@@ -484,6 +484,12 @@ export function DossierDocumentsTab({ dossier }: Props) {
   function handleDownloadAttachment(attId: number, name: string) {
     db.attachments.get(attId).then((a) => {
       if (!a) return;
+      if (!a.blob) {
+        alert(
+          'Cette pièce jointe est en cours de téléchargement depuis Google Drive. Réessayez dans quelques secondes.',
+        );
+        return;
+      }
       const url = URL.createObjectURL(a.blob);
       const link = window.document.createElement('a');
       link.href = url;

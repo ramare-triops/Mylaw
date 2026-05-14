@@ -113,6 +113,11 @@ export async function generateBordereau(
       pieceLabel: title,
     });
 
+    if (!piece.sourceBlob) {
+      throw new Error(
+        `Le fichier source de « ${piece.sourceFileName} » est en cours de téléchargement depuis Google Drive. Patientez quelques secondes puis relancez la génération.`,
+      );
+    }
     let pdfDoc;
     try {
       pdfDoc = await sourceBlobToPdf(piece.sourceBlob, piece.sourceMimeType);
@@ -204,6 +209,11 @@ export async function clearGeneratedBordereau(
 export async function buildStampedPreview(
   piece: BordereauPiece,
 ): Promise<Blob> {
+  if (!piece.sourceBlob) {
+    throw new Error(
+      'Fichier source non disponible — téléchargement Google Drive en cours.',
+    );
+  }
   const settings = await getStampSettings();
   const pdf = await sourceBlobToPdf(piece.sourceBlob, piece.sourceMimeType);
   await applyStamp(pdf, settings, piece.pieceNumber);

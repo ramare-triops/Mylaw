@@ -40,12 +40,19 @@ export interface MylawBackup {
   jots?: any[];
   /** v6 — Calculs d'intérêts au taux légal (outil dossier) */
   interestCalculations?: any[];
-  /** v7 — Bordereaux de pièces (projet et réglages du tampon).
-   *  Les pièces sources (`bordereauPieces`) restent locales. */
+  /** v7 — Bordereaux de pièces (projet et réglages du tampon). */
   bordereaux?: any[];
   stampSettings?: any[];
-  // ⚠️ attachments (blobs), bordereauPieces (blobs sources) et
-  //    auditLog (journal local) NE sont PAS sync.
+  /**
+   * v8 — Pièces jointes (Attachments) et fichiers sources des bordereaux
+   * (BordereauPieces). Les MÉTADONNÉES (name, mimeType, size, driveFileId,
+   * contentHash, etc.) voyagent ici ; les BLOBS binaires sont stockés
+   * comme fichiers Drive séparés (un par blob) référencés par
+   * `driveFileId` et téléchargés en arrière-plan après merge.
+   */
+  attachments?: any[];
+  bordereauPieces?: any[];
+  // ⚠️ history et auditLog (journaux locaux) ne sont PAS synchronisés.
 }
 
 export type DriveStatus =
