@@ -7,30 +7,13 @@
  * l'email du calendrier principal (qui sert d'`src` pour le primary).
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { getGoogleAccessToken } from '@/lib/google-auth-server';
 
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const COOKIE_NAME = 'mylaw_google_productivity_rt';
 const CAL_LIST_URL = 'https://www.googleapis.com/calendar/v3/users/me/calendarList';
 
 async function getAccessToken(req: NextRequest): Promise<string | null> {
-  const refreshToken = req.cookies.get(COOKIE_NAME)?.value;
-  if (!refreshToken) return null;
-  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: 'refresh_token',
-    }),
-  });
-  const tokens = await res.json();
-  if (tokens.error) return null;
-  return tokens.access_token as string;
+  const result = await getGoogleAccessToken(req, 'productivity');
+  return result.accessToken;
 }
 
 export async function GET(req: NextRequest) {

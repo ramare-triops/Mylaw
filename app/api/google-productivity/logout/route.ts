@@ -1,8 +1,13 @@
+/**
+ * POST /api/google-productivity/logout
+ * Déconnecte le compte Google de MyLaw : supprime le cookie unifié
+ * `mylaw_google_rt` ainsi que les anciens cookies legacy.
+ */
 import { NextResponse } from 'next/server';
-const COOKIE_NAME = 'mylaw_google_productivity_rt';
+import { clearGoogleCookies } from '@/lib/google-auth-server';
 
 export async function POST() {
   const response = NextResponse.json({ ok: true });
-  response.cookies.delete(COOKIE_NAME);
+  clearGoogleCookies(response);
   return response;
 }

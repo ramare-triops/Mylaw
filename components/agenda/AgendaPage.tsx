@@ -87,12 +87,15 @@ export function AgendaPage() {
     void refreshCalendars();
   }, [refreshCalendars]);
 
-  // Retour OAuth : si on revient avec ?gprod=connected, on rafraîchit.
+  // Retour OAuth : si on revient avec ?google=connected (flow unifié)
+  // ou ?gprod=connected (ancien flag, conservé pour rétro-compat), on
+  // rafraîchit.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const sp = new URLSearchParams(window.location.search);
-    if (sp.get('gprod') === 'connected') {
+    if (sp.get('google') === 'connected' || sp.get('gprod') === 'connected') {
       void refreshCalendars();
+      sp.delete('google');
       sp.delete('gprod');
       sp.delete('reason');
       const clean = sp.toString();

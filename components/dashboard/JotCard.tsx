@@ -76,11 +76,14 @@ export function JotCard() {
   }, [checkConnection]);
 
   // Retour OAuth — rafraîchir l'état de connexion après consentement.
+  // `google` est le flag du flow unifié ; `gprod` reste accepté pour
+  // rétro-compatibilité avec d'éventuels onglets ouverts avant le déploiement.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const sp = new URLSearchParams(window.location.search);
-    if (sp.get('gprod')) {
+    if (sp.get('google') || sp.get('gprod')) {
       void checkConnection();
+      sp.delete('google');
       sp.delete('gprod');
       sp.delete('reason');
       const clean = sp.toString();

@@ -1,20 +1,21 @@
 /**
  * GET /api/google-productivity/start?return=/
- * Démarre le flow OAuth PKCE pour les scopes Google Tasks + Calendar.
- * Génère un code_verifier, pose un cookie temporaire, puis 302 vers
- * le endpoint d'autorisation Google. Le retour est géré par /callback.
+ *
+ * Démarre le flow OAuth PKCE unifié pour TOUTES les intégrations
+ * Google : Drive (sauvegarde), Calendar (agenda) et Tasks. Génère un
+ * code_verifier, pose un cookie temporaire, puis 302 vers le endpoint
+ * d'autorisation Google. Le retour est géré par /callback.
+ *
+ * Le nom de répertoire `google-productivity` est conservé pour ne pas
+ * casser la redirect URI déjà enregistrée dans Google Cloud Console ;
+ * en réalité ce flow couvre désormais Drive + Calendar + Tasks dans un
+ * unique consentement.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
+import { GOOGLE_SCOPES } from '@/lib/google-auth-server';
 
 const AUTHZ_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
-// Le scope `calendar` (et non plus `calendar.events`) est requis pour pouvoir
-// créer le calendrier dédié « Mylaw » dans le compte Google de l'utilisateur
-// la première fois qu'on y pousse une échéance.
-const SCOPES = [
-  'https://www.googleapis.com/auth/tasks',
-  'https://www.googleapis.com/auth/calendar',
-].join(' ');
 
 function base64Url(buf: Buffer): string {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -40,11 +41,19 @@ export async function GET(req: NextRequest) {
   authz.searchParams.set('client_id', clientId);
   authz.searchParams.set('redirect_uri', redirectUri);
   authz.searchParams.set('response_type', 'code');
-  authz.searchParams.set('scope', SCOPES);
+  authz.searchParams.set('scope', GOOGLE_SCOPES);
   authz.searchParams.set('code_challenge', challenge);
   authz.searchParams.set('code_challenge_method', 'S256');
   authz.searchParams.set('access_type', 'offline');
+  // `prompt=consent` est nécessaire pour garantir que Google renvoie un
+  // refresh_token, y compris si l'utilisateur a déjà consenti à un
+  // sous-ensemble des scopes (cas typique de la migration depuis l'ancien
+  // flow Drive-seul ou Tasks/Calendar-seul vers le flow unifié).
   authz.searchParams.set('prompt', 'consent');
+  // `include_granted_scopes` permet à Google d'agréger les scopes
+  // précédemment consentis au lieu d'écraser, utile pour les migrations
+  // graduelles entre cookies.
+  authz.searchParams.set('include_granted_scopes', 'true');
   authz.searchParams.set('state', state);
 
   const response = NextResponse.redirect(authz.toString());

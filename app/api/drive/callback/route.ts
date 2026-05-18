@@ -1,14 +1,25 @@
 /**
  * GET /api/drive/callback
- * Page de retour après l'autorisation Google OAuth.
- * Reçoit le ?code= et ?state= de Google, échange le code contre les tokens
- * via /api/drive/auth, puis redirige vers la page Settings avec un flag de succès.
+ *
+ * Page de retour OAuth historique (flow PKCE 100% client-side
+ * orchestré par useDriveSync.connect avant l'unification). Conservé
+ * pour rétro-compatibilité : si Google nous renvoie ici, on échange
+ * le code et on pose le refresh_token dans le cookie UNIFIÉ
+ * `mylaw_google_rt`.
+ *
+ * Le flow standard depuis l'unification passe par
+ * /api/google-productivity/start → /callback. Cette route peut être
+ * supprimée une fois que tous les clients sont à jour.
  */
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  GOOGLE_RT_COOKIE,
+  GOOGLE_COOKIE_MAX_AGE,
+  LEGACY_DRIVE_COOKIE,
+  LEGACY_PROD_COOKIE,
+} from '@/lib/google-auth-server';
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const COOKIE_NAME = 'mylaw_drive_rt';
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -21,8 +32,6 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Récupérer le code_verifier depuis un cookie temporaire de session
-  // (On ne peut pas lire sessionStorage côté serveur — on transmet via cookie temporaire)
   const codeVerifier = req.cookies.get('pkce_verifier')?.value;
   const redirectUri = req.cookies.get('pkce_redirect')?.value;
 
@@ -57,16 +66,16 @@ export async function GET(req: NextRequest) {
 
     const response = NextResponse.redirect(new URL('/settings?drive=connected', req.url));
 
-    // Stocker le refresh_token dans un cookie HttpOnly permanent
-    response.cookies.set(COOKIE_NAME, tokens.refresh_token, {
+    response.cookies.set(GOOGLE_RT_COOKIE, tokens.refresh_token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: COOKIE_MAX_AGE,
+      maxAge: GOOGLE_COOKIE_MAX_AGE,
       path: '/',
     });
+    response.cookies.delete(LEGACY_DRIVE_COOKIE);
+    response.cookies.delete(LEGACY_PROD_COOKIE);
 
-    // Supprimer les cookies PKCE temporaires
     response.cookies.delete('pkce_verifier');
     response.cookies.delete('pkce_redirect');
     response.cookies.delete('pkce_state');

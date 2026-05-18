@@ -1,15 +1,26 @@
 /**
  * GET /api/google-productivity/callback
- * Retour OAuth Google après consentement Tasks/Calendar. Échange le code
- * contre des tokens en utilisant le code_verifier stocké dans un cookie
- * temporaire, puis pose le refresh_token dans un cookie HttpOnly longue
- * durée et redirige vers `?return=…` mémorisé au démarrage.
+ *
+ * Retour OAuth Google après consentement (Drive + Calendar + Tasks
+ * dans le flow unifié). Échange le code contre des tokens en
+ * utilisant le code_verifier stocké dans un cookie temporaire, puis
+ * pose le refresh_token dans le cookie HttpOnly unifié
+ * `mylaw_google_rt` et redirige vers `?return=…` mémorisé au démarrage.
+ *
+ * On nettoie aussi les anciens cookies legacy (`mylaw_drive_rt` et
+ * `mylaw_google_productivity_rt`) : ils n'ont plus de raison d'être
+ * une fois le nouveau cookie posé, et leur cohabitation pourrait
+ * masquer un refresh token périmé.
  */
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  GOOGLE_RT_COOKIE,
+  GOOGLE_COOKIE_MAX_AGE,
+  LEGACY_DRIVE_COOKIE,
+  LEGACY_PROD_COOKIE,
+} from '@/lib/google-auth-server';
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const COOKIE_NAME = 'mylaw_google_productivity_rt';
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -21,7 +32,7 @@ export async function GET(req: NextRequest) {
 
   if (error || !code) {
     return NextResponse.redirect(
-      new URL(`${returnTo}?gprod=error&reason=${error ?? 'no_code'}`, req.url),
+      new URL(`${returnTo}?google=error&reason=${error ?? 'no_code'}`, req.url),
     );
   }
 
@@ -29,13 +40,13 @@ export async function GET(req: NextRequest) {
   const redirectUri = req.cookies.get('gprod_pkce_redirect')?.value;
   const expectedState = req.cookies.get('gprod_pkce_state')?.value;
   if (!verifier || !redirectUri || !expectedState || expectedState !== state) {
-    return NextResponse.redirect(new URL(`${returnTo}?gprod=error&reason=missing_pkce`, req.url));
+    return NextResponse.redirect(new URL(`${returnTo}?google=error&reason=missing_pkce`, req.url));
   }
 
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    return NextResponse.redirect(new URL(`${returnTo}?gprod=error&reason=config`, req.url));
+    return NextResponse.redirect(new URL(`${returnTo}?google=error&reason=config`, req.url));
   }
 
   try {
@@ -54,18 +65,24 @@ export async function GET(req: NextRequest) {
     const tokens = await tokenRes.json();
     if (tokens.error || !tokens.refresh_token) {
       return NextResponse.redirect(
-        new URL(`${returnTo}?gprod=error&reason=${tokens.error ?? 'no_refresh_token'}`, req.url),
+        new URL(`${returnTo}?google=error&reason=${tokens.error ?? 'no_refresh_token'}`, req.url),
       );
     }
 
-    const response = NextResponse.redirect(new URL(`${returnTo}?gprod=connected`, req.url));
-    response.cookies.set(COOKIE_NAME, tokens.refresh_token, {
+    const response = NextResponse.redirect(new URL(`${returnTo}?google=connected`, req.url));
+    response.cookies.set(GOOGLE_RT_COOKIE, tokens.refresh_token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: COOKIE_MAX_AGE,
+      maxAge: GOOGLE_COOKIE_MAX_AGE,
       path: '/',
     });
+    // Le nouveau cookie remplace les anciens — on les supprime pour ne
+    // pas garder en parallèle un refresh token périmé qui ferait croire
+    // à une déconnexion partielle.
+    response.cookies.delete(LEGACY_DRIVE_COOKIE);
+    response.cookies.delete(LEGACY_PROD_COOKIE);
+
     response.cookies.delete('gprod_pkce_verifier');
     response.cookies.delete('gprod_pkce_redirect');
     response.cookies.delete('gprod_pkce_state');
@@ -73,6 +90,6 @@ export async function GET(req: NextRequest) {
     return response;
   } catch (err) {
     console.error('[google-productivity/callback]', err);
-    return NextResponse.redirect(new URL(`${returnTo}?gprod=error&reason=server`, req.url));
+    return NextResponse.redirect(new URL(`${returnTo}?google=error&reason=server`, req.url));
   }
 }

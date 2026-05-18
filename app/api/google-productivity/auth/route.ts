@@ -1,15 +1,22 @@
 /**
  * POST /api/google-productivity/auth
- * Échange un code d'autorisation OAuth PKCE contre un access_token + refresh_token
- * pour les scopes Google Tasks + Google Calendar. Ce flow est distinct de
- * /api/drive/auth : chaque intégration a son cookie propre pour éviter qu'une
- * révocation utilisateur sur Drive n'emporte Tasks/Calendar et inversement.
+ *
+ * Endpoint d'échange code → tokens pour le flow popup-PKCE
+ * client-side. Conservé pour compatibilité ; le flow standard
+ * passe par /api/google-productivity/start → /callback.
+ *
+ * Le refresh token est désormais stocké dans le cookie unifié
+ * `mylaw_google_rt` (couvre Drive + Calendar + Tasks).
  */
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  GOOGLE_RT_COOKIE,
+  GOOGLE_COOKIE_MAX_AGE,
+  LEGACY_DRIVE_COOKIE,
+  LEGACY_PROD_COOKIE,
+} from '@/lib/google-auth-server';
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const COOKIE_NAME = 'mylaw_google_productivity_rt';
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 an
 
 export async function POST(req: NextRequest) {
   try {
@@ -47,13 +54,15 @@ export async function POST(req: NextRequest) {
       expires_in: tokens.expires_in,
     });
     if (tokens.refresh_token) {
-      response.cookies.set(COOKIE_NAME, tokens.refresh_token, {
+      response.cookies.set(GOOGLE_RT_COOKIE, tokens.refresh_token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
-        maxAge: COOKIE_MAX_AGE,
+        maxAge: GOOGLE_COOKIE_MAX_AGE,
         path: '/',
       });
+      response.cookies.delete(LEGACY_DRIVE_COOKIE);
+      response.cookies.delete(LEGACY_PROD_COOKIE);
     }
     return response;
   } catch (err) {

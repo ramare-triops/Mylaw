@@ -210,19 +210,21 @@ export function DeadlineTracker({ onCalendarChange }: DeadlineTrackerProps = {})
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const sp = new URLSearchParams(window.location.search);
-    if (sp.get('gprod')) {
-      const justConnected = sp.get('gprod') === 'connected';
+    // `google` est le flag du flow unifié ; `gprod` reste accepté pour
+    // rétro-compatibilité.
+    const googleParam = sp.get('google') || sp.get('gprod');
+    if (googleParam) {
+      const justConnected = googleParam === 'connected';
       void checkCalendar();
       if (justConnected) {
         setReauthNeeded(false);
-        // Tente de résoudre / créer le calendrier Mylaw maintenant que le
-        // nouveau scope est accordé. Ne pas bloquer le rendu.
         void (async () => {
           const { id, reauth } = await resolveMylawCalendarId();
           if (reauth) setReauthNeeded(true);
           else if (!id) setReauthNeeded(false);
         })();
       }
+      sp.delete('google');
       sp.delete('gprod');
       sp.delete('reason');
       const clean = sp.toString();

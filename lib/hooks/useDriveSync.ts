@@ -171,8 +171,19 @@ export function useDriveSync() {
     if (typeof window === 'undefined') return;
 
     const params = new URLSearchParams(window.location.search);
-    if (params.get('drive') === 'connected') {
-      window.history.replaceState({}, '', window.location.pathname);
+    // `?drive=connected` reste géré pour rétro-compat avec l'ancien
+    // callback /api/drive/callback. Le flow unifié renvoie désormais
+    // `?google=connected`.
+    if (params.get('drive') === 'connected' || params.get('google') === 'connected') {
+      params.delete('drive');
+      params.delete('google');
+      params.delete('reason');
+      const clean = params.toString();
+      window.history.replaceState(
+        {},
+        '',
+        window.location.pathname + (clean ? '?' + clean : ''),
+      );
       void initialLoad();
       return;
     }
@@ -286,31 +297,14 @@ export function useDriveSync() {
 
   const connect = useCallback(async () => {
     setError(null);
-    try {
-      const verifier    = generateRandomString(64);
-      const challenge   = await generateCodeChallenge(verifier);
-      const redirectUri = `${window.location.origin}/api/drive/callback`;
-      const state       = generateRandomString(16);
-
-      document.cookie = `pkce_verifier=${verifier}; path=/; max-age=300; samesite=lax`;
-      document.cookie = `pkce_redirect=${encodeURIComponent(redirectUri)}; path=/; max-age=300; samesite=lax`;
-      document.cookie = `pkce_state=${state}; path=/; max-age=300; samesite=lax`;
-
-      const urlParams = new URLSearchParams({
-        client_id:             CLIENT_ID,
-        redirect_uri:          redirectUri,
-        response_type:         'code',
-        scope:                 'https://www.googleapis.com/auth/drive.appdata openid email',
-        code_challenge:        challenge,
-        code_challenge_method: 'S256',
-        access_type:           'offline',
-        prompt:                'consent',
-        state,
-      });
-      window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${urlParams}`;
-    } catch (e: any) {
-      setError(e?.message ?? "Erreur d'initialisation OAuth");
-    }
+    // Flow OAuth unifié : un seul consentement Google couvre Drive +
+    // Calendar + Tasks. La route /api/google-productivity/start
+    // génère le code_verifier côté serveur, pose le cookie PKCE et
+    // redirige vers Google.
+    const returnTo =
+      typeof window !== 'undefined' ? window.location.pathname : '/settings';
+    window.location.href =
+      `/api/google-productivity/start?return=${encodeURIComponent(returnTo)}`;
   }, []);
 
   const disconnect = useCallback(async () => {
@@ -345,20 +339,3 @@ export function useDriveSync() {
 
 // ─── Backwards-compat exports ──────────────────────────────────────────────
 export { buildBackup, mergeFromBackup as restoreFromBackup } from '@/lib/drive-merge';
-
-// ─── Helpers PKCE ──────────────────────────────────────────────────────────
-
-function generateRandomString(length: number): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-  const array = new Uint8Array(length);
-  crypto.getRandomValues(array);
-  return Array.from(array).map(b => chars[b % chars.length]).join('');
-}
-
-async function generateCodeChallenge(verifier: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data    = encoder.encode(verifier);
-  const digest  = await crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}

@@ -20,32 +20,14 @@
  * compression Drive et dédup possible côté hash.
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { getGoogleAccessToken } from '@/lib/google-auth-server';
 
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const COOKIE_NAME = 'mylaw_drive_rt';
 const DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files';
 const BLOB_NAME_PREFIX = 'mylaw-blob-';
 
 async function getAccessToken(req: NextRequest): Promise<string | null> {
-  const refreshToken = req.cookies.get(COOKIE_NAME)?.value;
-  if (!refreshToken) return null;
-
-  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: 'refresh_token',
-    }),
-  });
-  const data = await res.json();
-  return data.access_token ?? null;
+  const result = await getGoogleAccessToken(req, 'drive');
+  return result.accessToken;
 }
 
 function randomBlobName(): string {
